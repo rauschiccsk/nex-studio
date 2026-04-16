@@ -6,8 +6,8 @@ transaction commit is the router's responsibility. Errors are signalled via
 ``ValueError`` so the router can translate them to the appropriate HTTP
 status code.
 
-Design notes (per DESIGN.md §1.9 Bug Tracking and
-:mod:`backend.db.models.bugs`):
+Design notes (per DESIGN.md §1.9 Bug Tracking, §4.0 Version Lifecycle
+Rules and :mod:`backend.db.models.bugs`):
     * ``id``, ``bug_number``, ``created_at`` and ``updated_at`` are
       server-managed and therefore immutable from the service layer.
     * ``bug_number`` is auto-assigned by :func:`create` as
@@ -18,6 +18,13 @@ Design notes (per DESIGN.md §1.9 Bug Tracking and
       same project — which are rare but possible — still surface as
       :class:`ValueError` instead of raw
       :class:`~sqlalchemy.exc.IntegrityError`.
+    * ``version_id`` is **required** at creation time (DESIGN.md §4.0
+      Rule 2 — every new BUG belongs to a release version). The
+      underlying column is nullable at the DB level only so that the FK
+      ``ON DELETE RESTRICT`` remains expressible for legacy rows; the
+      service enforces the stronger application-level contract and
+      rejects ``version_id is None`` with :class:`ValueError` (HTTP 422
+      at the router layer).
     * ``severity``, ``status`` and ``source`` are constrained by DB CHECKs
       (``ck_bugs_severity``, ``ck_bugs_status``, ``ck_bugs_source``). The
       Pydantic ``BugSeverity`` / ``BugStatus`` / ``BugSource`` literals
@@ -193,6 +200,14 @@ def create(db: Session, data: BugCreate) -> Bug:
     at the router layer) rather than a raw
     :class:`~sqlalchemy.exc.IntegrityError`.
 
+    ``version_id`` is **required** (DESIGN.md §4.0 Rule 2 — every new
+    BUG belongs to a release version). The service raises
+    :class:`ValueError` when the caller passes ``None`` so the router
+    can translate it to HTTP 422. The underlying column is nullable at
+    the DB level only because ``ON DELETE RESTRICT`` must remain
+    expressible for legacy rows; the application-level contract is
+    stricter.
+
     ``status`` and ``source`` default to ``new`` / ``internal`` via the
     Pydantic schema when omitted, matching the DB ``server_default``.
 
@@ -206,15 +221,20 @@ def create(db: Session, data: BugCreate) -> Bug:
         populated.
 
     Raises:
-        ValueError: If another bug already uses the same
+        ValueError: If ``version_id`` is ``None`` (DESIGN.md §4.0
+            Rule 2) or if another bug already uses the same
             ``(project_id, bug_number)`` pair (concurrent-create race).
     """
+    if data.version_id is None:
+        raise ValueError("version_id required for new bugs")
+
     bug_number = _next_bug_number(db, data.project_id)
     if _get_by_project_and_number(db, data.project_id, bug_number) is not None:
         raise ValueError(f"Bug with project_id={data.project_id} and bug_number={bug_number} already exists")
 
     bug = Bug(
         project_id=data.project_id,
+        version_id=data.version_id,
         bug_number=bug_number,
         title=data.title,
         description=data.description,

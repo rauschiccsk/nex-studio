@@ -7,6 +7,13 @@ session provided by ``tests/conftest.py``. Verifies:
 * ``ValueError`` on missing ``id`` for get / update / delete.
 * ``create`` auto-assigns ``number`` as ``MAX(number) + 1`` per
   project, starts at ``1`` for the first epic, independent per project.
+* ``create`` rejects a missing ``version_id`` with
+  ``ValueError("version_id required for new epics")`` (DESIGN.md §4.0
+  Rule 2 — every new EPIC belongs to a release version).
+* ``update`` fires the DESIGN.md §4.0 Rule 4 auto-activate trigger:
+  transitioning ``status → in_progress`` promotes the linked version
+  from ``planned`` to ``active`` (idempotent for versions already in
+  ``active`` / ``released``).
 * Update allow-list — only ``module_id``, ``title`` and ``status`` are
   applied; ``project_id``, ``number``, ``id`` and ``created_at`` are
   preserved.
@@ -33,6 +40,7 @@ from sqlalchemy import select as sa_select
 from backend.db.models.foundation import User
 from backend.db.models.projects import Project, ProjectModule
 from backend.db.models.tasks import Epic, Feat
+from backend.db.models.versions import Version
 from backend.schemas.epic import EpicCreate, EpicUpdate
 from backend.services import epic as service
 
@@ -89,12 +97,54 @@ def _make_module(db_session, *, project: Project | None = None, **overrides) -> 
     return module
 
 
-def _payload(project_id, **overrides) -> EpicCreate:
-    """Return an :class:`EpicCreate` payload with sensible defaults."""
+def _make_version(
+    db_session,
+    *,
+    project: Project | None = None,
+    status: str = "planned",
+    **overrides,
+) -> Version:
+    """Create and persist a Version bound to ``project`` for FK references.
+
+    Every Epic now carries a required ``version_id`` (DESIGN.md §4.0
+    Rule 2) so the helpers seed one by default. ``status`` defaults to
+    ``planned`` so :func:`auto_activate` has something to promote.
+    """
+    if project is None:
+        project = _make_project(db_session)
+    defaults = {
+        "project_id": project.id,
+        "version_number": f"v{uuid.uuid4().hex[:6]}",
+        "name": "Test version",
+        "status": status,
+    }
+    defaults.update(overrides)
+    version = Version(**defaults)
+    db_session.add(version)
+    db_session.flush()
+    return version
+
+
+def _payload(
+    project_id,
+    *,
+    version_id: uuid.UUID | None = None,
+    **overrides,
+) -> EpicCreate:
+    """Return an :class:`EpicCreate` payload with sensible defaults.
+
+    ``version_id`` is required by the service (DESIGN.md §4.0 Rule 2).
+    The helper accepts a ``version_id`` keyword; callers that omit it
+    fall back to ``None`` and the caller is expected to either supply
+    one explicitly or be asserting the ``version_id required`` error
+    path.
+    """
     defaults = {
         "project_id": project_id,
         "title": f"Epic {uuid.uuid4().hex[:6]}",
     }
+    if version_id is not None:
+        defaults["version_id"] = version_id
     defaults.update(overrides)
     return EpicCreate(**defaults)
 
@@ -106,8 +156,12 @@ class TestEpicService:
     def test_create_epic(self, db_session):
         """``create`` persists the row and returns an ORM instance with server defaults."""
         project = _make_project(db_session)
+        version = _make_version(db_session, project=project)
 
-        created = service.create(db_session, _payload(project.id, title="First epic"))
+        created = service.create(
+            db_session,
+            _payload(project.id, version_id=version.id, title="First epic"),
+        )
 
         assert isinstance(created, Epic)
         assert created.id is not None
@@ -115,20 +169,35 @@ class TestEpicService:
         assert created.updated_at is not None
         assert created.project_id == project.id
         assert created.module_id is None
+        assert created.version_id == version.id
         assert created.title == "First epic"
         # Schema-level default.
         assert created.status == "planned"
         # Auto-assigned number.
         assert created.number == 1
 
+    def test_create_requires_version_id(self, db_session):
+        """``create`` rejects a missing ``version_id`` with a clean ``ValueError``.
+
+        DESIGN.md §4.0 Rule 2 — every new EPIC must be assigned to a
+        release version before it can be scheduled. The service raises
+        ``ValueError("version_id required for new epics")`` so the
+        router can translate it to HTTP 422.
+        """
+        project = _make_project(db_session)
+
+        with pytest.raises(ValueError, match="version_id required for new epics"):
+            service.create(db_session, _payload(project.id))
+
     def test_create_with_module(self, db_session):
         """``create`` accepts a ``module_id`` to scope the epic to a module."""
         project = _make_project(db_session)
+        version = _make_version(db_session, project=project)
         module = _make_module(db_session, project=project)
 
         created = service.create(
             db_session,
-            _payload(project.id, module_id=module.id),
+            _payload(project.id, version_id=version.id, module_id=module.id),
         )
 
         assert created.module_id == module.id
@@ -136,10 +205,11 @@ class TestEpicService:
     def test_create_with_custom_status(self, db_session):
         """``create`` applies a non-default ``status`` when supplied."""
         project = _make_project(db_session)
+        version = _make_version(db_session, project=project)
 
         created = service.create(
             db_session,
-            _payload(project.id, status="in_progress"),
+            _payload(project.id, version_id=version.id, status="in_progress"),
         )
 
         assert created.status == "in_progress"
@@ -147,10 +217,11 @@ class TestEpicService:
     def test_create_auto_numbers_sequentially(self, db_session):
         """``create`` auto-assigns ``number`` as MAX(number) + 1 per project."""
         project = _make_project(db_session)
+        version = _make_version(db_session, project=project)
 
-        e1 = service.create(db_session, _payload(project.id))
-        e2 = service.create(db_session, _payload(project.id))
-        e3 = service.create(db_session, _payload(project.id))
+        e1 = service.create(db_session, _payload(project.id, version_id=version.id))
+        e2 = service.create(db_session, _payload(project.id, version_id=version.id))
+        e3 = service.create(db_session, _payload(project.id, version_id=version.id))
 
         assert (e1.number, e2.number, e3.number) == (1, 2, 3)
 
@@ -158,10 +229,12 @@ class TestEpicService:
         """Two projects each start their epic numbering at 1 independently."""
         p1 = _make_project(db_session)
         p2 = _make_project(db_session)
+        v1 = _make_version(db_session, project=p1)
+        v2 = _make_version(db_session, project=p2)
 
-        e1_p1 = service.create(db_session, _payload(p1.id))
-        e2_p1 = service.create(db_session, _payload(p1.id))
-        e1_p2 = service.create(db_session, _payload(p2.id))
+        e1_p1 = service.create(db_session, _payload(p1.id, version_id=v1.id))
+        e2_p1 = service.create(db_session, _payload(p1.id, version_id=v1.id))
+        e1_p2 = service.create(db_session, _payload(p2.id, version_id=v2.id))
 
         assert e1_p1.number == 1
         assert e2_p1.number == 2
@@ -171,7 +244,8 @@ class TestEpicService:
     def test_get_by_id(self, db_session):
         """``get_by_id`` returns the row when it exists."""
         project = _make_project(db_session)
-        created = service.create(db_session, _payload(project.id))
+        version = _make_version(db_session, project=project)
+        created = service.create(db_session, _payload(project.id, version_id=version.id))
 
         fetched = service.get_by_id(db_session, created.id)
         assert fetched.id == created.id
@@ -186,7 +260,11 @@ class TestEpicService:
     def test_update_title_and_status(self, db_session):
         """``update`` patches mutable fields."""
         project = _make_project(db_session)
-        created = service.create(db_session, _payload(project.id, title="Old title"))
+        version = _make_version(db_session, project=project)
+        created = service.create(
+            db_session,
+            _payload(project.id, version_id=version.id, title="Old title"),
+        )
 
         updated = service.update(
             db_session,
@@ -201,8 +279,9 @@ class TestEpicService:
     def test_update_module_id(self, db_session):
         """``module_id`` is mutable — an epic can be re-scoped to a module."""
         project = _make_project(db_session)
+        version = _make_version(db_session, project=project)
         module = _make_module(db_session, project=project)
-        created = service.create(db_session, _payload(project.id))
+        created = service.create(db_session, _payload(project.id, version_id=version.id))
         assert created.module_id is None
 
         updated = service.update(
@@ -216,10 +295,16 @@ class TestEpicService:
     def test_update_partial_only_status(self, db_session):
         """``update`` leaves omitted fields untouched (PATCH semantics)."""
         project = _make_project(db_session)
+        version = _make_version(db_session, project=project)
         module = _make_module(db_session, project=project)
         created = service.create(
             db_session,
-            _payload(project.id, module_id=module.id, title="Original title"),
+            _payload(
+                project.id,
+                version_id=version.id,
+                module_id=module.id,
+                title="Original title",
+            ),
         )
 
         updated = service.update(
@@ -236,7 +321,8 @@ class TestEpicService:
     def test_update_preserves_immutable_fields(self, db_session):
         """``id``, ``project_id``, ``number`` and ``created_at`` must not change across ``update``."""
         project = _make_project(db_session)
-        created = service.create(db_session, _payload(project.id))
+        version = _make_version(db_session, project=project)
+        created = service.create(db_session, _payload(project.id, version_id=version.id))
 
         original_id = created.id
         original_project_id = created.project_id
@@ -257,9 +343,15 @@ class TestEpicService:
     def test_update_empty_payload_is_noop(self, db_session):
         """An :class:`EpicUpdate` with no fields set leaves the row intact."""
         project = _make_project(db_session)
+        version = _make_version(db_session, project=project)
         created = service.create(
             db_session,
-            _payload(project.id, title="Keep me", status="in_progress"),
+            _payload(
+                project.id,
+                version_id=version.id,
+                title="Keep me",
+                status="in_progress",
+            ),
         )
 
         updated = service.update(db_session, created.id, EpicUpdate())
@@ -277,11 +369,99 @@ class TestEpicService:
                 EpicUpdate(title="nope"),
             )
 
+    def test_update_to_in_progress_auto_activates_version(self, db_session):
+        """Transitioning ``status → in_progress`` promotes a ``planned`` version to ``active``.
+
+        DESIGN.md §4.0 Rule 4 — the Epic service fires
+        :func:`version.auto_activate` whenever an epic enters
+        ``in_progress``. The linked version must flip from ``planned``
+        to ``active``.
+        """
+        project = _make_project(db_session)
+        version = _make_version(db_session, project=project, status="planned")
+        created = service.create(
+            db_session,
+            _payload(project.id, version_id=version.id, status="planned"),
+        )
+        assert version.status == "planned"
+
+        service.update(db_session, created.id, EpicUpdate(status="in_progress"))
+
+        db_session.refresh(version)
+        assert version.status == "active"
+
+    def test_update_to_in_progress_noop_for_released_version(self, db_session):
+        """``auto_activate`` is a no-op for a version already in ``released``.
+
+        Protects the forward-only status ordering (DESIGN.md §4.0
+        Rule 3) — a released version must not regress to ``active`` on
+        a stray epic transition.
+        """
+        project = _make_project(db_session)
+        version = _make_version(db_session, project=project, status="released")
+        created = service.create(
+            db_session,
+            _payload(project.id, version_id=version.id, status="planned"),
+        )
+
+        service.update(db_session, created.id, EpicUpdate(status="in_progress"))
+
+        db_session.refresh(version)
+        assert version.status == "released"
+
+    def test_update_to_done_does_not_auto_activate(self, db_session):
+        """Only transitions **into** ``in_progress`` fire ``auto_activate``.
+
+        A straight ``planned → done`` transition (e.g. closing an epic
+        that turned out to be a no-op) must leave the version alone.
+        """
+        project = _make_project(db_session)
+        version = _make_version(db_session, project=project, status="planned")
+        created = service.create(
+            db_session,
+            _payload(project.id, version_id=version.id, status="planned"),
+        )
+
+        service.update(db_session, created.id, EpicUpdate(status="done"))
+
+        db_session.refresh(version)
+        assert version.status == "planned"
+
+    def test_update_in_progress_to_in_progress_is_idempotent(self, db_session):
+        """Re-patching an already-``in_progress`` epic does not re-fire the trigger.
+
+        The trigger checks ``previous_status != "in_progress"`` so a
+        no-op status patch on a version that was manually rolled back
+        (for example via admin tooling) does not silently re-activate
+        it.
+        """
+        project = _make_project(db_session)
+        version = _make_version(db_session, project=project, status="planned")
+        created = service.create(
+            db_session,
+            _payload(project.id, version_id=version.id, status="in_progress"),
+        )
+        # Admin reverts the version to ``planned`` without touching the
+        # epic — representative of a correction flow.
+        version.status = "planned"
+        db_session.flush()
+
+        # Re-patch the epic with the same status — must not re-activate.
+        service.update(
+            db_session,
+            created.id,
+            EpicUpdate(status="in_progress", title="Relabelled"),
+        )
+
+        db_session.refresh(version)
+        assert version.status == "planned"
+
     # ---------------------------------------------------------------- delete
     def test_delete(self, db_session):
         """``delete`` removes the row; subsequent lookup raises."""
         project = _make_project(db_session)
-        created = service.create(db_session, _payload(project.id))
+        version = _make_version(db_session, project=project)
+        created = service.create(db_session, _payload(project.id, version_id=version.id))
 
         service.delete(db_session, created.id)
 
@@ -296,7 +476,8 @@ class TestEpicService:
     def test_delete_cascades_feats(self, db_session):
         """Deleting an epic cascades to its feats (``ON DELETE CASCADE``)."""
         project = _make_project(db_session)
-        epic = service.create(db_session, _payload(project.id))
+        version = _make_version(db_session, project=project)
+        epic = service.create(db_session, _payload(project.id, version_id=version.id))
 
         feat = Feat(epic_id=epic.id, number=1, title="F1")
         db_session.add(feat)
@@ -319,9 +500,10 @@ class TestEpicService:
     def test_list_all(self, db_session):
         """``list_epics`` returns every row when no filter is supplied."""
         project = _make_project(db_session)
+        version = _make_version(db_session, project=project)
         created_ids: set = set()
         for _ in range(3):
-            created_ids.add(service.create(db_session, _payload(project.id)).id)
+            created_ids.add(service.create(db_session, _payload(project.id, version_id=version.id)).id)
 
         rows = service.list_epics(db_session)
         assert created_ids.issubset({r.id for r in rows})
@@ -330,8 +512,10 @@ class TestEpicService:
         """``list_epics(project_id=...)`` returns only that project's epics."""
         p1 = _make_project(db_session)
         p2 = _make_project(db_session)
-        mine = service.create(db_session, _payload(p1.id))
-        service.create(db_session, _payload(p2.id))
+        v1 = _make_version(db_session, project=p1)
+        v2 = _make_version(db_session, project=p2)
+        mine = service.create(db_session, _payload(p1.id, version_id=v1.id))
+        service.create(db_session, _payload(p2.id, version_id=v2.id))
 
         rows = service.list_epics(db_session, project_id=p1.id)
         assert all(r.project_id == p1.id for r in rows)
@@ -340,9 +524,13 @@ class TestEpicService:
     def test_list_filter_by_module(self, db_session):
         """``module_id`` filter returns only epics scoped to that module."""
         project = _make_project(db_session)
+        version = _make_version(db_session, project=project)
         module = _make_module(db_session, project=project)
-        module_epic = service.create(db_session, _payload(project.id, module_id=module.id))
-        project_level_epic = service.create(db_session, _payload(project.id))
+        module_epic = service.create(
+            db_session,
+            _payload(project.id, version_id=version.id, module_id=module.id),
+        )
+        project_level_epic = service.create(db_session, _payload(project.id, version_id=version.id))
 
         rows = service.list_epics(db_session, module_id=module.id)
         row_ids = {r.id for r in rows}
@@ -353,10 +541,11 @@ class TestEpicService:
     def test_list_filter_by_status(self, db_session):
         """``status`` filter returns only matching epics."""
         project = _make_project(db_session)
-        planned = service.create(db_session, _payload(project.id))
+        version = _make_version(db_session, project=project)
+        planned = service.create(db_session, _payload(project.id, version_id=version.id))
         in_progress = service.create(
             db_session,
-            _payload(project.id, status="in_progress"),
+            _payload(project.id, version_id=version.id, status="in_progress"),
         )
 
         rows = service.list_epics(db_session, project_id=project.id, status="in_progress")
@@ -368,18 +557,23 @@ class TestEpicService:
         """Multiple filters AND together."""
         p1 = _make_project(db_session)
         p2 = _make_project(db_session)
+        v1 = _make_version(db_session, project=p1)
+        v2 = _make_version(db_session, project=p2)
         module = _make_module(db_session, project=p1)
 
         match = service.create(
             db_session,
-            _payload(p1.id, module_id=module.id, status="in_progress"),
+            _payload(p1.id, version_id=v1.id, module_id=module.id, status="in_progress"),
         )
         # Different project.
-        service.create(db_session, _payload(p2.id, status="in_progress"))
+        service.create(db_session, _payload(p2.id, version_id=v2.id, status="in_progress"))
         # Different status.
-        service.create(db_session, _payload(p1.id, module_id=module.id, status="planned"))
+        service.create(
+            db_session,
+            _payload(p1.id, version_id=v1.id, module_id=module.id, status="planned"),
+        )
         # Project-level (module_id IS NULL).
-        service.create(db_session, _payload(p1.id, status="in_progress"))
+        service.create(db_session, _payload(p1.id, version_id=v1.id, status="in_progress"))
 
         rows = service.list_epics(
             db_session,
@@ -393,9 +587,10 @@ class TestEpicService:
     def test_list_ordered_by_number_asc(self, db_session):
         """Results are ordered by ``number ASC`` (epic 1, epic 2, …)."""
         project = _make_project(db_session)
-        e1 = service.create(db_session, _payload(project.id))
-        e2 = service.create(db_session, _payload(project.id))
-        e3 = service.create(db_session, _payload(project.id))
+        version = _make_version(db_session, project=project)
+        e1 = service.create(db_session, _payload(project.id, version_id=version.id))
+        e2 = service.create(db_session, _payload(project.id, version_id=version.id))
+        e3 = service.create(db_session, _payload(project.id, version_id=version.id))
 
         rows = service.list_epics(db_session, project_id=project.id)
         ids_in_order = [r.id for r in rows]
@@ -404,8 +599,9 @@ class TestEpicService:
     def test_list_pagination(self, db_session):
         """``limit`` / ``offset`` restrict the result window."""
         project = _make_project(db_session)
+        version = _make_version(db_session, project=project)
         for _ in range(5):
-            service.create(db_session, _payload(project.id))
+            service.create(db_session, _payload(project.id, version_id=version.id))
 
         first_page = service.list_epics(
             db_session,
@@ -436,7 +632,8 @@ class TestEpicService:
         break other tests.
         """
         project = _make_project(db_session)
-        created = service.create(db_session, _payload(project.id))
+        version = _make_version(db_session, project=project)
+        created = service.create(db_session, _payload(project.id, version_id=version.id))
         # ``in_transaction()`` must be True — commit would clear it.
         assert db_session.in_transaction()
         # Row is visible within the session after flush.

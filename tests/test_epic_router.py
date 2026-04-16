@@ -34,6 +34,7 @@ from fastapi.testclient import TestClient
 from backend.api.routes.epics import router as epics_router
 from backend.db.models.foundation import User
 from backend.db.models.projects import Project, ProjectModule
+from backend.db.models.versions import Version
 from backend.db.session import get_db
 
 
@@ -102,12 +103,55 @@ def module(db_session, project) -> ProjectModule:
     return mod
 
 
-def _payload(*, project_id, **overrides) -> dict:
-    """Return an epic-create payload with deterministic-ish defaults."""
+@pytest.fixture()
+def version(db_session, project) -> Version:
+    """Persist a release version that new epics can be assigned to.
+
+    DESIGN.md §4.0 Rule 2 — every new EPIC must carry a ``version_id``.
+    The router payloads below default to this version so the happy-path
+    cases remain one-liners.
+    """
+    v = Version(
+        project_id=project.id,
+        version_number=f"v{uuid.uuid4().hex[:6]}",
+        name="Test version",
+        status="planned",
+    )
+    db_session.add(v)
+    db_session.flush()
+    return v
+
+
+def _make_version(db_session, project: Project, **overrides) -> Version:
+    """Ad-hoc Version factory for tests that build their own projects."""
+    defaults = {
+        "project_id": project.id,
+        "version_number": f"v{uuid.uuid4().hex[:6]}",
+        "name": "Test version",
+        "status": "planned",
+    }
+    defaults.update(overrides)
+    v = Version(**defaults)
+    db_session.add(v)
+    db_session.flush()
+    return v
+
+
+def _payload(*, project_id, version_id=None, **overrides) -> dict:
+    """Return an epic-create payload with deterministic-ish defaults.
+
+    ``version_id`` is required by the service (DESIGN.md §4.0 Rule 2);
+    callers that want to exercise the error path can pass
+    ``version_id=None`` and the helper will simply omit the key so the
+    service surfaces ``ValueError("version_id required for new epics")``
+    via HTTP 422.
+    """
     body = {
         "project_id": str(project_id),
         "title": f"Epic {uuid.uuid4().hex[:8]}",
     }
+    if version_id is not None:
+        body["version_id"] = str(version_id)
     body.update(overrides)
     return body
 
@@ -116,9 +160,10 @@ class TestEpicRouter:
     """End-to-end HTTP coverage for the router."""
 
     # ----------------------------------------------------------- create
-    def test_create_epic(self, router_client, project):
+    def test_create_epic(self, router_client, project, version):
         payload = _payload(
             project_id=project.id,
+            version_id=version.id,
             title="Design the widget",
             status="in_progress",
         )
@@ -129,40 +174,55 @@ class TestEpicRouter:
         assert body["status"] == "in_progress"
         assert body["project_id"] == str(project.id)
         assert body["module_id"] is None
+        assert body["version_id"] == str(version.id)
         assert body["number"] == 1
         assert body["id"]
         assert body["created_at"]
         assert body["updated_at"]
 
-    def test_create_with_module(self, router_client, project, module):
+    def test_create_missing_version_id_returns_422(self, router_client, project):
+        """Missing ``version_id`` triggers the service-layer guard → HTTP 422.
+
+        DESIGN.md §4.0 Rule 2 — every new EPIC must carry a
+        ``version_id``. The service raises
+        ``ValueError("version_id required for new epics")`` which the
+        router translates to HTTP 422.
+        """
+        payload = _payload(project_id=project.id)  # no version_id
+        resp = router_client.post("/api/v1/epics", json=payload)
+        assert resp.status_code == 422, resp.text
+        assert "version_id required" in resp.text
+
+    def test_create_with_module(self, router_client, project, module, version):
         payload = _payload(
             project_id=project.id,
+            version_id=version.id,
             module_id=str(module.id),
         )
         resp = router_client.post("/api/v1/epics", json=payload)
         assert resp.status_code == 201, resp.text
         assert resp.json()["module_id"] == str(module.id)
 
-    def test_create_status_defaults_to_planned(self, router_client, project):
+    def test_create_status_defaults_to_planned(self, router_client, project, version):
         resp = router_client.post(
             "/api/v1/epics",
-            json=_payload(project_id=project.id),
+            json=_payload(project_id=project.id, version_id=version.id),
         )
         assert resp.status_code == 201, resp.text
         assert resp.json()["status"] == "planned"
 
-    def test_create_assigns_sequential_numbers_per_project(self, router_client, project):
+    def test_create_assigns_sequential_numbers_per_project(self, router_client, project, version):
         first = router_client.post(
             "/api/v1/epics",
-            json=_payload(project_id=project.id),
+            json=_payload(project_id=project.id, version_id=version.id),
         ).json()
         second = router_client.post(
             "/api/v1/epics",
-            json=_payload(project_id=project.id),
+            json=_payload(project_id=project.id, version_id=version.id),
         ).json()
         third = router_client.post(
             "/api/v1/epics",
-            json=_payload(project_id=project.id),
+            json=_payload(project_id=project.id, version_id=version.id),
         ).json()
         assert (first["number"], second["number"], third["number"]) == (1, 2, 3)
 
@@ -183,39 +243,41 @@ class TestEpicRouter:
         )
         db_session.add_all([p1, p2])
         db_session.flush()
+        v1 = _make_version(db_session, p1)
+        v2 = _make_version(db_session, p2)
 
         e1_p1 = router_client.post(
             "/api/v1/epics",
-            json=_payload(project_id=p1.id),
+            json=_payload(project_id=p1.id, version_id=v1.id),
         ).json()
         e2_p1 = router_client.post(
             "/api/v1/epics",
-            json=_payload(project_id=p1.id),
+            json=_payload(project_id=p1.id, version_id=v1.id),
         ).json()
         e1_p2 = router_client.post(
             "/api/v1/epics",
-            json=_payload(project_id=p2.id),
+            json=_payload(project_id=p2.id, version_id=v2.id),
         ).json()
 
         assert e1_p1["number"] == 1
         assert e2_p1["number"] == 2
         assert e1_p2["number"] == 1
 
-    def test_create_invalid_status_returns_422(self, router_client, project):
-        payload = _payload(project_id=project.id, status="bogus")
+    def test_create_invalid_status_returns_422(self, router_client, project, version):
+        payload = _payload(project_id=project.id, version_id=version.id, status="bogus")
         resp = router_client.post("/api/v1/epics", json=payload)
         assert resp.status_code == 422
 
-    def test_create_blank_title_returns_422(self, router_client, project):
-        payload = _payload(project_id=project.id, title="")
+    def test_create_blank_title_returns_422(self, router_client, project, version):
+        payload = _payload(project_id=project.id, version_id=version.id, title="")
         resp = router_client.post("/api/v1/epics", json=payload)
         assert resp.status_code == 422
 
     # --------------------------------------------------------------- get
-    def test_get_by_id(self, router_client, project):
+    def test_get_by_id(self, router_client, project, version):
         created = router_client.post(
             "/api/v1/epics",
-            json=_payload(project_id=project.id),
+            json=_payload(project_id=project.id, version_id=version.id),
         ).json()
         resp = router_client.get(f"/api/v1/epics/{created['id']}")
         assert resp.status_code == 200
@@ -226,11 +288,11 @@ class TestEpicRouter:
         assert resp.status_code == 404
 
     # -------------------------------------------------------------- list
-    def test_list_envelope_and_pagination(self, router_client, project):
+    def test_list_envelope_and_pagination(self, router_client, project, version):
         for _ in range(3):
             router_client.post(
                 "/api/v1/epics",
-                json=_payload(project_id=project.id),
+                json=_payload(project_id=project.id, version_id=version.id),
             ).raise_for_status()
 
         resp = router_client.get(
@@ -253,11 +315,11 @@ class TestEpicRouter:
         page2_ids = {row["id"] for row in page2["items"]}
         assert page1_ids.isdisjoint(page2_ids)
 
-    def test_list_orders_by_number_asc(self, router_client, project):
+    def test_list_orders_by_number_asc(self, router_client, project, version):
         for _ in range(3):
             router_client.post(
                 "/api/v1/epics",
-                json=_payload(project_id=project.id),
+                json=_payload(project_id=project.id, version_id=version.id),
             ).raise_for_status()
 
         resp = router_client.get(
@@ -286,14 +348,16 @@ class TestEpicRouter:
         )
         db_session.add_all([p1, p2])
         db_session.flush()
+        v1 = _make_version(db_session, p1)
+        v2 = _make_version(db_session, p2)
 
         router_client.post(
             "/api/v1/epics",
-            json=_payload(project_id=p1.id),
+            json=_payload(project_id=p1.id, version_id=v1.id),
         ).raise_for_status()
         router_client.post(
             "/api/v1/epics",
-            json=_payload(project_id=p2.id),
+            json=_payload(project_id=p2.id, version_id=v2.id),
         ).raise_for_status()
 
         resp = router_client.get(
@@ -305,16 +369,16 @@ class TestEpicRouter:
         assert body["total"] >= 1
         assert all(item["project_id"] == str(p2.id) for item in body["items"])
 
-    def test_list_filter_by_module_id(self, router_client, project, module):
+    def test_list_filter_by_module_id(self, router_client, project, module, version):
         # Project-level epic — must be filtered out when module_id is set.
         router_client.post(
             "/api/v1/epics",
-            json=_payload(project_id=project.id),
+            json=_payload(project_id=project.id, version_id=version.id),
         ).raise_for_status()
         # Module-scoped epic — the one we expect back.
         router_client.post(
             "/api/v1/epics",
-            json=_payload(project_id=project.id, module_id=str(module.id)),
+            json=_payload(project_id=project.id, version_id=version.id, module_id=str(module.id)),
         ).raise_for_status()
 
         resp = router_client.get(
@@ -326,14 +390,14 @@ class TestEpicRouter:
         assert body["total"] >= 1
         assert all(item["module_id"] == str(module.id) for item in body["items"])
 
-    def test_list_filter_by_status(self, router_client, project):
+    def test_list_filter_by_status(self, router_client, project, version):
         router_client.post(
             "/api/v1/epics",
-            json=_payload(project_id=project.id, status="planned"),
+            json=_payload(project_id=project.id, version_id=version.id, status="planned"),
         ).raise_for_status()
         router_client.post(
             "/api/v1/epics",
-            json=_payload(project_id=project.id, status="in_progress"),
+            json=_payload(project_id=project.id, version_id=version.id, status="in_progress"),
         ).raise_for_status()
 
         resp = router_client.get(
@@ -350,11 +414,12 @@ class TestEpicRouter:
         assert resp.status_code == 422
 
     # -------------------------------------------------------------- patch
-    def test_patch_partial_update(self, router_client, project, module):
+    def test_patch_partial_update(self, router_client, project, module, version):
         created = router_client.post(
             "/api/v1/epics",
             json=_payload(
                 project_id=project.id,
+                version_id=version.id,
                 title="Original title",
                 status="planned",
             ),
@@ -379,11 +444,12 @@ class TestEpicRouter:
         assert body["number"] == created["number"]
         assert body["created_at"] == created["created_at"]
 
-    def test_patch_omitted_fields_unchanged(self, router_client, project):
+    def test_patch_omitted_fields_unchanged(self, router_client, project, version):
         created = router_client.post(
             "/api/v1/epics",
             json=_payload(
                 project_id=project.id,
+                version_id=version.id,
                 title="Keep me",
                 status="planned",
             ),
@@ -398,10 +464,10 @@ class TestEpicRouter:
         assert body["status"] == "done"
         assert body["title"] == "Keep me"
 
-    def test_patch_invalid_status_returns_422(self, router_client, project):
+    def test_patch_invalid_status_returns_422(self, router_client, project, version):
         created = router_client.post(
             "/api/v1/epics",
-            json=_payload(project_id=project.id),
+            json=_payload(project_id=project.id, version_id=version.id),
         ).json()
         resp = router_client.patch(
             f"/api/v1/epics/{created['id']}",
@@ -417,10 +483,10 @@ class TestEpicRouter:
         assert resp.status_code == 404
 
     # ------------------------------------------------------------- delete
-    def test_delete_returns_204(self, router_client, project):
+    def test_delete_returns_204(self, router_client, project, version):
         created = router_client.post(
             "/api/v1/epics",
-            json=_payload(project_id=project.id),
+            json=_payload(project_id=project.id, version_id=version.id),
         ).json()
         resp = router_client.delete(f"/api/v1/epics/{created['id']}")
         assert resp.status_code == 204

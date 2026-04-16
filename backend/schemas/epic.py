@@ -39,7 +39,13 @@ class EpicCreate(BaseModel):
     ``server_default`` (``planned``) so callers may omit it.  Nullable
     columns default to ``None`` — ``module_id`` is optional because a
     project-level epic (no specific module scope) is permitted for
-    single-module projects.
+    single-module projects.  ``version_id`` is typed as ``Optional`` so
+    the schema can also serve patch-style payload helpers, but the
+    service layer (DESIGN.md §4.0 Rule 2) **requires** a non-null value
+    on create and raises ``ValueError("version_id required for new
+    epics")`` otherwise — the router converts that to HTTP 422.  The
+    underlying DB column is nullable only so that ``ON DELETE
+    RESTRICT`` remains expressible for legacy rows.
     """
 
     project_id: UUID = Field(
@@ -51,6 +57,15 @@ class EpicCreate(BaseModel):
         description=(
             "Optional project module the epic is scoped to. ``None`` denotes a "
             "project-level epic (used by single-module projects)."
+        ),
+    )
+    version_id: Optional[UUID] = Field(
+        default=None,
+        description=(
+            "Release version the epic is assigned to. Required by the service "
+            "layer per DESIGN.md §4.0 Rule 2 — passing ``None`` raises HTTP 422. "
+            "Typed as Optional only because the underlying DB column is nullable "
+            "for legacy rows (``ON DELETE RESTRICT`` constraint)."
         ),
     )
     title: str = Field(
@@ -107,6 +122,7 @@ class EpicRead(BaseModel):
     id: UUID
     project_id: UUID
     module_id: Optional[UUID] = None
+    version_id: Optional[UUID] = None
     number: int
     title: str = Field(..., min_length=1, max_length=500)
     status: EpicStatus

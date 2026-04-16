@@ -29,6 +29,7 @@ def upgrade() -> None:
         "versions",
         sa.Column("project_id", sa.UUID(), nullable=False),
         sa.Column("version_number", sa.String(length=50), nullable=False),
+        sa.Column("name", sa.String(length=255), nullable=True),
         sa.Column(
             "status",
             sa.String(length=20),

@@ -164,6 +164,12 @@ from backend.schemas.user_session import (
     UserSessionRead,
     UserSessionUpdate,
 )
+from backend.schemas.version import (
+    VersionCreate,
+    VersionRead,
+    VersionStatus,
+    VersionUpdate,
+)
 
 __all__ = [
     "ArchitectMessageCost",
@@ -275,4 +281,8 @@ __all__ = [
     "UserSessionRead",
     "UserSessionUpdate",
     "UserUpdate",
+    "VersionCreate",
+    "VersionRead",
+    "VersionStatus",
+    "VersionUpdate",
 ]

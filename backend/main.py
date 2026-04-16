@@ -37,6 +37,7 @@ from backend.api.routes.report_configs import router as report_configs_router
 from backend.api.routes.tasks import router as tasks_router
 from backend.api.routes.user_sessions import router as user_sessions_router
 from backend.api.routes.users import router as users_router
+from backend.api.routes.versions import router as versions_router
 from backend.config.settings import settings
 from backend.db.session import engine
 
@@ -111,6 +112,10 @@ app.include_router(
     prefix="/api/v1/migration-category-statuses",
 )
 app.include_router(migration_id_maps_router, prefix="/api/v1/migration-id-maps")
+# The versions router intentionally mounts under the bare ``/api/v1`` prefix
+# because it spans two URL families (``/projects/{id}/versions`` and
+# ``/versions/{id}``) — see DESIGN.md §2.6 Version Management.
+app.include_router(versions_router, prefix="/api/v1")
 
 
 @app.get("/health")

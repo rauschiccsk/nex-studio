@@ -34,6 +34,7 @@ from fastapi.testclient import TestClient
 from backend.api.routes.bugs import router as bugs_router
 from backend.db.models.foundation import User
 from backend.db.models.projects import Project
+from backend.db.models.versions import Version
 from backend.db.session import get_db
 
 
@@ -87,8 +88,49 @@ def project(db_session, reporter) -> Project:
     return proj
 
 
-def _payload(*, project_id, created_by, **overrides) -> dict:
-    """Return a bug-create payload with deterministic-ish defaults."""
+@pytest.fixture()
+def version(db_session, project) -> Version:
+    """Persist a release version that new bugs can be assigned to.
+
+    DESIGN.md §4.0 Rule 2 — every new BUG must carry a ``version_id``.
+    The router payloads below default to this version so the happy-path
+    cases remain one-liners.
+    """
+    v = Version(
+        project_id=project.id,
+        version_number=f"v{uuid.uuid4().hex[:6]}",
+        name="Test version",
+        status="planned",
+    )
+    db_session.add(v)
+    db_session.flush()
+    return v
+
+
+def _make_version(db_session, project: Project, **overrides) -> Version:
+    """Ad-hoc Version factory for tests that build their own projects."""
+    defaults = {
+        "project_id": project.id,
+        "version_number": f"v{uuid.uuid4().hex[:6]}",
+        "name": "Test version",
+        "status": "planned",
+    }
+    defaults.update(overrides)
+    v = Version(**defaults)
+    db_session.add(v)
+    db_session.flush()
+    return v
+
+
+def _payload(*, project_id, created_by, version_id=None, **overrides) -> dict:
+    """Return a bug-create payload with deterministic-ish defaults.
+
+    ``version_id`` is required by the service (DESIGN.md §4.0 Rule 2);
+    callers that want to exercise the error path can pass
+    ``version_id=None`` and the helper omits the key so the service
+    surfaces ``ValueError("version_id required for new bugs")`` via
+    HTTP 422.
+    """
     body = {
         "project_id": str(project_id),
         "title": f"Bug {uuid.uuid4().hex[:8]}",
@@ -96,6 +138,8 @@ def _payload(*, project_id, created_by, **overrides) -> dict:
         "severity": "major",
         "created_by": str(created_by),
     }
+    if version_id is not None:
+        body["version_id"] = str(version_id)
     body.update(overrides)
     return body
 
@@ -103,10 +147,11 @@ def _payload(*, project_id, created_by, **overrides) -> dict:
 class TestBugRouter:
     """End-to-end HTTP coverage for the router."""
 
-    def test_create_bug(self, router_client, project, reporter):
+    def test_create_bug(self, router_client, project, reporter, version):
         payload = _payload(
             project_id=project.id,
             created_by=reporter.id,
+            version_id=version.id,
             title="Login fails on Safari",
             severity="critical",
             source="customer",
@@ -123,55 +168,72 @@ class TestBugRouter:
         assert body["reported_by"] == "acme-corp"
         assert body["environment"] == "production"
         assert body["project_id"] == str(project.id)
+        assert body["version_id"] == str(version.id)
         assert body["created_by"] == str(reporter.id)
         assert body["bug_number"] == 1
         assert body["id"]
         assert body["created_at"]
         assert body["updated_at"]
 
-    def test_create_assigns_sequential_bug_numbers_per_project(self, router_client, project, reporter):
+    def test_create_missing_version_id_returns_422(self, router_client, project, reporter):
+        """Missing ``version_id`` triggers the service-layer guard → HTTP 422.
+
+        DESIGN.md §4.0 Rule 2 — every new BUG must carry a
+        ``version_id``. The service raises
+        ``ValueError("version_id required for new bugs")`` which the
+        router translates to HTTP 422.
+        """
+        payload = _payload(project_id=project.id, created_by=reporter.id)  # no version_id
+        resp = router_client.post("/api/v1/bugs", json=payload)
+        assert resp.status_code == 422, resp.text
+        assert "version_id required" in resp.text
+
+    def test_create_assigns_sequential_bug_numbers_per_project(self, router_client, project, reporter, version):
         first = router_client.post(
             "/api/v1/bugs",
-            json=_payload(project_id=project.id, created_by=reporter.id),
+            json=_payload(project_id=project.id, created_by=reporter.id, version_id=version.id),
         ).json()
         second = router_client.post(
             "/api/v1/bugs",
-            json=_payload(project_id=project.id, created_by=reporter.id),
+            json=_payload(project_id=project.id, created_by=reporter.id, version_id=version.id),
         ).json()
         assert first["bug_number"] == 1
         assert second["bug_number"] == 2
 
-    def test_create_invalid_severity_returns_422(self, router_client, project, reporter):
+    def test_create_invalid_severity_returns_422(self, router_client, project, reporter, version):
         payload = _payload(
             project_id=project.id,
             created_by=reporter.id,
+            version_id=version.id,
             severity="bogus",
         )
         resp = router_client.post("/api/v1/bugs", json=payload)
         assert resp.status_code == 422
 
-    def test_create_invalid_status_returns_422(self, router_client, project, reporter):
+    def test_create_invalid_status_returns_422(self, router_client, project, reporter, version):
         payload = _payload(
             project_id=project.id,
             created_by=reporter.id,
+            version_id=version.id,
             status="bogus",
         )
         resp = router_client.post("/api/v1/bugs", json=payload)
         assert resp.status_code == 422
 
-    def test_create_invalid_source_returns_422(self, router_client, project, reporter):
+    def test_create_invalid_source_returns_422(self, router_client, project, reporter, version):
         payload = _payload(
             project_id=project.id,
             created_by=reporter.id,
+            version_id=version.id,
             source="bogus",
         )
         resp = router_client.post("/api/v1/bugs", json=payload)
         assert resp.status_code == 422
 
-    def test_get_by_id(self, router_client, project, reporter):
+    def test_get_by_id(self, router_client, project, reporter, version):
         created = router_client.post(
             "/api/v1/bugs",
-            json=_payload(project_id=project.id, created_by=reporter.id),
+            json=_payload(project_id=project.id, created_by=reporter.id, version_id=version.id),
         ).json()
         resp = router_client.get(f"/api/v1/bugs/{created['id']}")
         assert resp.status_code == 200
@@ -181,11 +243,11 @@ class TestBugRouter:
         resp = router_client.get(f"/api/v1/bugs/{uuid.uuid4()}")
         assert resp.status_code == 404
 
-    def test_list_envelope_and_pagination(self, router_client, project, reporter):
+    def test_list_envelope_and_pagination(self, router_client, project, reporter, version):
         for _ in range(3):
             router_client.post(
                 "/api/v1/bugs",
-                json=_payload(project_id=project.id, created_by=reporter.id),
+                json=_payload(project_id=project.id, created_by=reporter.id, version_id=version.id),
             ).raise_for_status()
 
         resp = router_client.get("/api/v1/bugs", params={"skip": 0, "limit": 2})
@@ -222,14 +284,16 @@ class TestBugRouter:
         )
         db_session.add_all([p1, p2])
         db_session.flush()
+        v1 = _make_version(db_session, p1)
+        v2 = _make_version(db_session, p2)
 
         router_client.post(
             "/api/v1/bugs",
-            json=_payload(project_id=p1.id, created_by=reporter.id),
+            json=_payload(project_id=p1.id, created_by=reporter.id, version_id=v1.id),
         ).raise_for_status()
         router_client.post(
             "/api/v1/bugs",
-            json=_payload(project_id=p2.id, created_by=reporter.id),
+            json=_payload(project_id=p2.id, created_by=reporter.id, version_id=v2.id),
         ).raise_for_status()
 
         resp = router_client.get(
@@ -241,16 +305,17 @@ class TestBugRouter:
         assert body["total"] >= 1
         assert all(item["project_id"] == str(p2.id) for item in body["items"])
 
-    def test_list_filter_by_status(self, router_client, project, reporter):
+    def test_list_filter_by_status(self, router_client, project, reporter, version):
         router_client.post(
             "/api/v1/bugs",
-            json=_payload(project_id=project.id, created_by=reporter.id, status="new"),
+            json=_payload(project_id=project.id, created_by=reporter.id, version_id=version.id, status="new"),
         ).raise_for_status()
         router_client.post(
             "/api/v1/bugs",
             json=_payload(
                 project_id=project.id,
                 created_by=reporter.id,
+                version_id=version.id,
                 status="accepted",
             ),
         ).raise_for_status()
@@ -261,12 +326,13 @@ class TestBugRouter:
         assert body["total"] >= 1
         assert all(item["status"] == "accepted" for item in body["items"])
 
-    def test_list_filter_by_severity(self, router_client, project, reporter):
+    def test_list_filter_by_severity(self, router_client, project, reporter, version):
         router_client.post(
             "/api/v1/bugs",
             json=_payload(
                 project_id=project.id,
                 created_by=reporter.id,
+                version_id=version.id,
                 severity="critical",
             ),
         ).raise_for_status()
@@ -275,6 +341,7 @@ class TestBugRouter:
             json=_payload(
                 project_id=project.id,
                 created_by=reporter.id,
+                version_id=version.id,
                 severity="minor",
             ),
         ).raise_for_status()
@@ -285,12 +352,13 @@ class TestBugRouter:
         assert body["total"] >= 1
         assert all(item["severity"] == "critical" for item in body["items"])
 
-    def test_list_filter_by_source(self, router_client, project, reporter):
+    def test_list_filter_by_source(self, router_client, project, reporter, version):
         router_client.post(
             "/api/v1/bugs",
             json=_payload(
                 project_id=project.id,
                 created_by=reporter.id,
+                version_id=version.id,
                 source="internal",
             ),
         ).raise_for_status()
@@ -299,6 +367,7 @@ class TestBugRouter:
             json=_payload(
                 project_id=project.id,
                 created_by=reporter.id,
+                version_id=version.id,
                 source="customer",
             ),
         ).raise_for_status()
@@ -309,7 +378,7 @@ class TestBugRouter:
         assert body["total"] >= 1
         assert all(item["source"] == "customer" for item in body["items"])
 
-    def test_list_filter_by_created_by(self, router_client, db_session, project, reporter):
+    def test_list_filter_by_created_by(self, router_client, db_session, project, reporter, version):
         other = User(
             username=f"other_{uuid.uuid4().hex[:8]}",
             email=f"{uuid.uuid4().hex[:8]}@example.com",
@@ -321,11 +390,11 @@ class TestBugRouter:
 
         router_client.post(
             "/api/v1/bugs",
-            json=_payload(project_id=project.id, created_by=reporter.id),
+            json=_payload(project_id=project.id, created_by=reporter.id, version_id=version.id),
         ).raise_for_status()
         router_client.post(
             "/api/v1/bugs",
-            json=_payload(project_id=project.id, created_by=other.id),
+            json=_payload(project_id=project.id, created_by=other.id, version_id=version.id),
         ).raise_for_status()
 
         resp = router_client.get(
@@ -341,12 +410,13 @@ class TestBugRouter:
         resp = router_client.get("/api/v1/bugs", params={"limit": 101})
         assert resp.status_code == 422
 
-    def test_patch_partial_update(self, router_client, project, reporter):
+    def test_patch_partial_update(self, router_client, project, reporter, version):
         created = router_client.post(
             "/api/v1/bugs",
             json=_payload(
                 project_id=project.id,
                 created_by=reporter.id,
+                version_id=version.id,
                 title="Original title",
                 severity="major",
                 status="new",
@@ -371,12 +441,13 @@ class TestBugRouter:
         assert body["created_by"] == created["created_by"]
         assert body["created_at"] == created["created_at"]
 
-    def test_patch_status_resolved_auto_stamps_resolved_at(self, router_client, project, reporter):
+    def test_patch_status_resolved_auto_stamps_resolved_at(self, router_client, project, reporter, version):
         created = router_client.post(
             "/api/v1/bugs",
             json=_payload(
                 project_id=project.id,
                 created_by=reporter.id,
+                version_id=version.id,
                 status="in_progress",
             ),
         ).json()
@@ -391,10 +462,10 @@ class TestBugRouter:
         assert body["status"] == "resolved"
         assert body["resolved_at"] is not None
 
-    def test_patch_invalid_severity_returns_422(self, router_client, project, reporter):
+    def test_patch_invalid_severity_returns_422(self, router_client, project, reporter, version):
         created = router_client.post(
             "/api/v1/bugs",
-            json=_payload(project_id=project.id, created_by=reporter.id),
+            json=_payload(project_id=project.id, created_by=reporter.id, version_id=version.id),
         ).json()
         resp = router_client.patch(
             f"/api/v1/bugs/{created['id']}",
@@ -409,10 +480,10 @@ class TestBugRouter:
         )
         assert resp.status_code == 404
 
-    def test_delete_returns_204(self, router_client, project, reporter):
+    def test_delete_returns_204(self, router_client, project, reporter, version):
         created = router_client.post(
             "/api/v1/bugs",
-            json=_payload(project_id=project.id, created_by=reporter.id),
+            json=_payload(project_id=project.id, created_by=reporter.id, version_id=version.id),
         ).json()
         resp = router_client.delete(f"/api/v1/bugs/{created['id']}")
         assert resp.status_code == 204

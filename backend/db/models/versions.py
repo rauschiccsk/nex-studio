@@ -31,6 +31,7 @@ class Version(Base, UUIDMixin, TimestampMixin):
         index=True,
     )
     version_number = Column(String(50), nullable=False)
+    name = Column(String(255), nullable=True)
     status = Column(String(20), nullable=False, server_default="planned")
     description = Column(Text, nullable=True)
     target_date = Column(Date, nullable=True)

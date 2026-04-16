@@ -52,6 +52,15 @@ class BugCreate(BaseModel):
         ...,
         description="Project the bug is reported against.",
     )
+    version_id: Optional[UUID] = Field(
+        default=None,
+        description=(
+            "Release version the bug is assigned to. Required by the service "
+            "layer per DESIGN.md §4.0 Rule 2 — passing ``None`` raises HTTP 422. "
+            "Typed as Optional only because the underlying DB column is nullable "
+            "for legacy rows (``ON DELETE RESTRICT`` constraint)."
+        ),
+    )
     title: str = Field(
         ...,
         min_length=1,
@@ -167,6 +176,7 @@ class BugRead(BaseModel):
 
     id: UUID
     project_id: UUID
+    version_id: Optional[UUID] = None
     bug_number: int
     title: str = Field(..., min_length=1, max_length=500)
     description: str

@@ -114,6 +114,7 @@ import pytest
 from backend.db.models.bugs import Bug
 from backend.db.models.foundation import User
 from backend.db.models.projects import Project, ProjectMember
+from backend.db.models.versions import Version
 
 # ---------------------------------------------------------------------------
 # Precondition fixtures — Nazar (shu_junior) as a member of NEX Horizont,
@@ -229,7 +230,27 @@ def nex_horizont(db_session, zoltan, tibor, nazar, dominik) -> Project:
 
 
 @pytest.fixture()
-def preexisting_eleven_bugs(db_session, nex_horizont, zoltan) -> list[Bug]:
+def nex_horizont_version(db_session, nex_horizont) -> Version:
+    """Persist a release version for NEX Horizont.
+
+    DESIGN.md §4.0 Rule 2 (enforced by Feat 9 Task 9.4) requires
+    every new BUG to be filed against an existing release version.
+    Register-bug integration tests therefore need a version row up
+    front; the actor-side workflow assumes the project already has
+    at least one ``planned`` version they can attach the bug to.
+    """
+    version = Version(
+        project_id=nex_horizont.id,
+        version_number="1.0.0",
+        name="Pilot release",
+    )
+    db_session.add(version)
+    db_session.flush()
+    return version
+
+
+@pytest.fixture()
+def preexisting_eleven_bugs(db_session, nex_horizont, nex_horizont_version, zoltan) -> list[Bug]:
     """Seed eleven prior bugs against NEX Horizont so BUG-012 is the next.
 
     §3.15 step 4 names "BUG-012" explicitly — the twelfth bug in
@@ -240,11 +261,18 @@ def preexisting_eleven_bugs(db_session, nex_horizont, zoltan) -> list[Bug]:
     eleven seeded bugs are all ``status='resolved'`` to keep the
     "open bugs" query uncontaminated; the register_bug workflow
     itself does not consult the status of prior bugs.
+
+    Each seeded bug is attached to ``nex_horizont_version`` so the
+    pre-existing rows respect the DESIGN.md §4.0 Rule 2 contract
+    (every BUG belongs to a release version). The seeded version
+    stays at ``planned`` because the workflow does not touch the
+    version lifecycle — only the bug rows.
     """
     seeded: list[Bug] = []
     for i in range(1, 12):
         bug = Bug(
             project_id=nex_horizont.id,
+            version_id=nex_horizont_version.id,
             bug_number=i,
             title=f"Prior bug #{i}",
             description=f"Historical bug {i} against NEX Horizont.",
@@ -279,12 +307,24 @@ BUG_SOURCE = "internal"
 BUG_ENVIRONMENT = "development"
 
 
-def _bug_payload(project_id: uuid.UUID, reporter_id: uuid.UUID, **overrides: Any) -> dict[str, Any]:
+def _bug_payload(
+    project_id: uuid.UUID,
+    reporter_id: uuid.UUID,
+    *,
+    version_id: uuid.UUID | None = None,
+    **overrides: Any,
+) -> dict[str, Any]:
     """Build a JSON payload for ``POST /api/v1/bugs``.
 
     Defaults mirror the §3.15 worked example exactly. Overrides let
     individual tests swap fields (e.g. empty ``title`` for the 422
     edge case, or a different ``severity``).
+
+    DESIGN.md §4.0 Rule 2 (enforced by Feat 9 Task 9.4) requires
+    every new BUG to carry a ``version_id``. Callers must pass it
+    explicitly through the ``version_id`` keyword argument; the
+    helper threads the value into the payload so the worked
+    example continues to mirror the §3.15 form output.
     """
     payload: dict[str, Any] = {
         "project_id": str(project_id),
@@ -295,6 +335,8 @@ def _bug_payload(project_id: uuid.UUID, reporter_id: uuid.UUID, **overrides: Any
         "environment": BUG_ENVIRONMENT,
         "created_by": str(reporter_id),
     }
+    if version_id is not None:
+        payload["version_id"] = str(version_id)
     payload.update(overrides)
     return payload
 
@@ -315,6 +357,7 @@ class TestRegisterBugHappyPath:
         zoltan,
         tibor,
         nex_horizont,
+        nex_horizont_version,
         preexisting_eleven_bugs,
     ):
         """Drive steps 1-4 of the workflow and verify every postcondition.
@@ -353,7 +396,7 @@ class TestRegisterBugHappyPath:
         # defaults ``status`` to ``'new'`` via ``server_default``.
         create_resp = client.post(
             "/api/v1/bugs",
-            json=_bug_payload(nex_horizont.id, nazar.id),
+            json=_bug_payload(nex_horizont.id, nazar.id, version_id=nex_horizont_version.id),
         )
         assert create_resp.status_code == 201, create_resp.text
         bug = create_resp.json()
@@ -485,6 +528,7 @@ class TestRegisterBugHappyPath:
         db_session,
         dominik,
         nex_horizont,
+        nex_horizont_version,
     ):
         """BEHAVIOR.md §3.15 actor line — "Nazar (alebo ktokoľvek)".
 
@@ -503,6 +547,7 @@ class TestRegisterBugHappyPath:
             json=_bug_payload(
                 nex_horizont.id,
                 dominik.id,
+                version_id=nex_horizont_version.id,
                 title="Migration script leaves orphaned rows in ``contacts``.",
                 severity="minor",
             ),
@@ -547,6 +592,7 @@ class TestRegisterBugEdgeCases:
         db_session,
         nazar,
         nex_horizont,
+        nex_horizont_version,
         preexisting_eleven_bugs,
     ):
         """Consecutive registers → BUG-12, BUG-13, BUG-14 in order.
@@ -563,6 +609,7 @@ class TestRegisterBugEdgeCases:
                 json=_bug_payload(
                     nex_horizont.id,
                     nazar.id,
+                    version_id=nex_horizont_version.id,
                     title=f"Sequential register #{idx}",
                 ),
             )
@@ -586,6 +633,7 @@ class TestRegisterBugEdgeCases:
         nazar,
         zoltan,
         nex_horizont,
+        nex_horizont_version,
         preexisting_eleven_bugs,
     ):
         """A second project starts its own numbering at BUG-1.
@@ -608,12 +656,20 @@ class TestRegisterBugEdgeCases:
         db_session.add(nex_marina)
         db_session.flush()
         db_session.add(ProjectMember(project_id=nex_marina.id, user_id=nazar.id))
+        # Marina needs its own release version — DESIGN.md §4.0
+        # Rule 2 mandates a ``version_id`` on every new bug.
+        marina_version = Version(
+            project_id=nex_marina.id,
+            version_number="1.0.0",
+            name="Marina pilot",
+        )
+        db_session.add(marina_version)
         db_session.flush()
 
         # Register against NEX Horizont — lands at 12.
         horizont_resp = client.post(
             "/api/v1/bugs",
-            json=_bug_payload(nex_horizont.id, nazar.id),
+            json=_bug_payload(nex_horizont.id, nazar.id, version_id=nex_horizont_version.id),
         )
         assert horizont_resp.status_code == 201, horizont_resp.text
         assert horizont_resp.json()["bug_number"] == 12
@@ -624,6 +680,7 @@ class TestRegisterBugEdgeCases:
             json=_bug_payload(
                 nex_marina.id,
                 nazar.id,
+                version_id=marina_version.id,
                 title="Marina booking: double-booking on same slot.",
                 severity="critical",
             ),
@@ -649,6 +706,7 @@ class TestRegisterBugEdgeCases:
         db_session,
         nazar,
         nex_horizont,
+        nex_horizont_version,
         preexisting_eleven_bugs,
     ):
         """Client-sent ``bug_number`` must not override the service.
@@ -663,7 +721,7 @@ class TestRegisterBugEdgeCases:
         resp = client.post(
             "/api/v1/bugs",
             json={
-                **_bug_payload(nex_horizont.id, nazar.id),
+                **_bug_payload(nex_horizont.id, nazar.id, version_id=nex_horizont_version.id),
                 "bug_number": 999,
             },
         )

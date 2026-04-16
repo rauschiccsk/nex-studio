@@ -7,8 +7,8 @@ Errors are signalled via :class:`ValueError` so the router can translate
 them to the appropriate HTTP status code.
 
 Design notes (per DESIGN.md §1.9 Tasks (Epic/Feat/Task hierarchy), §2
-``epics`` table, §2.6 ``POST /projects/{id}/epics``, §6.6 list filters,
-§6.8 Service Layer Extension and
+``epics`` table, §2.6 ``POST /projects/{id}/epics``, §4.0 Version
+Lifecycle Rules, §6.6 list filters, §6.8 Service Layer Extension and
 :mod:`backend.db.models.tasks.Epic`):
 
     * ``id``, ``number``, ``created_at`` and ``updated_at`` are
@@ -27,12 +27,27 @@ Design notes (per DESIGN.md §1.9 Tasks (Epic/Feat/Task hierarchy), §2
       before flush so concurrent creates on the same project — which
       are rare but possible — still surface as :class:`ValueError`
       instead of raw :class:`~sqlalchemy.exc.IntegrityError`.
+    * ``version_id`` is **required** at creation time (DESIGN.md §4.0
+      Rule 2 — every new EPIC must be assigned to a release version
+      before it can be scheduled). The underlying column is nullable at
+      the DB level only so that the FK ``ON DELETE RESTRICT`` remains
+      expressible for legacy rows; the service enforces the stronger
+      application-level contract and rejects ``version_id is None``
+      with :class:`ValueError` (HTTP 422 at the router layer).
     * ``status`` is constrained by the ``ck_epics_status`` DB CHECK
       (``planned | in_progress | done``). The Pydantic
       :data:`~backend.schemas.epic.EpicStatus` literal mirrors the DB
       constraint, so the service does not revalidate — if an invalid
       value ever reaches the service (e.g. a bypassed schema) the DB
       CHECK rejects it on flush.
+    * :func:`update` wires in the DESIGN.md §4.0 Rule 4 auto-activate
+      trigger: whenever an epic transitions **into** ``in_progress``
+      and carries a ``version_id``, the linked version is promoted from
+      ``planned`` → ``active`` via
+      :func:`backend.services.version.auto_activate`. The helper is
+      idempotent — already-``active`` / ``released`` versions are a
+      no-op — so double-firing the trigger on repeated patches does
+      nothing unsafe.
     * ``module_id`` remains mutable: ``NULL`` denotes a project-level
       epic (used by single-module projects — see schema docstring and
       DESIGN.md §1.9) and the DB-level ``ON DELETE SET NULL`` naturally
@@ -74,6 +89,7 @@ from backend.schemas.epic import (
     EpicStatus,
     EpicUpdate,
 )
+from backend.services import version as version_service
 
 
 def list_epics(
@@ -207,14 +223,23 @@ def create(db: Session, data: EpicCreate) -> Epic:
     409 at the router layer) rather than a raw
     :class:`~sqlalchemy.exc.IntegrityError`.
 
+    ``version_id`` is **required** (DESIGN.md §4.0 Rule 2 — every new
+    EPIC belongs to a release version). The service raises
+    :class:`ValueError` when the caller passes ``None`` so the router
+    can translate it to HTTP 422. The underlying column is nullable at
+    the DB level only because ``ON DELETE RESTRICT`` must remain
+    expressible for legacy rows; the application-level contract is
+    stricter.
+
     ``status`` defaults to ``planned`` via the Pydantic schema / DB
     ``server_default`` when omitted, matching the model declaration.
     ``module_id`` may be ``None`` to register a project-level epic (used
     by single-module projects).
 
-    If the supplied ``project_id`` or ``module_id`` foreign keys do not
-    match existing rows the DB-level FK rejects the flush and the error
-    propagates as-is (routed at the API layer as a 409/422).
+    If the supplied ``project_id``, ``module_id`` or ``version_id``
+    foreign keys do not match existing rows the DB-level FK rejects the
+    flush and the error propagates as-is (routed at the API layer as a
+    409/422).
 
     Args:
         db: Active SQLAlchemy session.
@@ -226,9 +251,13 @@ def create(db: Session, data: EpicCreate) -> Epic:
         ``updated_at`` populated.
 
     Raises:
-        ValueError: If another epic already uses the same
+        ValueError: If ``version_id`` is ``None`` (DESIGN.md §4.0
+            Rule 2) or if another epic already uses the same
             ``(project_id, number)`` pair (concurrent-create race).
     """
+    if data.version_id is None:
+        raise ValueError("version_id required for new epics")
+
     number = _next_epic_number(db, data.project_id)
     if _get_by_project_and_number(db, data.project_id, number) is not None:
         raise ValueError(f"Epic with project_id={data.project_id} and number={number} already exists")
@@ -236,6 +265,7 @@ def create(db: Session, data: EpicCreate) -> Epic:
     epic = Epic(
         project_id=data.project_id,
         module_id=data.module_id,
+        version_id=data.version_id,
         number=number,
         title=data.title,
         status=data.status,
@@ -261,6 +291,15 @@ def update(db: Session, epic_id: UUID, data: EpicUpdate) -> Epic:
     transition is not expressible through this service; it is a rare
     correction that belongs to admin tooling rather than the UI.
 
+    Version lifecycle trigger (DESIGN.md §4.0 Rule 4): when ``status``
+    transitions **into** ``in_progress`` and the epic carries a
+    ``version_id``, the linked version is promoted from ``planned`` →
+    ``active`` via
+    :func:`backend.services.version.auto_activate`. The helper is a
+    no-op for versions already in ``active`` / ``released`` (Rule 3 —
+    status only flows forward), so firing it on every transition into
+    ``in_progress`` is safe even for repeated PATCHes.
+
     Raises:
         ValueError: If the epic does not exist.
     """
@@ -276,11 +315,21 @@ def update(db: Session, epic_id: UUID, data: EpicUpdate) -> Epic:
         "status",
     }
 
+    # Capture the pre-update status so we can detect the exact
+    # ``-> in_progress`` transition and avoid firing ``auto_activate``
+    # on idempotent re-patches that keep ``status = 'in_progress'``.
+    previous_status = epic.status
+
     for field, value in update_data.items():
         if field in allowed_fields and value is not None:
             setattr(epic, field, value)
 
     db.flush()
+
+    new_status = update_data.get("status")
+    if new_status == "in_progress" and previous_status != "in_progress" and epic.version_id is not None:
+        version_service.auto_activate(db, epic.version_id)
+
     return epic
 
 

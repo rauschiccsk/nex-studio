@@ -159,6 +159,7 @@ from backend.db.models.projects import (
 )
 from backend.db.models.specifications import DesignDocument
 from backend.db.models.tasks import Epic, Feat, Task
+from backend.db.models.versions import Version
 
 # ---------------------------------------------------------------------------
 # Precondition fixtures — Zoltán (ri_director) and Tibor (ri_senior); the
@@ -231,9 +232,30 @@ def nex_horizont(db_session, zoltan, tibor) -> Project:
 
 
 @pytest.fixture()
+def nex_horizont_version(db_session, nex_horizont) -> Version:
+    """Persist a release version for NEX Horizont.
+
+    DESIGN.md §4.0 Rule 2 (enforced by Feat 9 Task 9.4) requires
+    every new EPIC to be filed against an existing release version.
+    The §3.10 import workflow therefore needs a version row up
+    front; the orchestrator picks the active / planned version when
+    persisting EPIC 4.
+    """
+    version = Version(
+        project_id=nex_horizont.id,
+        version_number="1.0.0",
+        name="Pilot release",
+    )
+    db_session.add(version)
+    db_session.flush()
+    return version
+
+
+@pytest.fixture()
 def prior_modules_with_epics(
     db_session,
     nex_horizont,
+    nex_horizont_version,
     tibor,
 ) -> list[ProjectModule]:
     """Persist three prior ``done`` modules, each with an existing epic.
@@ -273,6 +295,7 @@ def prior_modules_with_epics(
             Epic(
                 project_id=nex_horizont.id,
                 module_id=module.id,
+                version_id=nex_horizont_version.id,
                 number=number,
                 title=f"EPIC {number} — {code} ({name})",
                 status="done",
@@ -441,6 +464,7 @@ class TestGenerateEpicFeatTaskPlanHappyPath:
         db_session,
         tibor,
         nex_horizont,
+        nex_horizont_version,
         stk_in_design,
         prior_modules_with_epics,
         approved_stk_design,
@@ -551,6 +575,7 @@ class TestGenerateEpicFeatTaskPlanHappyPath:
             json={
                 "project_id": str(nex_horizont.id),
                 "module_id": str(stk_in_design.id),
+                "version_id": str(nex_horizont_version.id),
                 "title": "STK — Skladové karty zásob",
             },
         )
@@ -833,6 +858,7 @@ class TestGenerateEpicFeatTaskPlanEdgeCases:
         db_session,
         tibor,
         nex_horizont,
+        nex_horizont_version,
         stk_in_design,
         prior_modules_with_epics,
         approved_stk_design,
@@ -857,6 +883,7 @@ class TestGenerateEpicFeatTaskPlanEdgeCases:
             json={
                 "project_id": str(nex_horizont.id),
                 "module_id": str(stk_in_design.id),
+                "version_id": str(nex_horizont_version.id),
                 "title": "STK — Skladové karty zásob",
             },
         )
@@ -930,6 +957,7 @@ class TestGenerateEpicFeatTaskPlanEdgeCases:
         db_session,
         tibor,
         nex_horizont,
+        nex_horizont_version,
         stk_in_design,
         prior_modules_with_epics,
         approved_stk_design,
@@ -950,6 +978,7 @@ class TestGenerateEpicFeatTaskPlanEdgeCases:
             json={
                 "project_id": str(nex_horizont.id),
                 "module_id": str(stk_in_design.id),
+                "version_id": str(nex_horizont_version.id),
                 "title": "STK — Skladové karty zásob",
             },
         )
