@@ -61,7 +61,7 @@ from __future__ import annotations
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.db.models.guardian import GuardianReview
@@ -119,6 +119,44 @@ def list_guardian_reviews(
         stmt = stmt.where(GuardianReview.passed == passed)
     stmt = stmt.order_by(GuardianReview.created_at.desc()).limit(limit).offset(offset)
     return list(db.execute(stmt).scalars().all())
+
+
+def count_guardian_reviews(
+    db: Session,
+    *,
+    delegation_id: Optional[UUID] = None,
+    layer: Optional[GuardianReviewLayer] = None,
+    risk_level: Optional[GuardianReviewRiskLevel] = None,
+    passed: Optional[bool] = None,
+) -> int:
+    """Return the total number of Guardian reviews matching the filters.
+
+    Mirrors the ``delegation_id`` / ``layer`` / ``risk_level`` / ``passed``
+    filters of :func:`list_guardian_reviews` so a paginated response can
+    report the unfiltered total alongside the current page of items.
+
+    Args:
+        db: Active SQLAlchemy session.
+        delegation_id: Optional delegation filter.
+        layer: Optional pipeline-layer filter (``layer1`` | ``layer2`` |
+            ``layer3``).
+        risk_level: Optional risk-level filter (``low`` | ``medium`` |
+            ``high`` | ``critical``).
+        passed: Optional blocking-flag filter.
+
+    Returns:
+        Total number of rows matching the filters.
+    """
+    stmt = select(func.count()).select_from(GuardianReview)
+    if delegation_id is not None:
+        stmt = stmt.where(GuardianReview.delegation_id == delegation_id)
+    if layer is not None:
+        stmt = stmt.where(GuardianReview.layer == layer)
+    if risk_level is not None:
+        stmt = stmt.where(GuardianReview.risk_level == risk_level)
+    if passed is not None:
+        stmt = stmt.where(GuardianReview.passed == passed)
+    return int(db.execute(stmt).scalar_one())
 
 
 def get_by_id(db: Session, guardian_review_id: UUID) -> GuardianReview:

@@ -70,7 +70,7 @@ from __future__ import annotations
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.db.models.specifications import RawSpecification
@@ -132,6 +132,53 @@ def list_raw_specifications(
         stmt = stmt.where(RawSpecification.language == language)
     stmt = stmt.order_by(RawSpecification.created_at.desc()).limit(limit).offset(offset)
     return list(db.execute(stmt).scalars().all())
+
+
+def count_raw_specifications(
+    db: Session,
+    *,
+    project_id: Optional[UUID] = None,
+    status: Optional[RawSpecificationStatus] = None,
+    created_by: Optional[UUID] = None,
+    input_format: Optional[RawSpecificationInputFormat] = None,
+    language: Optional[str] = None,
+) -> int:
+    """Return the total number of raw specifications matching the filters.
+
+    Mirrors the ``project_id`` / ``status`` / ``created_by`` /
+    ``input_format`` / ``language`` filters of
+    :func:`list_raw_specifications` so the router can report the
+    unfiltered total alongside the current page of items in the
+    :class:`~backend.schemas.pagination.PaginatedResponse` envelope.
+
+    Args:
+        db: Active SQLAlchemy session.
+        project_id: Optional project filter — restrict to specifications
+            belonging to a specific project.
+        status: Optional processing-status filter (``pending`` |
+            ``processing`` | ``done`` | ``failed``).
+        created_by: Optional uploader filter — restrict to
+            specifications submitted by a specific user.
+        input_format: Optional input-format filter (``text`` | ``pdf``
+            | ``docx``).
+        language: Optional ISO-style language-code filter
+            (e.g. ``sk``, ``en``).
+
+    Returns:
+        Total number of rows matching the filters.
+    """
+    stmt = select(func.count()).select_from(RawSpecification)
+    if project_id is not None:
+        stmt = stmt.where(RawSpecification.project_id == project_id)
+    if status is not None:
+        stmt = stmt.where(RawSpecification.status == status)
+    if created_by is not None:
+        stmt = stmt.where(RawSpecification.created_by == created_by)
+    if input_format is not None:
+        stmt = stmt.where(RawSpecification.input_format == input_format)
+    if language is not None:
+        stmt = stmt.where(RawSpecification.language == language)
+    return int(db.execute(stmt).scalar_one())
 
 
 def get_by_id(db: Session, spec_id: UUID) -> RawSpecification:

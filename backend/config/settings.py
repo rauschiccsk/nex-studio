@@ -11,6 +11,10 @@ class Settings(BaseSettings):
     backend_port: int = 9176
     frontend_port: int = 9177
     vite_api_base_url: str = "http://localhost:9176"
+    cors_origins: list[str] = [
+        "http://localhost:9177",
+        "http://127.0.0.1:9177",
+    ]
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

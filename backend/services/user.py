@@ -38,7 +38,7 @@ from __future__ import annotations
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.db.models.architect import ArchitectSession
@@ -84,6 +84,34 @@ def list_users(
         stmt = stmt.where(User.is_active == is_active)
     stmt = stmt.order_by(User.created_at.desc()).limit(limit).offset(offset)
     return list(db.execute(stmt).scalars().all())
+
+
+def count_users(
+    db: Session,
+    *,
+    role: Optional[UserRole] = None,
+    is_active: Optional[bool] = None,
+) -> int:
+    """Return the total number of users matching the given filters.
+
+    Mirrors the ``role`` / ``is_active`` filters of :func:`list_users` so a
+    paginated response can report the unfiltered total alongside the
+    current page of items.
+
+    Args:
+        db: Active SQLAlchemy session.
+        role: Optional role filter (``ri`` | ``ha`` | ``shu``).
+        is_active: Optional active-flag filter.
+
+    Returns:
+        Total number of rows matching the filters.
+    """
+    stmt = select(func.count()).select_from(User)
+    if role is not None:
+        stmt = stmt.where(User.role == role)
+    if is_active is not None:
+        stmt = stmt.where(User.is_active == is_active)
+    return int(db.execute(stmt).scalar_one())
 
 
 def get_by_id(db: Session, user_id: UUID) -> User:

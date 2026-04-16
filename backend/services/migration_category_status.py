@@ -46,7 +46,7 @@ from __future__ import annotations
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.db.models.migration import MigrationCategoryStatus
@@ -95,6 +95,40 @@ def list_migration_category_statuses(
         stmt = stmt.where(MigrationCategoryStatus.status == status)
     stmt = stmt.order_by(MigrationCategoryStatus.created_at.desc()).limit(limit).offset(offset)
     return list(db.execute(stmt).scalars().all())
+
+
+def count_migration_category_statuses(
+    db: Session,
+    *,
+    project_id: Optional[UUID] = None,
+    category: Optional[str] = None,
+    status: Optional[MigrationCategoryStatusStatus] = None,
+) -> int:
+    """Return the total number of migration category status rows matching the filters.
+
+    Mirrors the ``project_id`` / ``category`` / ``status`` filters of
+    :func:`list_migration_category_statuses` so a paginated response can
+    report the unfiltered total alongside the current page of items.
+
+    Args:
+        db: Active SQLAlchemy session.
+        project_id: Optional project filter.
+        category: Optional category filter (e.g. ``'PAB'``, ``'GSC'``,
+            ``'STK'``, ``'TSH'``).
+        status: Optional lifecycle-status filter (``pending`` |
+            ``in_progress`` | ``completed`` | ``failed``).
+
+    Returns:
+        Total number of rows matching the filters.
+    """
+    stmt = select(func.count()).select_from(MigrationCategoryStatus)
+    if project_id is not None:
+        stmt = stmt.where(MigrationCategoryStatus.project_id == project_id)
+    if category is not None:
+        stmt = stmt.where(MigrationCategoryStatus.category == category)
+    if status is not None:
+        stmt = stmt.where(MigrationCategoryStatus.status == status)
+    return int(db.execute(stmt).scalar_one())
 
 
 def get_by_id(db: Session, status_id: UUID) -> MigrationCategoryStatus:

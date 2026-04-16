@@ -76,7 +76,7 @@ from __future__ import annotations
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.db.models.kb import KbDocument
@@ -139,6 +139,49 @@ def list_kb_documents(
         stmt = stmt.where(KbDocument.qdrant_point_id == qdrant_point_id)
     stmt = stmt.order_by(KbDocument.created_at.desc()).limit(limit).offset(offset)
     return list(db.execute(stmt).scalars().all())
+
+
+def count_kb_documents(
+    db: Session,
+    *,
+    project_id: Optional[UUID] = None,
+    module_id: Optional[UUID] = None,
+    doc_category: Optional[KbDocumentCategory] = None,
+    qdrant_point_id: Optional[str] = None,
+) -> int:
+    """Return the total number of knowledge-base documents matching the filters.
+
+    Mirrors the ``project_id`` / ``module_id`` / ``doc_category`` /
+    ``qdrant_point_id`` filters of :func:`list_kb_documents` so the
+    router can report the unfiltered total alongside the current page
+    of items in the :class:`~backend.schemas.pagination.PaginatedResponse`
+    envelope.
+
+    Args:
+        db: Active SQLAlchemy session.
+        project_id: Optional project filter — restrict to documents
+            belonging to a specific project.
+        module_id: Optional module filter — restrict to documents
+            scoped to a specific module.
+        doc_category: Optional category filter — one of ``standards``,
+            ``decisions``, ``lessons``, ``patterns``, ``design``,
+            ``behavior`` or ``session``.
+        qdrant_point_id: Optional reverse-lookup filter for a specific
+            Qdrant point id.
+
+    Returns:
+        Total number of rows matching the filters.
+    """
+    stmt = select(func.count()).select_from(KbDocument)
+    if project_id is not None:
+        stmt = stmt.where(KbDocument.project_id == project_id)
+    if module_id is not None:
+        stmt = stmt.where(KbDocument.module_id == module_id)
+    if doc_category is not None:
+        stmt = stmt.where(KbDocument.doc_category == doc_category)
+    if qdrant_point_id is not None:
+        stmt = stmt.where(KbDocument.qdrant_point_id == qdrant_point_id)
+    return int(db.execute(stmt).scalar_one())
 
 
 def get_by_id(db: Session, document_id: UUID) -> KbDocument:

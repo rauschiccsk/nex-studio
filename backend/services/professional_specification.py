@@ -81,7 +81,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.db.models.specifications import ProfessionalSpecification
@@ -138,6 +138,49 @@ def list_professional_specifications(
         stmt = stmt.where(ProfessionalSpecification.version == version)
     stmt = stmt.order_by(ProfessionalSpecification.created_at.desc()).limit(limit).offset(offset)
     return list(db.execute(stmt).scalars().all())
+
+
+def count_professional_specifications(
+    db: Session,
+    *,
+    project_id: Optional[UUID] = None,
+    raw_spec_id: Optional[UUID] = None,
+    approved_by: Optional[UUID] = None,
+    version: Optional[int] = None,
+) -> int:
+    """Return the total number of professional specifications matching the filters.
+
+    Mirrors the ``project_id`` / ``raw_spec_id`` / ``approved_by`` /
+    ``version`` filters of :func:`list_professional_specifications` so
+    the router can report the unfiltered total alongside the current
+    page of items in the
+    :class:`~backend.schemas.pagination.PaginatedResponse` envelope.
+
+    Args:
+        db: Active SQLAlchemy session.
+        project_id: Optional project filter — restrict to specifications
+            belonging to a specific project.
+        raw_spec_id: Optional raw-specification filter — restrict to
+            professional specifications derived from a specific raw
+            specification.
+        approved_by: Optional approver filter — restrict to
+            specifications approved by a specific ``ri``-role user.
+        version: Optional version filter — restrict to a specific
+            version from the regeneration history.
+
+    Returns:
+        Total number of rows matching the filters.
+    """
+    stmt = select(func.count()).select_from(ProfessionalSpecification)
+    if project_id is not None:
+        stmt = stmt.where(ProfessionalSpecification.project_id == project_id)
+    if raw_spec_id is not None:
+        stmt = stmt.where(ProfessionalSpecification.raw_spec_id == raw_spec_id)
+    if approved_by is not None:
+        stmt = stmt.where(ProfessionalSpecification.approved_by == approved_by)
+    if version is not None:
+        stmt = stmt.where(ProfessionalSpecification.version == version)
+    return int(db.execute(stmt).scalar_one())
 
 
 def get_by_id(db: Session, spec_id: UUID) -> ProfessionalSpecification:

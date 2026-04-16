@@ -65,7 +65,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.db.models.architect import ArchitectSession
@@ -122,6 +122,46 @@ def list_architect_sessions(
         stmt = stmt.where(ArchitectSession.created_by == created_by)
     stmt = stmt.order_by(ArchitectSession.created_at.desc()).limit(limit).offset(offset)
     return list(db.execute(stmt).scalars().all())
+
+
+def count_architect_sessions(
+    db: Session,
+    *,
+    project_id: Optional[UUID] = None,
+    module_id: Optional[UUID] = None,
+    status: Optional[ArchitectSessionStatus] = None,
+    created_by: Optional[UUID] = None,
+) -> int:
+    """Return the total number of Architect sessions matching the filters.
+
+    Mirrors the ``project_id`` / ``module_id`` / ``status`` / ``created_by``
+    filters of :func:`list_architect_sessions` so a paginated response can
+    report the unfiltered total alongside the current page of items.
+
+    Args:
+        db: Active SQLAlchemy session.
+        project_id: Optional project filter.
+        module_id: Optional module filter — ``None`` means "don't filter";
+            to restrict to project-level (``module_id IS NULL``) sessions
+            the caller must use a dedicated query, mirroring the shape of
+            :func:`list_architect_sessions`.
+        status: Optional lifecycle-status filter (``active`` | ``closed``).
+        created_by: Optional author filter — restrict to sessions opened
+            by a specific user.
+
+    Returns:
+        Total number of rows matching the filters.
+    """
+    stmt = select(func.count()).select_from(ArchitectSession)
+    if project_id is not None:
+        stmt = stmt.where(ArchitectSession.project_id == project_id)
+    if module_id is not None:
+        stmt = stmt.where(ArchitectSession.module_id == module_id)
+    if status is not None:
+        stmt = stmt.where(ArchitectSession.status == status)
+    if created_by is not None:
+        stmt = stmt.where(ArchitectSession.created_by == created_by)
+    return int(db.execute(stmt).scalar_one())
 
 
 def get_by_id(db: Session, session_id: UUID) -> ArchitectSession:

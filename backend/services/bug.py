@@ -106,6 +106,47 @@ def list_bugs(
     return list(db.execute(stmt).scalars().all())
 
 
+def count_bugs(
+    db: Session,
+    *,
+    project_id: Optional[UUID] = None,
+    status: Optional[BugStatus] = None,
+    severity: Optional[BugSeverity] = None,
+    source: Optional[BugSource] = None,
+    created_by: Optional[UUID] = None,
+) -> int:
+    """Return the total number of bugs matching the given filters.
+
+    Mirrors the ``project_id`` / ``status`` / ``severity`` / ``source`` /
+    ``created_by`` filters of :func:`list_bugs` so a paginated response can
+    report the unfiltered total alongside the current page of items.
+
+    Args:
+        db: Active SQLAlchemy session.
+        project_id: Optional project filter.
+        status: Optional lifecycle-status filter.
+        severity: Optional severity filter.
+        source: Optional source filter.
+        created_by: Optional filter restricting results to bugs registered
+            by a specific user.
+
+    Returns:
+        Total number of rows matching the filters.
+    """
+    stmt = select(func.count()).select_from(Bug)
+    if project_id is not None:
+        stmt = stmt.where(Bug.project_id == project_id)
+    if status is not None:
+        stmt = stmt.where(Bug.status == status)
+    if severity is not None:
+        stmt = stmt.where(Bug.severity == severity)
+    if source is not None:
+        stmt = stmt.where(Bug.source == source)
+    if created_by is not None:
+        stmt = stmt.where(Bug.created_by == created_by)
+    return int(db.execute(stmt).scalar_one())
+
+
 def get_by_id(db: Session, bug_id: UUID) -> Bug:
     """Return a single bug by primary key.
 

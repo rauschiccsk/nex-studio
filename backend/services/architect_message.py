@@ -61,7 +61,7 @@ from __future__ import annotations
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.db.models.architect import ArchitectMessage
@@ -108,6 +108,36 @@ def list_architect_messages(
         stmt = stmt.where(ArchitectMessage.role == role)
     stmt = stmt.order_by(ArchitectMessage.created_at.asc()).limit(limit).offset(offset)
     return list(db.execute(stmt).scalars().all())
+
+
+def count_architect_messages(
+    db: Session,
+    *,
+    session_id: Optional[UUID] = None,
+    role: Optional[ArchitectMessageRole] = None,
+) -> int:
+    """Return the total number of Architect messages matching the filters.
+
+    Mirrors the ``session_id`` / ``role`` filters of
+    :func:`list_architect_messages` so a paginated response can report
+    the unfiltered total alongside the current page of items.
+
+    Args:
+        db: Active SQLAlchemy session.
+        session_id: Optional session filter — restrict to messages
+            belonging to a specific Architect session. Hits the
+            ``ix_architect_messages_session_id`` index.
+        role: Optional role filter (``user`` | ``assistant``).
+
+    Returns:
+        Total number of rows matching the filters.
+    """
+    stmt = select(func.count()).select_from(ArchitectMessage)
+    if session_id is not None:
+        stmt = stmt.where(ArchitectMessage.session_id == session_id)
+    if role is not None:
+        stmt = stmt.where(ArchitectMessage.role == role)
+    return int(db.execute(stmt).scalar_one())
 
 
 def get_by_id(db: Session, message_id: UUID) -> ArchitectMessage:

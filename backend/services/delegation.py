@@ -61,7 +61,7 @@ from __future__ import annotations
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.db.models.delegations import Delegation
@@ -127,6 +127,60 @@ def list_delegations(
         stmt = stmt.where(Delegation.cc_agent == cc_agent)
     stmt = stmt.order_by(Delegation.started_at.desc()).limit(limit).offset(offset)
     return list(db.execute(stmt).scalars().all())
+
+
+def count_delegations(
+    db: Session,
+    *,
+    task_id: Optional[UUID] = None,
+    feat_id: Optional[UUID] = None,
+    bug_fix_task_id: Optional[UUID] = None,
+    bug_id: Optional[UUID] = None,
+    status: Optional[DelegationStatus] = None,
+    cc_agent: Optional[DelegationCCAgent] = None,
+) -> int:
+    """Return the total number of delegations matching the filters.
+
+    Mirrors the ``task_id`` / ``feat_id`` / ``bug_fix_task_id`` /
+    ``bug_id`` / ``status`` / ``cc_agent`` filters of
+    :func:`list_delegations` so a paginated response can report the
+    unfiltered total alongside the current page of items (parallels the
+    ``count_*`` helpers on the other services —
+    :func:`~backend.services.auto_fix_attempt.count_auto_fix_attempts`,
+    :func:`~backend.services.feat.count_feats`,
+    :func:`~backend.services.task.count_tasks`).
+
+    Args:
+        db: Active SQLAlchemy session.
+        task_id: Optional task filter — restrict the count to
+            delegations for a specific task.
+        feat_id: Optional feat filter — restrict the count to
+            delegations for a specific feat.
+        bug_fix_task_id: Optional bug-fix-task filter — restrict the
+            count to delegations spawned for a specific bug fix task.
+        bug_id: Optional bug filter — restrict the count to delegations
+            addressing a specific bug directly.
+        status: Optional lifecycle-status filter (``pending`` |
+            ``running`` | ``done`` | ``failed``).
+        cc_agent: Optional CC agent filter (``ubuntu_cc``).
+
+    Returns:
+        Total number of rows matching the filters.
+    """
+    stmt = select(func.count()).select_from(Delegation)
+    if task_id is not None:
+        stmt = stmt.where(Delegation.task_id == task_id)
+    if feat_id is not None:
+        stmt = stmt.where(Delegation.feat_id == feat_id)
+    if bug_fix_task_id is not None:
+        stmt = stmt.where(Delegation.bug_fix_task_id == bug_fix_task_id)
+    if bug_id is not None:
+        stmt = stmt.where(Delegation.bug_id == bug_id)
+    if status is not None:
+        stmt = stmt.where(Delegation.status == status)
+    if cc_agent is not None:
+        stmt = stmt.where(Delegation.cc_agent == cc_agent)
+    return int(db.execute(stmt).scalar_one())
 
 
 def get_by_id(db: Session, delegation_id: UUID) -> Delegation:

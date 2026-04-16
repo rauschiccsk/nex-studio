@@ -23,7 +23,7 @@ from __future__ import annotations
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.db.models.guardian import GuardianPrecedent
@@ -66,6 +66,35 @@ def list_precedents(
         stmt = stmt.where(GuardianPrecedent.created_by == created_by)
     stmt = stmt.order_by(GuardianPrecedent.created_at.desc()).limit(limit).offset(offset)
     return list(db.execute(stmt).scalars().all())
+
+
+def count_precedents(
+    db: Session,
+    *,
+    verdict: Optional[GuardianVerdict] = None,
+    created_by: Optional[UUID] = None,
+) -> int:
+    """Return the total number of Guardian precedents matching the given filters.
+
+    Mirrors the ``verdict`` / ``created_by`` filters of :func:`list_precedents`
+    so a paginated response can report the unfiltered total alongside the
+    current page of items.
+
+    Args:
+        db: Active SQLAlchemy session.
+        verdict: Optional verdict filter (``allow`` | ``notice`` | ``block``).
+        created_by: Optional filter restricting the count to precedents
+            created by a specific user.
+
+    Returns:
+        Total number of rows matching the filters.
+    """
+    stmt = select(func.count()).select_from(GuardianPrecedent)
+    if verdict is not None:
+        stmt = stmt.where(GuardianPrecedent.verdict == verdict)
+    if created_by is not None:
+        stmt = stmt.where(GuardianPrecedent.created_by == created_by)
+    return int(db.execute(stmt).scalar_one())
 
 
 def get_by_id(db: Session, precedent_id: UUID) -> GuardianPrecedent:

@@ -52,7 +52,7 @@ from __future__ import annotations
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.db.models.reports import ReportConfig
@@ -91,6 +91,33 @@ def list_report_configs(
         stmt = stmt.where(ReportConfig.project_id == project_id)
     stmt = stmt.order_by(ReportConfig.created_at.desc()).limit(limit).offset(offset)
     return list(db.execute(stmt).scalars().all())
+
+
+def count_report_configs(
+    db: Session,
+    *,
+    project_id: Optional[UUID] = None,
+) -> int:
+    """Return the total number of report configurations matching the filters.
+
+    Mirrors the ``project_id`` filter of :func:`list_report_configs` so a
+    paginated response can report the unfiltered total alongside the
+    current page of items. Since ``project_id`` is uniquely constrained,
+    filtering by it returns at most ``1``; the unfiltered count supports
+    the admin / settings UI.
+
+    Args:
+        db: Active SQLAlchemy session.
+        project_id: Optional filter — restrict the count to the
+            configuration belonging to a specific project.
+
+    Returns:
+        Total number of rows matching the filters.
+    """
+    stmt = select(func.count()).select_from(ReportConfig)
+    if project_id is not None:
+        stmt = stmt.where(ReportConfig.project_id == project_id)
+    return int(db.execute(stmt).scalar_one())
 
 
 def get_by_id(db: Session, config_id: UUID) -> ReportConfig:

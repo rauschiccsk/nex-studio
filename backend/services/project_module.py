@@ -52,7 +52,7 @@ from __future__ import annotations
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.db.models.projects import ProjectModule
@@ -103,6 +103,42 @@ def list_project_modules(
         stmt = stmt.where(ProjectModule.category == category)
     stmt = stmt.order_by(ProjectModule.created_at.desc()).limit(limit).offset(offset)
     return list(db.execute(stmt).scalars().all())
+
+
+def count_project_modules(
+    db: Session,
+    *,
+    project_id: Optional[UUID] = None,
+    status: Optional[ProjectModuleStatus] = None,
+    category: Optional[str] = None,
+) -> int:
+    """Return the total number of project modules matching the given filters.
+
+    Mirrors the ``project_id`` / ``status`` / ``category`` filters of
+    :func:`list_project_modules` so a paginated response can report the
+    unfiltered total alongside the current page of items.
+
+    Args:
+        db: Active SQLAlchemy session.
+        project_id: Optional project filter — restrict to modules
+            belonging to a specific project (the core Module Registry
+            query, DESIGN.md §3.1 ``ModuleRegistryPage``).
+        status: Optional lifecycle-status filter (``planned`` |
+            ``in_design`` | ``in_development`` | ``done``).
+        category: Optional category filter (e.g. ``'Katalógy'``,
+            ``'Sklad'``, ``'Nákup'``).
+
+    Returns:
+        Total number of rows matching the filters.
+    """
+    stmt = select(func.count()).select_from(ProjectModule)
+    if project_id is not None:
+        stmt = stmt.where(ProjectModule.project_id == project_id)
+    if status is not None:
+        stmt = stmt.where(ProjectModule.status == status)
+    if category is not None:
+        stmt = stmt.where(ProjectModule.category == category)
+    return int(db.execute(stmt).scalar_one())
 
 
 def get_by_id(db: Session, module_id: UUID) -> ProjectModule:

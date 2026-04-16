@@ -53,7 +53,7 @@ from __future__ import annotations
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.db.models.migration import MigrationBatch
@@ -107,6 +107,44 @@ def list_migration_batches(
         stmt = stmt.where(MigrationBatch.status == status)
     stmt = stmt.order_by(MigrationBatch.created_at.desc()).limit(limit).offset(offset)
     return list(db.execute(stmt).scalars().all())
+
+
+def count_migration_batches(
+    db: Session,
+    *,
+    project_id: Optional[UUID] = None,
+    category: Optional[str] = None,
+    direction: Optional[MigrationBatchDirection] = None,
+    status: Optional[MigrationBatchStatus] = None,
+) -> int:
+    """Return the total number of migration batches matching the filters.
+
+    Mirrors the ``project_id`` / ``category`` / ``direction`` / ``status``
+    filters of :func:`list_migration_batches` so a paginated response can
+    report the unfiltered total alongside the current page of items.
+
+    Args:
+        db: Active SQLAlchemy session.
+        project_id: Optional project filter.
+        category: Optional category filter (e.g. ``'PAB'``, ``'GSC'``,
+            ``'STK'``, ``'TSH'``).
+        direction: Optional direction filter (``extract`` | ``load``).
+        status: Optional lifecycle-status filter (``pending`` |
+            ``running`` | ``completed`` | ``failed``).
+
+    Returns:
+        Total number of rows matching the filters.
+    """
+    stmt = select(func.count()).select_from(MigrationBatch)
+    if project_id is not None:
+        stmt = stmt.where(MigrationBatch.project_id == project_id)
+    if category is not None:
+        stmt = stmt.where(MigrationBatch.category == category)
+    if direction is not None:
+        stmt = stmt.where(MigrationBatch.direction == direction)
+    if status is not None:
+        stmt = stmt.where(MigrationBatch.status == status)
+    return int(db.execute(stmt).scalar_one())
 
 
 def get_by_id(db: Session, batch_id: UUID) -> MigrationBatch:

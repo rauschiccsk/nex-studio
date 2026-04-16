@@ -114,6 +114,38 @@ def list_feats(
     return list(db.execute(stmt).scalars().all())
 
 
+def count_feats(
+    db: Session,
+    *,
+    epic_id: Optional[UUID] = None,
+    status: Optional[FeatStatus] = None,
+) -> int:
+    """Return the total number of feats matching the given filters.
+
+    Mirrors the ``epic_id`` / ``status`` filters of :func:`list_feats`
+    so a paginated response can report the unfiltered total alongside
+    the current page of items (same pattern as
+    :func:`~backend.services.epic.count_epics` and
+    :func:`~backend.services.bug.count_bugs`).
+
+    Args:
+        db: Active SQLAlchemy session.
+        epic_id: Optional epic filter — restrict the count to feats
+            belonging to a specific epic.
+        status: Optional lifecycle-status filter (``todo`` |
+            ``in_progress`` | ``done`` | ``failed``).
+
+    Returns:
+        Total number of rows matching the filters.
+    """
+    stmt = select(func.count()).select_from(Feat)
+    if epic_id is not None:
+        stmt = stmt.where(Feat.epic_id == epic_id)
+    if status is not None:
+        stmt = stmt.where(Feat.status == status)
+    return int(db.execute(stmt).scalar_one())
+
+
 def get_by_id(db: Session, feat_id: UUID) -> Feat:
     """Return a single feat by primary key.
 

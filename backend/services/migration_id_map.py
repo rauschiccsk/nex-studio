@@ -51,7 +51,7 @@ from __future__ import annotations
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.db.models.migration import MigrationIdMap
@@ -105,6 +105,43 @@ def list_migration_id_maps(
         stmt = stmt.where(MigrationIdMap.batch_id == batch_id)
     stmt = stmt.order_by(MigrationIdMap.created_at.desc()).limit(limit).offset(offset)
     return list(db.execute(stmt).scalars().all())
+
+
+def count_migration_id_maps(
+    db: Session,
+    *,
+    project_id: Optional[UUID] = None,
+    category: Optional[str] = None,
+    source_key: Optional[str] = None,
+    batch_id: Optional[UUID] = None,
+) -> int:
+    """Return the total number of migration ID-map rows matching the filters.
+
+    Mirrors the ``project_id`` / ``category`` / ``source_key`` / ``batch_id``
+    filters of :func:`list_migration_id_maps` so a paginated response can
+    report the unfiltered total alongside the current page of items.
+
+    Args:
+        db: Active SQLAlchemy session.
+        project_id: Optional project filter.
+        category: Optional category filter (e.g. ``'PAB'``, ``'GSC'``,
+            ``'STK'``, ``'TSH'``).
+        source_key: Optional legacy-key filter.
+        batch_id: Optional batch filter.
+
+    Returns:
+        Total number of rows matching the filters.
+    """
+    stmt = select(func.count()).select_from(MigrationIdMap)
+    if project_id is not None:
+        stmt = stmt.where(MigrationIdMap.project_id == project_id)
+    if category is not None:
+        stmt = stmt.where(MigrationIdMap.category == category)
+    if source_key is not None:
+        stmt = stmt.where(MigrationIdMap.source_key == source_key)
+    if batch_id is not None:
+        stmt = stmt.where(MigrationIdMap.batch_id == batch_id)
+    return int(db.execute(stmt).scalar_one())
 
 
 def get_by_id(db: Session, id_map_id: UUID) -> MigrationIdMap:

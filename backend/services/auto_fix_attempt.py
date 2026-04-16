@@ -96,6 +96,39 @@ def list_auto_fix_attempts(
     return list(db.execute(stmt).scalars().all())
 
 
+def count_auto_fix_attempts(
+    db: Session,
+    *,
+    feat_id: Optional[UUID] = None,
+    delegation_id: Optional[UUID] = None,
+) -> int:
+    """Return the total number of auto-fix attempts matching the filters.
+
+    Mirrors the ``feat_id`` / ``delegation_id`` filters of
+    :func:`list_auto_fix_attempts` so a paginated response can report the
+    unfiltered total alongside the current page of items (parallels the
+    ``count_*`` helpers on the other feat-scoped services —
+    :func:`~backend.services.feat.count_feats`,
+    :func:`~backend.services.bug_fix_task.count_bug_fix_tasks`).
+
+    Args:
+        db: Active SQLAlchemy session.
+        feat_id: Optional feat filter — restrict the count to attempts
+            belonging to a specific feat.
+        delegation_id: Optional reverse-lookup filter — which attempt
+            spawned a given delegation.
+
+    Returns:
+        Total number of rows matching the filters.
+    """
+    stmt = select(func.count()).select_from(AutoFixAttempt)
+    if feat_id is not None:
+        stmt = stmt.where(AutoFixAttempt.feat_id == feat_id)
+    if delegation_id is not None:
+        stmt = stmt.where(AutoFixAttempt.delegation_id == delegation_id)
+    return int(db.execute(stmt).scalar_one())
+
+
 def get_by_id(db: Session, auto_fix_attempt_id: UUID) -> AutoFixAttempt:
     """Return a single auto-fix attempt by primary key.
 

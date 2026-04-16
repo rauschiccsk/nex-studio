@@ -56,7 +56,7 @@ from __future__ import annotations
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.db.models.projects import ModuleDependency
@@ -105,6 +105,39 @@ def list_module_dependencies(
         stmt = stmt.where(ModuleDependency.depends_on_module_id == depends_on_module_id)
     stmt = stmt.order_by(ModuleDependency.created_at.desc()).limit(limit).offset(offset)
     return list(db.execute(stmt).scalars().all())
+
+
+def count_module_dependencies(
+    db: Session,
+    *,
+    module_id: Optional[UUID] = None,
+    depends_on_module_id: Optional[UUID] = None,
+) -> int:
+    """Return the total number of module dependency edges matching the filters.
+
+    Mirrors the ``module_id`` / ``depends_on_module_id`` filters of
+    :func:`list_module_dependencies` so a paginated response can report
+    the unfiltered total alongside the current page of items.
+
+    Args:
+        db: Active SQLAlchemy session.
+        module_id: Optional filter — restrict the count to edges whose
+            dependent endpoint is the given module (the "what does this
+            module depend on" query).
+        depends_on_module_id: Optional filter — restrict the count to
+            edges whose prerequisite endpoint is the given module (the
+            "which modules depend on this one" query backing
+            ``ModuleGraph`` — DESIGN.md §3.2).
+
+    Returns:
+        Total number of rows matching the filters.
+    """
+    stmt = select(func.count()).select_from(ModuleDependency)
+    if module_id is not None:
+        stmt = stmt.where(ModuleDependency.module_id == module_id)
+    if depends_on_module_id is not None:
+        stmt = stmt.where(ModuleDependency.depends_on_module_id == depends_on_module_id)
+    return int(db.execute(stmt).scalar_one())
 
 
 def get_by_id(db: Session, dependency_id: UUID) -> ModuleDependency:

@@ -53,7 +53,7 @@ from __future__ import annotations
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.db.models.delegations import ExecutionLog
@@ -108,6 +108,49 @@ def list_execution_logs(
         stmt = stmt.where(ExecutionLog.commit_verified == commit_verified)
     stmt = stmt.order_by(ExecutionLog.created_at.desc()).limit(limit).offset(offset)
     return list(db.execute(stmt).scalars().all())
+
+
+def count_execution_logs(
+    db: Session,
+    *,
+    delegation_id: Optional[UUID] = None,
+    task_id: Optional[UUID] = None,
+    status: Optional[ExecutionLogStatus] = None,
+    commit_verified: Optional[bool] = None,
+) -> int:
+    """Return the total number of execution logs matching the filters.
+
+    Mirrors the ``delegation_id`` / ``task_id`` / ``status`` /
+    ``commit_verified`` filters of :func:`list_execution_logs` so a
+    paginated response can report the unfiltered total alongside the
+    current page of items (parallels the ``count_*`` helpers on the
+    other services —
+    :func:`~backend.services.delegation.count_delegations`,
+    :func:`~backend.services.auto_fix_attempt.count_auto_fix_attempts`,
+    :func:`~backend.services.task.count_tasks`).
+
+    Args:
+        db: Active SQLAlchemy session.
+        delegation_id: Optional delegation filter — restrict the count
+            to logs belonging to a specific delegation.
+        task_id: Optional task filter — restrict the count to logs
+            belonging to a specific task.
+        status: Optional terminal-status filter (``done`` | ``failed``).
+        commit_verified: Optional verification-flag filter.
+
+    Returns:
+        Total number of rows matching the filters.
+    """
+    stmt = select(func.count()).select_from(ExecutionLog)
+    if delegation_id is not None:
+        stmt = stmt.where(ExecutionLog.delegation_id == delegation_id)
+    if task_id is not None:
+        stmt = stmt.where(ExecutionLog.task_id == task_id)
+    if status is not None:
+        stmt = stmt.where(ExecutionLog.status == status)
+    if commit_verified is not None:
+        stmt = stmt.where(ExecutionLog.commit_verified == commit_verified)
+    return int(db.execute(stmt).scalar_one())
 
 
 def get_by_id(db: Session, execution_log_id: UUID) -> ExecutionLog:

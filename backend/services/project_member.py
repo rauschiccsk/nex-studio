@@ -45,7 +45,7 @@ from __future__ import annotations
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.db.models.projects import ProjectMember
@@ -91,6 +91,34 @@ def list_project_members(
         stmt = stmt.where(ProjectMember.user_id == user_id)
     stmt = stmt.order_by(ProjectMember.created_at.desc()).limit(limit).offset(offset)
     return list(db.execute(stmt).scalars().all())
+
+
+def count_project_members(
+    db: Session,
+    *,
+    project_id: Optional[UUID] = None,
+    user_id: Optional[UUID] = None,
+) -> int:
+    """Return the total number of memberships matching the given filters.
+
+    Mirrors the ``project_id`` / ``user_id`` filters of
+    :func:`list_project_members` so a paginated response can report the
+    unfiltered total alongside the current page of items.
+
+    Args:
+        db: Active SQLAlchemy session.
+        project_id: Optional project filter.
+        user_id: Optional user filter.
+
+    Returns:
+        Total number of rows matching the filters.
+    """
+    stmt = select(func.count()).select_from(ProjectMember)
+    if project_id is not None:
+        stmt = stmt.where(ProjectMember.project_id == project_id)
+    if user_id is not None:
+        stmt = stmt.where(ProjectMember.user_id == user_id)
+    return int(db.execute(stmt).scalar_one())
 
 
 def get_by_id(db: Session, member_id: UUID) -> ProjectMember:

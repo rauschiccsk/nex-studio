@@ -96,6 +96,39 @@ def list_bug_fix_tasks(
     return list(db.execute(stmt).scalars().all())
 
 
+def count_bug_fix_tasks(
+    db: Session,
+    *,
+    bug_id: Optional[UUID] = None,
+    status: Optional[BugFixTaskStatus] = None,
+    task_type: Optional[BugFixTaskType] = None,
+) -> int:
+    """Return the total number of bug fix tasks matching the given filters.
+
+    Mirrors the ``bug_id`` / ``status`` / ``task_type`` filters of
+    :func:`list_bug_fix_tasks` so a paginated response can report the
+    unfiltered total alongside the current page of items.
+
+    Args:
+        db: Active SQLAlchemy session.
+        bug_id: Optional filter — restrict to fix tasks for a specific
+            bug.
+        status: Optional lifecycle-status filter.
+        task_type: Optional type filter.
+
+    Returns:
+        Total number of rows matching the filters.
+    """
+    stmt = select(func.count()).select_from(BugFixTask)
+    if bug_id is not None:
+        stmt = stmt.where(BugFixTask.bug_id == bug_id)
+    if status is not None:
+        stmt = stmt.where(BugFixTask.status == status)
+    if task_type is not None:
+        stmt = stmt.where(BugFixTask.task_type == task_type)
+    return int(db.execute(stmt).scalar_one())
+
+
 def get_by_id(db: Session, bug_fix_task_id: UUID) -> BugFixTask:
     """Return a single bug fix task by primary key.
 

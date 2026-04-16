@@ -94,7 +94,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.db.models.specifications import DesignDocument
@@ -155,6 +155,44 @@ def list_design_documents(
         stmt = stmt.where(DesignDocument.approved_by == approved_by)
     stmt = stmt.order_by(DesignDocument.created_at.desc()).limit(limit).offset(offset)
     return list(db.execute(stmt).scalars().all())
+
+
+def count_design_documents(
+    db: Session,
+    *,
+    project_id: Optional[UUID] = None,
+    module_id: Optional[UUID] = None,
+    doc_type: Optional[DesignDocumentType] = None,
+    approved_by: Optional[UUID] = None,
+) -> int:
+    """Return the total number of design documents matching the filters.
+
+    Mirrors the ``project_id`` / ``module_id`` / ``doc_type`` /
+    ``approved_by`` filters of :func:`list_design_documents` so a
+    paginated response can report the unfiltered total alongside the
+    current page of items.
+
+    Args:
+        db: Active SQLAlchemy session.
+        project_id: Optional project filter.
+        module_id: Optional module filter.
+        doc_type: Optional document-type filter (``design`` |
+            ``behavior``).
+        approved_by: Optional approver filter.
+
+    Returns:
+        Total number of rows matching the filters.
+    """
+    stmt = select(func.count()).select_from(DesignDocument)
+    if project_id is not None:
+        stmt = stmt.where(DesignDocument.project_id == project_id)
+    if module_id is not None:
+        stmt = stmt.where(DesignDocument.module_id == module_id)
+    if doc_type is not None:
+        stmt = stmt.where(DesignDocument.doc_type == doc_type)
+    if approved_by is not None:
+        stmt = stmt.where(DesignDocument.approved_by == approved_by)
+    return int(db.execute(stmt).scalar_one())
 
 
 def get_by_id(db: Session, document_id: UUID) -> DesignDocument:

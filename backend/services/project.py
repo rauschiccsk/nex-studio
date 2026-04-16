@@ -46,7 +46,7 @@ from __future__ import annotations
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.db.models.projects import Project
@@ -95,6 +95,41 @@ def list_projects(
         stmt = stmt.where(Project.created_by == created_by)
     stmt = stmt.order_by(Project.created_at.desc()).limit(limit).offset(offset)
     return list(db.execute(stmt).scalars().all())
+
+
+def count_projects(
+    db: Session,
+    *,
+    status: Optional[ProjectStatus] = None,
+    category: Optional[ProjectCategory] = None,
+    created_by: Optional[UUID] = None,
+) -> int:
+    """Return the total number of projects matching the given filters.
+
+    Mirrors the ``status`` / ``category`` / ``created_by`` filters of
+    :func:`list_projects` so a paginated response can report the unfiltered
+    total alongside the current page of items.
+
+    Args:
+        db: Active SQLAlchemy session.
+        status: Optional lifecycle-status filter (``active`` | ``archived``
+            | ``paused``).
+        category: Optional category filter (``singlemodule`` |
+            ``multimodule``).
+        created_by: Optional filter restricting results to projects
+            created by a specific user.
+
+    Returns:
+        Total number of rows matching the filters.
+    """
+    stmt = select(func.count()).select_from(Project)
+    if status is not None:
+        stmt = stmt.where(Project.status == status)
+    if category is not None:
+        stmt = stmt.where(Project.category == category)
+    if created_by is not None:
+        stmt = stmt.where(Project.created_by == created_by)
+    return int(db.execute(stmt).scalar_one())
 
 
 def get_by_id(db: Session, project_id: UUID) -> Project:

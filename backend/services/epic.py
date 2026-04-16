@@ -120,6 +120,43 @@ def list_epics(
     return list(db.execute(stmt).scalars().all())
 
 
+def count_epics(
+    db: Session,
+    *,
+    project_id: Optional[UUID] = None,
+    module_id: Optional[UUID] = None,
+    status: Optional[EpicStatus] = None,
+) -> int:
+    """Return the total number of epics matching the given filters.
+
+    Mirrors the ``project_id`` / ``module_id`` / ``status`` filters of
+    :func:`list_epics` so a paginated response can report the unfiltered
+    total alongside the current page of items (same pattern as
+    :func:`~backend.services.bug.count_bugs` and
+    :func:`~backend.services.design_document.count_design_documents`).
+
+    Args:
+        db: Active SQLAlchemy session.
+        project_id: Optional project filter.
+        module_id: Optional module-scope filter. Passing a module UUID
+            counts only module-scoped epics; project-level epics
+            (``module_id IS NULL``) are excluded.
+        status: Optional lifecycle-status filter (``planned`` |
+            ``in_progress`` | ``done``).
+
+    Returns:
+        Total number of rows matching the filters.
+    """
+    stmt = select(func.count()).select_from(Epic)
+    if project_id is not None:
+        stmt = stmt.where(Epic.project_id == project_id)
+    if module_id is not None:
+        stmt = stmt.where(Epic.module_id == module_id)
+    if status is not None:
+        stmt = stmt.where(Epic.status == status)
+    return int(db.execute(stmt).scalar_one())
+
+
 def get_by_id(db: Session, epic_id: UUID) -> Epic:
     """Return a single epic by primary key.
 

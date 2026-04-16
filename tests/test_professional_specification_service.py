@@ -582,6 +582,166 @@ class TestProfessionalSpecificationService:
         second_ids = {r.id for r in second_page}
         assert first_ids.isdisjoint(second_ids)
 
+    # ----------------------------------------------------------------- count
+    def test_count_all_rows(self, db_session):
+        """``count_professional_specifications`` returns the total across every row created."""
+        user = _make_user(db_session)
+        project = _make_project(db_session, user=user)
+        raw_spec = _make_raw_spec(db_session, project=project, user=user)
+
+        baseline = service.count_professional_specifications(db_session)
+        for i in range(3):
+            service.create(
+                db_session,
+                _payload(project.id, raw_spec.id, version=i + 1),
+            )
+
+        assert service.count_professional_specifications(db_session) == baseline + 3
+
+    def test_count_filter_by_project(self, db_session):
+        """``project_id`` filter restricts the count to that project."""
+        user = _make_user(db_session)
+        p1 = _make_project(db_session, user=user)
+        p2 = _make_project(db_session, user=user)
+        r1 = _make_raw_spec(db_session, project=p1, user=user)
+        r2 = _make_raw_spec(db_session, project=p2, user=user)
+
+        service.create(db_session, _payload(p1.id, r1.id, version=1))
+        service.create(db_session, _payload(p1.id, r1.id, version=2))
+        service.create(db_session, _payload(p2.id, r2.id))
+
+        assert service.count_professional_specifications(db_session, project_id=p1.id) == 2
+        assert service.count_professional_specifications(db_session, project_id=p2.id) == 1
+
+    def test_count_filter_by_raw_spec(self, db_session):
+        """``raw_spec_id`` filter restricts the count to that raw specification."""
+        user = _make_user(db_session)
+        project = _make_project(db_session, user=user)
+        r1 = _make_raw_spec(db_session, project=project, user=user)
+        r2 = _make_raw_spec(db_session, project=project, user=user)
+
+        service.create(db_session, _payload(project.id, r1.id, version=1))
+        service.create(db_session, _payload(project.id, r1.id, version=2))
+        service.create(db_session, _payload(project.id, r2.id))
+
+        assert service.count_professional_specifications(db_session, raw_spec_id=r1.id) == 2
+        assert service.count_professional_specifications(db_session, raw_spec_id=r2.id) == 1
+
+    def test_count_filter_by_approved_by(self, db_session):
+        """``approved_by`` filter counts only specs approved by that user."""
+        user = _make_user(db_session)
+        project = _make_project(db_session, user=user)
+        raw_spec = _make_raw_spec(db_session, project=project, user=user)
+        approver = _make_user(db_session)
+        other = _make_user(db_session)
+
+        service.create(
+            db_session,
+            _payload(project.id, raw_spec.id, version=1, approved_by=approver.id),
+        )
+        service.create(
+            db_session,
+            _payload(project.id, raw_spec.id, version=2, approved_by=approver.id),
+        )
+        service.create(
+            db_session,
+            _payload(project.id, raw_spec.id, version=3, approved_by=other.id),
+        )
+        # Unapproved sibling — must not be counted under the approver filter.
+        service.create(db_session, _payload(project.id, raw_spec.id, version=4))
+
+        assert service.count_professional_specifications(db_session, approved_by=approver.id) == 2
+        assert service.count_professional_specifications(db_session, approved_by=other.id) == 1
+
+    def test_count_filter_by_version(self, db_session):
+        """``version`` filter counts only specs at that version number."""
+        user = _make_user(db_session)
+        project = _make_project(db_session, user=user)
+        raw_spec = _make_raw_spec(db_session, project=project, user=user)
+
+        service.create(db_session, _payload(project.id, raw_spec.id, version=1))
+        service.create(db_session, _payload(project.id, raw_spec.id, version=2))
+        service.create(db_session, _payload(project.id, raw_spec.id, version=2))
+
+        assert service.count_professional_specifications(db_session, project_id=project.id, version=1) == 1
+        assert service.count_professional_specifications(db_session, project_id=project.id, version=2) == 2
+
+    def test_count_combined_filters(self, db_session):
+        """Multiple count filters AND together — mirrors ``list`` behaviour."""
+        user = _make_user(db_session)
+        p1 = _make_project(db_session, user=user)
+        p2 = _make_project(db_session, user=user)
+        r1 = _make_raw_spec(db_session, project=p1, user=user)
+        r2 = _make_raw_spec(db_session, project=p1, user=user)
+        r3 = _make_raw_spec(db_session, project=p2, user=user)
+        approver = _make_user(db_session)
+
+        # Single row matches (p1, r1, approver, v=2).
+        service.create(
+            db_session,
+            _payload(p1.id, r1.id, version=2, approved_by=approver.id),
+        )
+        # Different project.
+        service.create(
+            db_session,
+            _payload(p2.id, r3.id, version=2, approved_by=approver.id),
+        )
+        # Different raw_spec_id.
+        service.create(
+            db_session,
+            _payload(p1.id, r2.id, version=2, approved_by=approver.id),
+        )
+        # Different version.
+        service.create(
+            db_session,
+            _payload(p1.id, r1.id, version=1, approved_by=approver.id),
+        )
+        # Different approver.
+        other = _make_user(db_session)
+        service.create(
+            db_session,
+            _payload(p1.id, r1.id, version=2, approved_by=other.id),
+        )
+
+        count = service.count_professional_specifications(
+            db_session,
+            project_id=p1.id,
+            raw_spec_id=r1.id,
+            approved_by=approver.id,
+            version=2,
+        )
+        assert count == 1
+
+    def test_count_empty_filter_match_returns_zero(self, db_session):
+        """Filters that match no rows yield ``0`` (not an exception)."""
+        assert service.count_professional_specifications(db_session, project_id=uuid.uuid4()) == 0
+
+    def test_count_matches_list_length_for_same_filters(self, db_session):
+        """The count value matches the unpaginated list length for identical filters.
+
+        This anchors the contract the router relies on: the
+        :class:`~backend.schemas.pagination.PaginatedResponse.total`
+        reflects the full filtered row count, independent of ``limit`` /
+        ``offset``.
+        """
+        user = _make_user(db_session)
+        project = _make_project(db_session, user=user)
+        raw_spec = _make_raw_spec(db_session, project=project, user=user)
+        for i in range(4):
+            service.create(db_session, _payload(project.id, raw_spec.id, version=i + 1))
+
+        rows = service.list_professional_specifications(
+            db_session,
+            project_id=project.id,
+            limit=1000,
+            offset=0,
+        )
+        count = service.count_professional_specifications(
+            db_session,
+            project_id=project.id,
+        )
+        assert count == len(rows)
+
     # --------------------------------------------------------------- commit
     def test_service_does_not_commit(self, db_session):
         """Service calls only ``flush`` — rows vanish when the outer transaction rolls back.

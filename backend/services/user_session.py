@@ -56,7 +56,7 @@ from __future__ import annotations
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.db.models.foundation import UserSession
@@ -92,6 +92,32 @@ def list_user_sessions(
         stmt = stmt.where(UserSession.user_id == user_id)
     stmt = stmt.order_by(UserSession.created_at.desc()).limit(limit).offset(offset)
     return list(db.execute(stmt).scalars().all())
+
+
+def count_user_sessions(
+    db: Session,
+    *,
+    user_id: Optional[UUID] = None,
+) -> int:
+    """Return the total number of user sessions matching the given filters.
+
+    Mirrors the ``user_id`` filter of :func:`list_user_sessions` so a
+    paginated response can report the unfiltered total alongside the
+    current page of items.
+
+    Args:
+        db: Active SQLAlchemy session.
+        user_id: Optional user filter — restrict the count to sessions
+            belonging to a specific user (hits
+            ``ix_user_sessions_user_id``).
+
+    Returns:
+        Total number of rows matching the filters.
+    """
+    stmt = select(func.count()).select_from(UserSession)
+    if user_id is not None:
+        stmt = stmt.where(UserSession.user_id == user_id)
+    return int(db.execute(stmt).scalar_one())
 
 
 def get_by_id(db: Session, session_id: UUID) -> UserSession:
