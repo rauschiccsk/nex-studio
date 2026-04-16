@@ -12,9 +12,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
-# Import all models so Base.metadata is aware of every table.
-from backend.db.models import *  # noqa: F403
-from backend.db.models.base import Base
+# ``backend.db.base`` imports every ORM model — importing it here populates
+# ``Base.metadata`` with every table before ``create_all`` runs.
+from backend.db.base import Base
 from backend.db.session import _ensure_pg8000_driver, get_db
 from backend.main import app
 

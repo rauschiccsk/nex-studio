@@ -7,24 +7,29 @@ from sqlalchemy import engine_from_config, pool
 
 from backend.config.settings import settings
 
-# Import all models here so autogenerate can detect them.
-# Add new model imports as they are created.
-from backend.db.models import *  # noqa: F403
-from backend.db.models.base import Base
+# ``backend.db.base`` imports every ORM model in the domain, so this single
+# import is sufficient to populate ``Base.metadata`` for ``autogenerate``.
+# When adding a new model, register it in ``backend/db/base.py`` and Alembic
+# will pick it up automatically.
+from backend.db.base import Base
 from backend.db.session import _ensure_pg8000_driver
-
-config = context.config
-
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
-
-config.set_main_option("sqlalchemy.url", _ensure_pg8000_driver(settings.database_url))
 
 target_metadata = Base.metadata
 
 
+def _setup_config() -> None:
+    """Configure Alembic — only callable within Alembic runtime context."""
+    config = context.config
+
+    if config.config_file_name is not None:
+        fileConfig(config.config_file_name)
+
+    config.set_main_option("sqlalchemy.url", _ensure_pg8000_driver(settings.database_url))
+
+
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""
+    config = context.config
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
         url=url,
@@ -39,6 +44,7 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
+    config = context.config
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
@@ -55,7 +61,10 @@ def run_migrations_online() -> None:
             context.run_migrations()
 
 
-if context.is_offline_mode():
-    run_migrations_offline()
-else:
-    run_migrations_online()
+if hasattr(context, "config"):
+    _setup_config()
+
+    if context.is_offline_mode():
+        run_migrations_offline()
+    else:
+        run_migrations_online()
