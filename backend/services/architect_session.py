@@ -62,18 +62,21 @@ Sessions / ``architect_sessions`` table, D-08 SSE streaming, and
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Optional
 from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from backend.db.models.architect import ArchitectSession
+from backend.db.models.architect import ArchitectMessage, ArchitectSession
+from backend.schemas.architect_message import ArchitectMessageCreate, ArchitectMessageRole
 from backend.schemas.architect_session import (
     ArchitectSessionCreate,
     ArchitectSessionStatus,
     ArchitectSessionUpdate,
 )
+from backend.services import architect_message as message_service
 
 
 def list_architect_sessions(
@@ -294,3 +297,110 @@ def delete(db: Session, session_id: UUID) -> None:
     session_obj = get_by_id(db, session_id)
     db.delete(session_obj)
     db.flush()
+
+
+# -------------------------------------------------------------------
+# Convenience helpers (Feat 19 — Architect Subprocess Streaming)
+# -------------------------------------------------------------------
+
+
+def create_session(
+    db: Session,
+    project_id: UUID,
+    user_id: UUID,
+    module_id: UUID | None = None,
+) -> ArchitectSession:
+    """Create a new Architect chat session (convenience wrapper).
+
+    Builds an :class:`ArchitectSessionCreate` schema internally, sets
+    ``status='active'`` and delegates to :func:`create`. This is the
+    primary entry point used by the Architect streaming router —
+    callers do not need to construct the Pydantic schema manually.
+
+    Args:
+        db: Active SQLAlchemy session.
+        project_id: Project the session is scoped to.
+        user_id: User opening the session (``created_by``).
+        module_id: Optional module scope (``None`` = project-level).
+
+    Returns:
+        The newly created :class:`ArchitectSession`.
+    """
+    payload = ArchitectSessionCreate(
+        project_id=project_id,
+        module_id=module_id,
+        created_by=user_id,
+        status="active",
+    )
+    return create(db, payload)
+
+
+def get_session(db: Session, session_id: UUID) -> ArchitectSession:
+    """Return a single Architect session by primary key (convenience alias).
+
+    Identical to :func:`get_by_id` — provided for naming symmetry with
+    :func:`create_session` / :func:`close_session`.
+
+    Raises:
+        ValueError: If no session with the supplied ``session_id``
+            exists.
+    """
+    return get_by_id(db, session_id)
+
+
+def close_session(db: Session, session_id: UUID) -> ArchitectSession:
+    """Transition a session to ``closed`` and stamp ``closed_at``.
+
+    Delegates to :func:`update` with ``status='closed'``. The update
+    logic automatically stamps ``closed_at = now()`` when the caller
+    omits it and the session is transitioning from ``active``.
+
+    Raises:
+        ValueError: If the session does not exist.
+    """
+    payload = ArchitectSessionUpdate(status="closed")
+    return update(db, session_id, payload)
+
+
+def add_message(
+    db: Session,
+    session_id: UUID,
+    role: ArchitectMessageRole,
+    content: str,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+    cost_usd: Decimal | None = None,
+) -> ArchitectMessage:
+    """Append a message to an Architect session.
+
+    Validates that the session exists before delegating to
+    :func:`backend.services.architect_message.create`. This avoids a
+    cryptic FK-violation error when the session id is stale.
+
+    Args:
+        db: Active SQLAlchemy session.
+        session_id: Session to append the message to.
+        role: ``"user"`` or ``"assistant"``.
+        content: Full message text.
+        input_tokens: Optional Anthropic API input token count.
+        output_tokens: Optional Anthropic API output token count.
+        cost_usd: Optional USD cost.
+
+    Returns:
+        The newly created :class:`ArchitectMessage`.
+
+    Raises:
+        ValueError: If the session does not exist.
+    """
+    # Ensure the session exists — fail early with a descriptive error.
+    get_by_id(db, session_id)
+
+    payload = ArchitectMessageCreate(
+        session_id=session_id,
+        role=role,
+        content=content,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cost_usd=cost_usd,
+    )
+    return message_service.create(db, payload)
