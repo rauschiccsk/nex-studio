@@ -65,7 +65,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="NEX Studio",
-    version="0.1.0",
+    version=settings.app_version,
     description="Project management and AI delegation platform",
     lifespan=lifespan,
 )
