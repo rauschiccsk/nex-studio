@@ -1,5 +1,7 @@
 import { NavLink, useMatch } from "react-router-dom";
-import { Brain, Tag } from "lucide-react";
+import { Brain, Settings, Tag } from "lucide-react";
+
+import SidebarFooter from "./SidebarFooter";
 
 /**
  * Application sidebar — primary navigation surface for NEX Studio.
@@ -40,7 +42,6 @@ type NavGroup = {
 const PRIMARY_NAV: NavItem[] = [
   { to: "/", label: "Dashboard", end: true },
   { to: "/projects", label: "Projects" },
-  { to: "/settings", label: "Settings" },
 ];
 
 /**
@@ -52,11 +53,7 @@ const PRIMARY_NAV: NavItem[] = [
 const ADMIN_NAV: NavGroup[] = [
   {
     heading: "Access",
-    items: [
-      { to: "/admin/users", label: "Users" },
-      { to: "/admin/user-sessions", label: "User Sessions" },
-      { to: "/admin/project-members", label: "Project Members" },
-    ],
+    items: [{ to: "/admin/project-members", label: "Project Members" }],
   },
   {
     heading: "Projects",
@@ -257,12 +254,21 @@ function Sidebar() {
       </nav>
 
       <div className="border-t border-gray-200 p-3 dark:border-gray-700">
-        <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
-          <span
-            className="inline-block h-2 w-2 rounded-full bg-status-done"
-            aria-hidden="true"
-          />
-          <span>Connected</span>
+        <div className="space-y-2">
+          <NavLink to="/settings" className={navLinkClass}>
+            <span className="flex items-center gap-2">
+              <Settings className="h-4 w-4" aria-hidden="true" />
+              Settings
+            </span>
+          </NavLink>
+          <SidebarFooter />
+          <div className="flex items-center gap-2 px-3 text-xs text-gray-500 dark:text-gray-400">
+            <span
+              className="inline-block h-2 w-2 rounded-full bg-status-done"
+              aria-hidden="true"
+            />
+            <span>Connected</span>
+          </div>
         </div>
       </div>
     </aside>

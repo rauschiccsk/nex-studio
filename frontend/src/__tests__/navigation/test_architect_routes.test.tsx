@@ -22,6 +22,9 @@ vi.mock("lucide-react", () => ({
   Brain: (props: Record<string, unknown>) => (
     <svg data-testid="brain-icon" {...props} />
   ),
+  Settings: (props: Record<string, unknown>) => (
+    <svg data-testid="settings-icon" {...props} />
+  ),
   Tag: (props: Record<string, unknown>) => (
     <svg data-testid="tag-icon" {...props} />
   ),
