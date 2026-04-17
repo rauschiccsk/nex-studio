@@ -183,7 +183,7 @@ function statusBadgeClass(value: ExecutionLogStatus): string {
 function verifiedBadgeClass(value: boolean): string {
   return value
     ? "bg-emerald-100 text-emerald-800"
-    : "bg-gray-100 text-gray-700";
+    : "bg-gray-100 text-gray-700 dark:text-gray-300";
 }
 
 /** Format an ISO timestamp as a locale date-time string, tolerant of bad input. */
@@ -588,10 +588,10 @@ function ExecutionLogPage() {
     <section className="space-y-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-xl font-semibold text-gray-900">
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
             Execution logs
           </h2>
-          <p className="text-sm text-gray-600">
+          <p className="text-sm text-gray-600 dark:text-gray-400">
             Per-delegation terminal records carrying duration, token usage,
             cost and commit-verification state (DESIGN.md §1.19 / §1.7
             ``execution_logs`` table). An execution log belongs to exactly
@@ -619,7 +619,7 @@ function ExecutionLogPage() {
       {error && (
         <div
           role="alert"
-          className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800"
+          className="rounded-md border border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/30 p-3 text-sm text-red-800 dark:text-red-300"
         >
           {error}
         </div>
@@ -739,7 +739,7 @@ function ExecutionLogList({
         <div className="flex flex-col">
           <label
             htmlFor="delegation-filter"
-            className="mb-1 text-sm font-medium text-gray-700"
+            className="mb-1 text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Delegation ID
           </label>
@@ -758,7 +758,7 @@ function ExecutionLogList({
         <div className="flex flex-col">
           <label
             htmlFor="task-filter"
-            className="mb-1 text-sm font-medium text-gray-700"
+            className="mb-1 text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Task ID
           </label>
@@ -777,7 +777,7 @@ function ExecutionLogList({
         <div className="flex flex-col">
           <label
             htmlFor="status-filter"
-            className="mb-1 text-sm font-medium text-gray-700"
+            className="mb-1 text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Status
           </label>
@@ -803,7 +803,7 @@ function ExecutionLogList({
         <div className="flex flex-col">
           <label
             htmlFor="commit-verified-filter"
-            className="mb-1 text-sm font-medium text-gray-700"
+            className="mb-1 text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Commit verified
           </label>
@@ -823,91 +823,91 @@ function ExecutionLogList({
           </select>
         </div>
 
-        <span className="ml-auto text-xs text-gray-500">
+        <span className="ml-auto text-xs text-gray-500 dark:text-gray-400">
           {total} execution log{total === 1 ? "" : "s"} total
         </span>
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
+      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+          <thead className="bg-gray-50 dark:bg-gray-900">
             <tr>
               <th
                 scope="col"
-                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Status
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Delegation
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Task
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
                 title="Wall-clock duration of the CC delegation in seconds."
               >
                 Duration (s)
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Input tokens
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Output tokens
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
                 title="DECIMAL(10, 6) USD."
               >
                 Cost (USD)
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Commit
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Verified
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Created
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Actions
               </th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-200">
+          <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
             {isLoading && (
               <tr>
                 <td
                   colSpan={11}
-                  className="px-4 py-6 text-center text-sm text-gray-500"
+                  className="px-4 py-6 text-center text-sm text-gray-500 dark:text-gray-400"
                 >
                   Loading execution logs…
                 </td>
@@ -917,7 +917,7 @@ function ExecutionLogList({
               <tr>
                 <td
                   colSpan={11}
-                  className="px-4 py-6 text-center text-sm text-gray-500"
+                  className="px-4 py-6 text-center text-sm text-gray-500 dark:text-gray-400"
                 >
                   No execution logs match the current filter.
                 </td>
@@ -925,7 +925,7 @@ function ExecutionLogList({
             )}
             {!isLoading &&
               items.map((item) => (
-                <tr key={item.id} className="hover:bg-gray-50">
+                <tr key={item.id} className="hover:bg-gray-50 dark:bg-gray-900 dark:hover:bg-gray-800">
                   <td className="px-4 py-2">
                     <span
                       className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${statusBadgeClass(item.status)}`}
@@ -934,12 +934,12 @@ function ExecutionLogList({
                     </span>
                   </td>
                   <td
-                    className="px-4 py-2 font-mono text-[11px] text-gray-500"
+                    className="px-4 py-2 font-mono text-[11px] text-gray-500 dark:text-gray-400"
                     title={item.delegation_id}
                   >
                     {item.delegation_id.slice(0, 8)}…
                   </td>
-                  <td className="px-4 py-2 font-mono text-[11px] text-gray-500">
+                  <td className="px-4 py-2 font-mono text-[11px] text-gray-500 dark:text-gray-400">
                     {item.task_id ? (
                       <span title={item.task_id}>
                         {item.task_id.slice(0, 8)}…
@@ -948,19 +948,19 @@ function ExecutionLogList({
                       "—"
                     )}
                   </td>
-                  <td className="px-4 py-2 text-right text-sm text-gray-900">
+                  <td className="px-4 py-2 text-right text-sm text-gray-900 dark:text-gray-100">
                     {formatOptionalNumber(item.duration_seconds)}
                   </td>
-                  <td className="px-4 py-2 text-right text-sm text-gray-900">
+                  <td className="px-4 py-2 text-right text-sm text-gray-900 dark:text-gray-100">
                     {formatOptionalNumber(item.input_tokens)}
                   </td>
-                  <td className="px-4 py-2 text-right text-sm text-gray-900">
+                  <td className="px-4 py-2 text-right text-sm text-gray-900 dark:text-gray-100">
                     {formatOptionalNumber(item.output_tokens)}
                   </td>
-                  <td className="px-4 py-2 text-right font-mono text-xs text-gray-900">
+                  <td className="px-4 py-2 text-right font-mono text-xs text-gray-900 dark:text-gray-100">
                     {formatCost(item.total_cost_usd)}
                   </td>
-                  <td className="px-4 py-2 font-mono text-[11px] text-gray-700">
+                  <td className="px-4 py-2 font-mono text-[11px] text-gray-700 dark:text-gray-300">
                     {item.commit_hash ? item.commit_hash.slice(0, 10) : "—"}
                   </td>
                   <td className="px-4 py-2">
@@ -970,28 +970,28 @@ function ExecutionLogList({
                       {item.commit_verified ? "verified" : "unverified"}
                     </span>
                   </td>
-                  <td className="px-4 py-2 text-xs text-gray-500">
+                  <td className="px-4 py-2 text-xs text-gray-500 dark:text-gray-400">
                     {formatTimestamp(item.created_at)}
                   </td>
                   <td className="px-4 py-2 text-right text-sm">
                     <div className="flex justify-end gap-2">
                       <button
                         type="button"
-                        className="text-primary-700 hover:underline"
+                        className="text-primary-700 hover:underline dark:text-primary-400"
                         onClick={() => onView(item.id)}
                       >
                         View
                       </button>
                       <button
                         type="button"
-                        className="text-primary-700 hover:underline"
+                        className="text-primary-700 hover:underline dark:text-primary-400"
                         onClick={() => onEdit(item.id)}
                       >
                         Edit
                       </button>
                       <button
                         type="button"
-                        className="text-red-700 hover:underline"
+                        className="text-red-700 hover:underline dark:text-red-400"
                         onClick={() => onDelete(item.id)}
                       >
                         Delete
@@ -1004,7 +1004,7 @@ function ExecutionLogList({
         </table>
       </div>
 
-      <div className="flex items-center justify-between text-sm text-gray-600">
+      <div className="flex items-center justify-between text-sm text-gray-600 dark:text-gray-400">
         <span>
           Page {currentPage} of {totalPages}
         </span>
@@ -1046,7 +1046,7 @@ function ExecutionLogDetail({
 }: ExecutionLogDetailProps) {
   if (isLoading) {
     return (
-      <div className="rounded-md border border-gray-200 bg-white p-6 text-sm text-gray-600">
+      <div className="rounded-md border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-6 text-sm text-gray-600 dark:text-gray-400">
         Loading execution log…
       </div>
     );
@@ -1054,7 +1054,7 @@ function ExecutionLogDetail({
   if (!row) {
     return (
       <div className="space-y-3">
-        <p className="text-sm text-gray-600">Execution log not found.</p>
+        <p className="text-sm text-gray-600 dark:text-gray-400">Execution log not found.</p>
         <button type="button" className="btn-secondary" onClick={onBack}>
           Back to list
         </button>
@@ -1063,18 +1063,18 @@ function ExecutionLogDetail({
   }
 
   return (
-    <div className="space-y-4 rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+    <div className="space-y-4 rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-6 shadow-sm">
       <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div className="sm:col-span-2">
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Execution log ID
           </dt>
-          <dd className="break-all font-mono text-sm text-gray-900">
+          <dd className="break-all font-mono text-sm text-gray-900 dark:text-gray-100">
             {row.id}
           </dd>
         </div>
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Status
           </dt>
           <dd>
@@ -1086,7 +1086,7 @@ function ExecutionLogDetail({
           </dd>
         </div>
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Commit verified
           </dt>
           <dd>
@@ -1098,74 +1098,74 @@ function ExecutionLogDetail({
           </dd>
         </div>
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Delegation ID
           </dt>
-          <dd className="break-all font-mono text-xs text-gray-900">
+          <dd className="break-all font-mono text-xs text-gray-900 dark:text-gray-100">
             {row.delegation_id}
           </dd>
         </div>
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Task ID
           </dt>
-          <dd className="break-all font-mono text-xs text-gray-900">
+          <dd className="break-all font-mono text-xs text-gray-900 dark:text-gray-100">
             {formatOptional(row.task_id)}
           </dd>
         </div>
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Duration (seconds)
           </dt>
-          <dd className="text-sm text-gray-900">
+          <dd className="text-sm text-gray-900 dark:text-gray-100">
             {formatOptionalNumber(row.duration_seconds)}
           </dd>
         </div>
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Total cost (USD)
           </dt>
-          <dd className="font-mono text-sm text-gray-900">
+          <dd className="font-mono text-sm text-gray-900 dark:text-gray-100">
             {formatCost(row.total_cost_usd)}
           </dd>
         </div>
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Input tokens
           </dt>
-          <dd className="text-sm text-gray-900">
+          <dd className="text-sm text-gray-900 dark:text-gray-100">
             {formatOptionalNumber(row.input_tokens)}
           </dd>
         </div>
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Output tokens
           </dt>
-          <dd className="text-sm text-gray-900">
+          <dd className="text-sm text-gray-900 dark:text-gray-100">
             {formatOptionalNumber(row.output_tokens)}
           </dd>
         </div>
         <div className="sm:col-span-2">
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Commit hash
           </dt>
-          <dd className="break-all font-mono text-sm text-gray-900">
+          <dd className="break-all font-mono text-sm text-gray-900 dark:text-gray-100">
             {formatOptional(row.commit_hash)}
           </dd>
         </div>
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Created at
           </dt>
-          <dd className="text-sm text-gray-900">
+          <dd className="text-sm text-gray-900 dark:text-gray-100">
             {formatTimestamp(row.created_at)}
           </dd>
         </div>
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Updated at
           </dt>
-          <dd className="text-sm text-gray-900">
+          <dd className="text-sm text-gray-900 dark:text-gray-100">
             {formatTimestamp(row.updated_at)}
           </dd>
         </div>
@@ -1208,7 +1208,7 @@ function ExecutionLogForm({
 
   if (isLoading) {
     return (
-      <div className="rounded-md border border-gray-200 bg-white p-6 text-sm text-gray-600">
+      <div className="rounded-md border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-6 text-sm text-gray-600 dark:text-gray-400">
         Loading execution log…
       </div>
     );
@@ -1217,9 +1217,9 @@ function ExecutionLogForm({
   return (
     <form
       onSubmit={onSubmit}
-      className="space-y-4 rounded-lg border border-gray-200 bg-white p-6 shadow-sm"
+      className="space-y-4 rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-6 shadow-sm"
     >
-      <h3 className="text-lg font-semibold text-gray-900">
+      <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
         {isEdit ? "Edit execution log" : "Create execution log"}
       </h3>
 
@@ -1227,10 +1227,10 @@ function ExecutionLogForm({
         <div>
           <label
             htmlFor="delegation_id"
-            className="mb-1 block text-sm font-medium text-gray-700"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Delegation ID
-            <span className="ml-1 text-xs font-normal text-gray-500">
+            <span className="ml-1 text-xs font-normal text-gray-500 dark:text-gray-400">
               (required UUID; FK → delegations, ON DELETE CASCADE;
               immutable after create)
             </span>
@@ -1246,7 +1246,7 @@ function ExecutionLogForm({
             title="Delegation this execution log belongs to."
             placeholder="UUID"
             className={`block w-full rounded-md border border-gray-300 px-3 py-2 font-mono text-xs shadow-sm focus:border-primary-500 focus:ring-primary-500 ${
-              isEdit ? "bg-gray-100 text-gray-500" : "bg-white text-gray-900"
+              isEdit ? "bg-gray-100 text-gray-500 dark:text-gray-400" : "bg-white text-gray-900 dark:text-gray-100"
             }`}
           />
         </div>
@@ -1254,10 +1254,10 @@ function ExecutionLogForm({
         <div>
           <label
             htmlFor="task_id"
-            className="mb-1 block text-sm font-medium text-gray-700"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Task ID
-            <span className="ml-1 text-xs font-normal text-gray-500">
+            <span className="ml-1 text-xs font-normal text-gray-500 dark:text-gray-400">
               (optional UUID; FK → tasks, ON DELETE SET NULL; immutable
               after create)
             </span>
@@ -1272,7 +1272,7 @@ function ExecutionLogForm({
             title="Optional task this execution targeted."
             placeholder="blank = none"
             className={`block w-full rounded-md border border-gray-300 px-3 py-2 font-mono text-xs shadow-sm focus:border-primary-500 focus:ring-primary-500 ${
-              isEdit ? "bg-gray-100 text-gray-500" : "bg-white text-gray-900"
+              isEdit ? "bg-gray-100 text-gray-500 dark:text-gray-400" : "bg-white text-gray-900 dark:text-gray-100"
             }`}
           />
         </div>
@@ -1280,10 +1280,10 @@ function ExecutionLogForm({
         <div>
           <label
             htmlFor="status"
-            className="mb-1 block text-sm font-medium text-gray-700"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Status
-            <span className="ml-1 text-xs font-normal text-gray-500">
+            <span className="ml-1 text-xs font-normal text-gray-500 dark:text-gray-400">
               (required; done | failed)
             </span>
           </label>
@@ -1293,7 +1293,7 @@ function ExecutionLogForm({
             onChange={(event) =>
               patch({ status: event.target.value as ExecutionLogStatus })
             }
-            className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-primary-500 focus:ring-primary-500"
+            className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-primary-500 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
           >
             {STATUS_OPTIONS.map((option) => (
               <option key={option} value={option}>
@@ -1306,7 +1306,7 @@ function ExecutionLogForm({
         <div className="flex items-end">
           <label
             htmlFor="commit_verified"
-            className="inline-flex items-center gap-2 text-sm font-medium text-gray-700"
+            className="inline-flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             <input
               id="commit_verified"
@@ -1318,7 +1318,7 @@ function ExecutionLogForm({
               className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
             />
             Commit verified
-            <span className="text-xs font-normal text-gray-500">
+            <span className="text-xs font-normal text-gray-500 dark:text-gray-400">
               (server default ``false``; flipped to ``true`` by the
               GitHub verification job)
             </span>
@@ -1328,10 +1328,10 @@ function ExecutionLogForm({
         <div>
           <label
             htmlFor="duration_seconds"
-            className="mb-1 block text-sm font-medium text-gray-700"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Duration (seconds)
-            <span className="ml-1 text-xs font-normal text-gray-500">
+            <span className="ml-1 text-xs font-normal text-gray-500 dark:text-gray-400">
               (optional; non-negative integer; blank = unset /
               unchanged)
             </span>
@@ -1346,17 +1346,17 @@ function ExecutionLogForm({
               patch({ duration_seconds: event.target.value })
             }
             placeholder="blank = unset"
-            className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-primary-500 focus:ring-primary-500"
+            className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-primary-500 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
           />
         </div>
 
         <div>
           <label
             htmlFor="total_cost_usd"
-            className="mb-1 block text-sm font-medium text-gray-700"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Total cost (USD)
-            <span className="ml-1 text-xs font-normal text-gray-500">
+            <span className="ml-1 text-xs font-normal text-gray-500 dark:text-gray-400">
               (optional; DECIMAL(10, 6); blank = unset / unchanged)
             </span>
           </label>
@@ -1378,10 +1378,10 @@ function ExecutionLogForm({
         <div>
           <label
             htmlFor="input_tokens"
-            className="mb-1 block text-sm font-medium text-gray-700"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Input tokens
-            <span className="ml-1 text-xs font-normal text-gray-500">
+            <span className="ml-1 text-xs font-normal text-gray-500 dark:text-gray-400">
               (optional; non-negative integer)
             </span>
           </label>
@@ -1393,17 +1393,17 @@ function ExecutionLogForm({
             value={form.input_tokens}
             onChange={(event) => patch({ input_tokens: event.target.value })}
             placeholder="blank = unset"
-            className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-primary-500 focus:ring-primary-500"
+            className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-primary-500 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
           />
         </div>
 
         <div>
           <label
             htmlFor="output_tokens"
-            className="mb-1 block text-sm font-medium text-gray-700"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Output tokens
-            <span className="ml-1 text-xs font-normal text-gray-500">
+            <span className="ml-1 text-xs font-normal text-gray-500 dark:text-gray-400">
               (optional; non-negative integer)
             </span>
           </label>
@@ -1415,17 +1415,17 @@ function ExecutionLogForm({
             value={form.output_tokens}
             onChange={(event) => patch({ output_tokens: event.target.value })}
             placeholder="blank = unset"
-            className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-primary-500 focus:ring-primary-500"
+            className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-primary-500 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
           />
         </div>
 
         <div className="sm:col-span-2">
           <label
             htmlFor="commit_hash"
-            className="mb-1 block text-sm font-medium text-gray-700"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Commit hash
-            <span className="ml-1 text-xs font-normal text-gray-500">
+            <span className="ml-1 text-xs font-normal text-gray-500 dark:text-gray-400">
               (optional; up to 40 hex chars; blank = unset / unchanged)
             </span>
           </label>

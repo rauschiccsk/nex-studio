@@ -404,10 +404,10 @@ function AutoFixAttemptPage() {
     <section className="space-y-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-xl font-semibold text-gray-900">
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
             Auto-fix attempts
           </h2>
-          <p className="text-sm text-gray-600">
+          <p className="text-sm text-gray-600 dark:text-gray-400">
             Guardian auto-fix retries — one row per retry of a failed
             feat delegation (DESIGN.md §1.20 / §2 ``auto_fix_attempts``
             table). Ordered by ``attempt_number`` ASC (attempt 1, attempt
@@ -431,7 +431,7 @@ function AutoFixAttemptPage() {
       {error && (
         <div
           role="alert"
-          className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800"
+          className="rounded-md border border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/30 p-3 text-sm text-red-800 dark:text-red-300"
         >
           {error}
         </div>
@@ -539,7 +539,7 @@ function AutoFixAttemptList({
         <div className="flex flex-col">
           <label
             htmlFor="feat-filter"
-            className="mb-1 text-sm font-medium text-gray-700"
+            className="mb-1 text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Feat ID
           </label>
@@ -558,7 +558,7 @@ function AutoFixAttemptList({
         <div className="flex flex-col">
           <label
             htmlFor="delegation-filter"
-            className="mb-1 text-sm font-medium text-gray-700"
+            className="mb-1 text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Delegation ID
           </label>
@@ -574,72 +574,72 @@ function AutoFixAttemptList({
           />
         </div>
 
-        <span className="ml-auto text-xs text-gray-500">
+        <span className="ml-auto text-xs text-gray-500 dark:text-gray-400">
           {total} attempt{total === 1 ? "" : "s"} total
         </span>
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
+      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+          <thead className="bg-gray-50 dark:bg-gray-900">
             <tr>
               <th
                 scope="col"
-                className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
                 title="Stable retry number auto-assigned per feat (MAX + 1)."
               >
                 #
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Feat
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Error
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Fix
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Delegation
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Attempt ID
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Created
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Actions
               </th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-200">
+          <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
             {isLoading && (
               <tr>
                 <td
                   colSpan={8}
-                  className="px-4 py-6 text-center text-sm text-gray-500"
+                  className="px-4 py-6 text-center text-sm text-gray-500 dark:text-gray-400"
                 >
                   Loading auto-fix attempts…
                 </td>
@@ -649,7 +649,7 @@ function AutoFixAttemptList({
               <tr>
                 <td
                   colSpan={8}
-                  className="px-4 py-6 text-center text-sm text-gray-500"
+                  className="px-4 py-6 text-center text-sm text-gray-500 dark:text-gray-400"
                 >
                   No auto-fix attempts match the current filter.
                 </td>
@@ -657,51 +657,51 @@ function AutoFixAttemptList({
             )}
             {!isLoading &&
               items.map((item) => (
-                <tr key={item.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-2 text-right font-mono text-xs text-gray-700">
+                <tr key={item.id} className="hover:bg-gray-50 dark:bg-gray-900 dark:hover:bg-gray-800">
+                  <td className="px-4 py-2 text-right font-mono text-xs text-gray-700 dark:text-gray-300">
                     #{item.attempt_number}
                   </td>
-                  <td className="px-4 py-2 font-mono text-[11px] text-gray-500">
+                  <td className="px-4 py-2 font-mono text-[11px] text-gray-500 dark:text-gray-400">
                     {item.feat_id}
                   </td>
-                  <td className="max-w-xs truncate px-4 py-2 text-sm text-gray-700">
+                  <td className="max-w-xs truncate px-4 py-2 text-sm text-gray-700 dark:text-gray-300">
                     <span title={item.error_description}>
                       {item.error_description}
                     </span>
                   </td>
-                  <td className="max-w-xs truncate px-4 py-2 text-sm text-gray-700">
+                  <td className="max-w-xs truncate px-4 py-2 text-sm text-gray-700 dark:text-gray-300">
                     <span title={item.fix_description ?? ""}>
                       {formatOptional(item.fix_description)}
                     </span>
                   </td>
-                  <td className="px-4 py-2 font-mono text-[11px] text-gray-500">
+                  <td className="px-4 py-2 font-mono text-[11px] text-gray-500 dark:text-gray-400">
                     {formatOptional(item.delegation_id)}
                   </td>
-                  <td className="px-4 py-2 font-mono text-[11px] text-gray-500">
+                  <td className="px-4 py-2 font-mono text-[11px] text-gray-500 dark:text-gray-400">
                     {item.id}
                   </td>
-                  <td className="px-4 py-2 text-xs text-gray-500">
+                  <td className="px-4 py-2 text-xs text-gray-500 dark:text-gray-400">
                     {formatTimestamp(item.created_at)}
                   </td>
                   <td className="px-4 py-2 text-right text-sm">
                     <div className="flex justify-end gap-2">
                       <button
                         type="button"
-                        className="text-primary-700 hover:underline"
+                        className="text-primary-700 hover:underline dark:text-primary-400"
                         onClick={() => onView(item.id)}
                       >
                         View
                       </button>
                       <button
                         type="button"
-                        className="text-primary-700 hover:underline"
+                        className="text-primary-700 hover:underline dark:text-primary-400"
                         onClick={() => onEdit(item.id)}
                       >
                         Edit
                       </button>
                       <button
                         type="button"
-                        className="text-red-700 hover:underline"
+                        className="text-red-700 hover:underline dark:text-red-400"
                         onClick={() => onDelete(item.id)}
                       >
                         Delete
@@ -714,7 +714,7 @@ function AutoFixAttemptList({
         </table>
       </div>
 
-      <div className="flex items-center justify-between text-sm text-gray-600">
+      <div className="flex items-center justify-between text-sm text-gray-600 dark:text-gray-400">
         <span>
           Page {currentPage} of {totalPages}
         </span>
@@ -756,7 +756,7 @@ function AutoFixAttemptDetail({
 }: AutoFixAttemptDetailProps) {
   if (isLoading) {
     return (
-      <div className="rounded-md border border-gray-200 bg-white p-6 text-sm text-gray-600">
+      <div className="rounded-md border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-6 text-sm text-gray-600 dark:text-gray-400">
         Loading auto-fix attempt…
       </div>
     );
@@ -764,7 +764,7 @@ function AutoFixAttemptDetail({
   if (!row) {
     return (
       <div className="space-y-3">
-        <p className="text-sm text-gray-600">Auto-fix attempt not found.</p>
+        <p className="text-sm text-gray-600 dark:text-gray-400">Auto-fix attempt not found.</p>
         <button type="button" className="btn-secondary" onClick={onBack}>
           Back to list
         </button>
@@ -773,45 +773,45 @@ function AutoFixAttemptDetail({
   }
 
   return (
-    <div className="space-y-4 rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+    <div className="space-y-4 rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-6 shadow-sm">
       <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Attempt ID
           </dt>
-          <dd className="break-all font-mono text-sm text-gray-900">
+          <dd className="break-all font-mono text-sm text-gray-900 dark:text-gray-100">
             {row.id}
           </dd>
         </div>
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Attempt number
           </dt>
-          <dd className="font-mono text-sm text-gray-900">
+          <dd className="font-mono text-sm text-gray-900 dark:text-gray-100">
             #{row.attempt_number}
           </dd>
         </div>
         <div className="sm:col-span-2">
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Feat ID
           </dt>
-          <dd className="break-all font-mono text-xs text-gray-900">
+          <dd className="break-all font-mono text-xs text-gray-900 dark:text-gray-100">
             {row.feat_id}
           </dd>
         </div>
         <div className="sm:col-span-2">
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Error description
           </dt>
-          <dd className="whitespace-pre-wrap break-words rounded-md border border-gray-200 bg-gray-50 p-3 text-sm text-gray-900">
+          <dd className="whitespace-pre-wrap break-words rounded-md border border-gray-200 bg-gray-50 p-3 text-sm text-gray-900 dark:text-gray-100">
             {row.error_description}
           </dd>
         </div>
         <div className="sm:col-span-2">
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Fix description
           </dt>
-          <dd className="whitespace-pre-wrap break-words rounded-md border border-gray-200 bg-gray-50 p-3 text-sm text-gray-900">
+          <dd className="whitespace-pre-wrap break-words rounded-md border border-gray-200 bg-gray-50 p-3 text-sm text-gray-900 dark:text-gray-100">
             {row.fix_description === null ||
             row.fix_description === undefined ||
             row.fix_description.length === 0
@@ -820,26 +820,26 @@ function AutoFixAttemptDetail({
           </dd>
         </div>
         <div className="sm:col-span-2">
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Delegation ID
           </dt>
-          <dd className="break-all font-mono text-xs text-gray-900">
+          <dd className="break-all font-mono text-xs text-gray-900 dark:text-gray-100">
             {formatOptional(row.delegation_id)}
           </dd>
         </div>
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Created at
           </dt>
-          <dd className="text-sm text-gray-900">
+          <dd className="text-sm text-gray-900 dark:text-gray-100">
             {formatTimestamp(row.created_at)}
           </dd>
         </div>
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Updated at
           </dt>
-          <dd className="text-sm text-gray-900">
+          <dd className="text-sm text-gray-900 dark:text-gray-100">
             {formatTimestamp(row.updated_at)}
           </dd>
         </div>
@@ -885,7 +885,7 @@ function AutoFixAttemptForm({
 
   if (isLoading) {
     return (
-      <div className="rounded-md border border-gray-200 bg-white p-6 text-sm text-gray-600">
+      <div className="rounded-md border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-6 text-sm text-gray-600 dark:text-gray-400">
         Loading auto-fix attempt…
       </div>
     );
@@ -894,9 +894,9 @@ function AutoFixAttemptForm({
   return (
     <form
       onSubmit={onSubmit}
-      className="space-y-4 rounded-lg border border-gray-200 bg-white p-6 shadow-sm"
+      className="space-y-4 rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-6 shadow-sm"
     >
-      <h3 className="text-lg font-semibold text-gray-900">
+      <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
         {isEdit ? "Edit auto-fix attempt" : "Create auto-fix attempt"}
       </h3>
 
@@ -904,10 +904,10 @@ function AutoFixAttemptForm({
         <div className="sm:col-span-2">
           <label
             htmlFor="feat_id"
-            className="mb-1 block text-sm font-medium text-gray-700"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Feat ID
-            <span className="ml-1 text-xs font-normal text-gray-500">
+            <span className="ml-1 text-xs font-normal text-gray-500 dark:text-gray-400">
               (UUID; FK → feats, ON DELETE CASCADE; immutable after create)
             </span>
           </label>
@@ -922,7 +922,7 @@ function AutoFixAttemptForm({
             title="Enter the feat UUID this auto-fix attempt belongs to."
             placeholder="e.g. a31d1a12-…"
             className={`block w-full rounded-md border border-gray-300 px-3 py-2 font-mono text-xs shadow-sm focus:border-primary-500 focus:ring-primary-500 ${
-              isEdit ? "bg-gray-100 text-gray-500" : "bg-white text-gray-900"
+              isEdit ? "bg-gray-100 text-gray-500 dark:text-gray-400" : "bg-white text-gray-900 dark:text-gray-100"
             }`}
           />
         </div>
@@ -931,10 +931,10 @@ function AutoFixAttemptForm({
           <div className="sm:col-span-2">
             <label
               htmlFor="attempt_number"
-              className="mb-1 block text-sm font-medium text-gray-700"
+              className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
             >
               Attempt number
-              <span className="ml-1 text-xs font-normal text-gray-500">
+              <span className="ml-1 text-xs font-normal text-gray-500 dark:text-gray-400">
                 (auto-assigned per feat; immutable)
               </span>
             </label>
@@ -951,10 +951,10 @@ function AutoFixAttemptForm({
         <div className="sm:col-span-2">
           <label
             htmlFor="error_description"
-            className="mb-1 block text-sm font-medium text-gray-700"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Error description
-            <span className="ml-1 text-xs font-normal text-gray-500">
+            <span className="ml-1 text-xs font-normal text-gray-500 dark:text-gray-400">
               (required; accumulated error context from the failed
               delegation)
             </span>
@@ -969,17 +969,17 @@ function AutoFixAttemptForm({
             minLength={1}
             rows={6}
             placeholder="Stack trace, test failure output, Guardian findings…"
-            className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-primary-500 focus:ring-primary-500"
+            className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-primary-500 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
           />
         </div>
 
         <div className="sm:col-span-2">
           <label
             htmlFor="fix_description"
-            className="mb-1 block text-sm font-medium text-gray-700"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Fix description
-            <span className="ml-1 text-xs font-normal text-gray-500">
+            <span className="ml-1 text-xs font-normal text-gray-500 dark:text-gray-400">
               (optional; typically populated once the fix delegation
               completes — leave blank at create time)
             </span>
@@ -992,17 +992,17 @@ function AutoFixAttemptForm({
             }
             rows={4}
             placeholder="Remediation summary…"
-            className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-primary-500 focus:ring-primary-500"
+            className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-primary-500 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
           />
         </div>
 
         <div className="sm:col-span-2">
           <label
             htmlFor="delegation_id"
-            className="mb-1 block text-sm font-medium text-gray-700"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Delegation ID
-            <span className="ml-1 text-xs font-normal text-gray-500">
+            <span className="ml-1 text-xs font-normal text-gray-500 dark:text-gray-400">
               (optional UUID; FK → delegations, ON DELETE SET NULL —
               clears automatically if the delegation is later deleted)
             </span>

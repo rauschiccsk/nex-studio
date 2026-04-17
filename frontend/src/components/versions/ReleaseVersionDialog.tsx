@@ -60,15 +60,15 @@ export default function ReleaseVersionDialog({
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
       data-testid="release-dialog"
     >
-      <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
-        <h3 className="mb-4 text-lg font-semibold text-gray-900">
+      <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl dark:border dark:border-gray-700 dark:bg-gray-800">
+        <h3 className="mb-4 text-lg font-semibold text-gray-900 dark:text-gray-100">
           Release Version {version.version_number}
         </h3>
 
         {error && (
           <div
             role="alert"
-            className="mb-3 rounded bg-red-50 px-3 py-2 text-sm text-red-700"
+            className="mb-3 rounded bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-900/30 dark:text-red-400"
           >
             {error}
           </div>
@@ -76,7 +76,7 @@ export default function ReleaseVersionDialog({
 
         {hasBlocking ? (
           <div
-            className="mb-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800"
+            className="mb-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
             data-testid="blocking-warning"
           >
             <p className="font-medium">
@@ -88,13 +88,13 @@ export default function ReleaseVersionDialog({
             </p>
           </div>
         ) : (
-          <p className="mb-4 text-sm text-gray-600">
+          <p className="mb-4 text-sm text-gray-600 dark:text-gray-400">
             All {version.epic_count} EPIC{version.epic_count !== 1 ? "s" : ""}{" "}
             are completed. This version is ready for release.
           </p>
         )}
 
-        <p className="mb-4 text-sm text-gray-500">
+        <p className="mb-4 text-sm text-gray-500 dark:text-gray-400">
           Releasing sets the status to <strong>released</strong> and records
           today as the release date. This action cannot be undone.
         </p>

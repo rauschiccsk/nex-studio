@@ -91,19 +91,19 @@ const EMPTY_FORM: UserFormState = {
 function roleBadgeClass(role: UserRole): string {
   switch (role) {
     case "ri":
-      return "bg-indigo-100 text-indigo-800";
+      return "bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-300";
     case "ha":
-      return "bg-sky-100 text-sky-800";
+      return "bg-sky-100 text-sky-800 dark:bg-sky-900 dark:text-sky-300";
     case "shu":
-      return "bg-gray-100 text-gray-800";
+      return "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300";
   }
 }
 
 /** Tailwind helper for the active / inactive pill. */
 function activeBadgeClass(isActive: boolean): string {
   return isActive
-    ? "bg-emerald-100 text-emerald-800"
-    : "bg-amber-100 text-amber-800";
+    ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-300"
+    : "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-300";
 }
 
 /** Format an ISO timestamp as a locale date-time string, tolerant of bad input. */
@@ -124,8 +124,8 @@ function UserPage() {
     return (
       <section className="space-y-6" data-testid="user-page-denied">
         <header>
-          <h2 className="text-xl font-semibold text-gray-900">Users</h2>
-          <p className="text-sm text-red-600">
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Users</h2>
+          <p className="text-sm text-red-600 dark:text-red-400">
             Access denied. Only users with the <strong>ri</strong> role may
             manage users.
           </p>
@@ -360,8 +360,8 @@ function UserPageContent() {
     <section className="space-y-6" data-testid="user-page">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-xl font-semibold text-gray-900">Users</h2>
-          <p className="text-sm text-gray-600">
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Users</h2>
+          <p className="text-sm text-gray-600 dark:text-gray-400">
             System-wide user registry — roles and activation state drive
             authentication and project membership.
           </p>
@@ -382,7 +382,7 @@ function UserPageContent() {
       {error && (
         <div
           role="alert"
-          className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800"
+          className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-900/30 dark:text-red-300"
         >
           {error}
         </div>
@@ -493,7 +493,7 @@ function UserList({
       <div className="flex flex-wrap items-center gap-3">
         <label
           htmlFor="role-filter"
-          className="text-sm font-medium text-gray-700"
+          className="text-sm font-medium text-gray-700 dark:text-gray-300"
         >
           Role:
         </label>
@@ -503,7 +503,7 @@ function UserList({
           onChange={(event) =>
             onRoleFilterChange(event.target.value as UserRole | "")
           }
-          className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm"
+          className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
         >
           <option value="">All</option>
           {ROLE_OPTIONS.map((option) => (
@@ -515,7 +515,7 @@ function UserList({
 
         <label
           htmlFor="active-filter"
-          className="text-sm font-medium text-gray-700"
+          className="text-sm font-medium text-gray-700 dark:text-gray-300"
         >
           Active:
         </label>
@@ -525,66 +525,66 @@ function UserList({
           onChange={(event) =>
             onActiveFilterChange(event.target.value as ActiveFilter)
           }
-          className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm"
+          className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
         >
           <option value="">Any</option>
           <option value="true">Active only</option>
           <option value="false">Inactive only</option>
         </select>
 
-        <span className="ml-auto text-xs text-gray-500">
+        <span className="ml-auto text-xs text-gray-500 dark:text-gray-400">
           {total} user{total === 1 ? "" : "s"} total
         </span>
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
+      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+          <thead className="bg-gray-50 dark:bg-gray-900">
             <tr>
               <th
                 scope="col"
-                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Username
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Email
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Role
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Active
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Created
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Actions
               </th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-200">
+          <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
             {isLoading && (
               <tr>
                 <td
                   colSpan={6}
-                  className="px-4 py-6 text-center text-sm text-gray-500"
+                  className="px-4 py-6 text-center text-sm text-gray-500 dark:text-gray-400"
                 >
                   Loading users…
                 </td>
@@ -594,7 +594,7 @@ function UserList({
               <tr>
                 <td
                   colSpan={6}
-                  className="px-4 py-6 text-center text-sm text-gray-500"
+                  className="px-4 py-6 text-center text-sm text-gray-500 dark:text-gray-400"
                 >
                   No users match the current filter.
                 </td>
@@ -602,11 +602,11 @@ function UserList({
             )}
             {!isLoading &&
               items.map((item) => (
-                <tr key={item.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-2 text-sm font-medium text-gray-900">
+                <tr key={item.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                  <td className="px-4 py-2 text-sm font-medium text-gray-900 dark:text-gray-100">
                     {item.username}
                   </td>
-                  <td className="px-4 py-2 text-sm text-gray-700">
+                  <td className="px-4 py-2 text-sm text-gray-700 dark:text-gray-300">
                     {item.email}
                   </td>
                   <td className="px-4 py-2">
@@ -623,21 +623,21 @@ function UserList({
                       {item.is_active ? "active" : "inactive"}
                     </span>
                   </td>
-                  <td className="px-4 py-2 text-xs text-gray-500">
+                  <td className="px-4 py-2 text-xs text-gray-500 dark:text-gray-400">
                     {formatTimestamp(item.created_at)}
                   </td>
                   <td className="px-4 py-2 text-right text-sm">
                     <div className="flex justify-end gap-2">
                       <button
                         type="button"
-                        className="text-primary-700 hover:underline"
+                        className="text-primary-700 hover:underline dark:text-primary-400"
                         onClick={() => onView(item.id)}
                       >
                         View
                       </button>
                       <button
                         type="button"
-                        className="text-primary-700 hover:underline"
+                        className="text-primary-700 hover:underline dark:text-primary-400"
                         data-testid={`edit-btn-${item.id}`}
                         onClick={() => onEdit(item.id)}
                       >
@@ -645,7 +645,7 @@ function UserList({
                       </button>
                       <button
                         type="button"
-                        className="text-primary-700 hover:underline"
+                        className="text-primary-700 hover:underline dark:text-primary-400"
                         data-testid={`change-password-btn-${item.id}`}
                         onClick={() => onChangePassword(item)}
                       >
@@ -655,8 +655,8 @@ function UserList({
                         type="button"
                         className={
                           item.is_active
-                            ? "text-amber-700 hover:underline"
-                            : "text-emerald-700 hover:underline"
+                            ? "text-amber-700 hover:underline dark:text-amber-400"
+                            : "text-emerald-700 hover:underline dark:text-emerald-400"
                         }
                         data-testid={`deactivate-btn-${item.id}`}
                         onClick={() => onDeactivate(item.id, item.is_active)}
@@ -671,7 +671,7 @@ function UserList({
         </table>
       </div>
 
-      <div className="flex items-center justify-between text-sm text-gray-600">
+      <div className="flex items-center justify-between text-sm text-gray-600 dark:text-gray-400">
         <span>
           Page {currentPage} of {totalPages}
         </span>
@@ -708,7 +708,7 @@ interface UserDetailProps {
 function UserDetail({ user, isLoading, onBack, onEdit }: UserDetailProps) {
   if (isLoading) {
     return (
-      <div className="rounded-md border border-gray-200 bg-white p-6 text-sm text-gray-600">
+      <div className="rounded-md border border-gray-200 bg-white p-6 text-sm text-gray-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">
         Loading user…
       </div>
     );
@@ -716,7 +716,7 @@ function UserDetail({ user, isLoading, onBack, onEdit }: UserDetailProps) {
   if (!user) {
     return (
       <div className="space-y-3">
-        <p className="text-sm text-gray-600">User not found.</p>
+        <p className="text-sm text-gray-600 dark:text-gray-400">User not found.</p>
         <button type="button" className="btn-secondary" onClick={onBack}>
           Back to list
         </button>
@@ -725,18 +725,18 @@ function UserDetail({ user, isLoading, onBack, onEdit }: UserDetailProps) {
   }
 
   return (
-    <div className="space-y-4 rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+    <div className="space-y-4 rounded-lg border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
       <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             ID
           </dt>
-          <dd className="break-all font-mono text-sm text-gray-900">
+          <dd className="break-all font-mono text-sm text-gray-900 dark:text-gray-100">
             {user.id}
           </dd>
         </div>
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Role
           </dt>
           <dd>
@@ -748,19 +748,19 @@ function UserDetail({ user, isLoading, onBack, onEdit }: UserDetailProps) {
           </dd>
         </div>
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Username
           </dt>
-          <dd className="text-sm text-gray-900">{user.username}</dd>
+          <dd className="text-sm text-gray-900 dark:text-gray-100">{user.username}</dd>
         </div>
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Email
           </dt>
-          <dd className="break-all text-sm text-gray-900">{user.email}</dd>
+          <dd className="break-all text-sm text-gray-900 dark:text-gray-100">{user.email}</dd>
         </div>
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Active
           </dt>
           <dd>
@@ -772,18 +772,18 @@ function UserDetail({ user, isLoading, onBack, onEdit }: UserDetailProps) {
           </dd>
         </div>
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Created at
           </dt>
-          <dd className="text-sm text-gray-900">
+          <dd className="text-sm text-gray-900 dark:text-gray-100">
             {formatTimestamp(user.created_at)}
           </dd>
         </div>
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Updated at
           </dt>
-          <dd className="text-sm text-gray-900">
+          <dd className="text-sm text-gray-900 dark:text-gray-100">
             {formatTimestamp(user.updated_at)}
           </dd>
         </div>
@@ -826,7 +826,7 @@ function UserForm({
 
   if (isLoading) {
     return (
-      <div className="rounded-md border border-gray-200 bg-white p-6 text-sm text-gray-600">
+      <div className="rounded-md border border-gray-200 bg-white p-6 text-sm text-gray-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">
         Loading user…
       </div>
     );
@@ -835,9 +835,9 @@ function UserForm({
   return (
     <form
       onSubmit={onSubmit}
-      className="space-y-4 rounded-lg border border-gray-200 bg-white p-6 shadow-sm"
+      className="space-y-4 rounded-lg border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800"
     >
-      <h3 className="text-lg font-semibold text-gray-900">
+      <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
         {isEdit ? "Edit user" : "Create user"}
       </h3>
 
@@ -845,7 +845,7 @@ function UserForm({
         <div>
           <label
             htmlFor="username"
-            className="mb-1 block text-sm font-medium text-gray-700"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Username
           </label>
@@ -858,14 +858,14 @@ function UserForm({
             minLength={1}
             maxLength={50}
             placeholder="e.g. zoltan"
-            className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-primary-500 focus:ring-primary-500"
+            className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-primary-500 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
           />
         </div>
 
         <div>
           <label
             htmlFor="email"
-            className="mb-1 block text-sm font-medium text-gray-700"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Email
           </label>
@@ -878,7 +878,7 @@ function UserForm({
             minLength={1}
             maxLength={255}
             placeholder="e.g. zoltan@isnex.ai"
-            className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-primary-500 focus:ring-primary-500"
+            className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-primary-500 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
           />
         </div>
 
@@ -886,10 +886,10 @@ function UserForm({
           <div className="sm:col-span-2">
             <label
               htmlFor="password"
-              className="mb-1 block text-sm font-medium text-gray-700"
+              className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
             >
               Password
-              <span className="ml-1 text-xs font-normal text-gray-500">
+              <span className="ml-1 text-xs font-normal text-gray-500 dark:text-gray-400">
                 (min 8 characters)
               </span>
             </label>
@@ -903,7 +903,7 @@ function UserForm({
               minLength={8}
               maxLength={128}
               placeholder="Enter password"
-              className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-primary-500 focus:ring-primary-500"
+              className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-primary-500 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
             />
           </div>
         )}
@@ -911,7 +911,7 @@ function UserForm({
         <div>
           <label
             htmlFor="role"
-            className="mb-1 block text-sm font-medium text-gray-700"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Role
           </label>
@@ -921,7 +921,7 @@ function UserForm({
             onChange={(event) =>
               patch({ role: event.target.value as UserRole })
             }
-            className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-primary-500 focus:ring-primary-500"
+            className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-primary-500 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
           >
             {ROLE_OPTIONS.map((option) => (
               <option key={option} value={option}>
@@ -934,17 +934,17 @@ function UserForm({
         <div className="flex items-end">
           <label
             htmlFor="is_active"
-            className="inline-flex items-center gap-2 text-sm font-medium text-gray-700"
+            className="inline-flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             <input
               id="is_active"
               type="checkbox"
               checked={form.is_active}
               onChange={(event) => patch({ is_active: event.target.checked })}
-              className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+              className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700"
             />
             Active
-            <span className="text-xs font-normal text-gray-500">
+            <span className="text-xs font-normal text-gray-500 dark:text-gray-400">
               (inactive users cannot authenticate)
             </span>
           </label>

@@ -125,9 +125,9 @@ const EMPTY_FORM: ArchitectSessionFormState = {
 function statusBadgeClass(value: ArchitectSessionStatus): string {
   switch (value) {
     case "active":
-      return "bg-emerald-100 text-emerald-800";
+      return "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-300";
     case "closed":
-      return "bg-gray-100 text-gray-800";
+      return "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300";
   }
 }
 
@@ -444,10 +444,10 @@ function ArchitectSessionPage() {
     <section className="space-y-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-xl font-semibold text-gray-900">
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
             Architect sessions
           </h2>
-          <p className="text-sm text-gray-600">
+          <p className="text-sm text-gray-600 dark:text-gray-400">
             Architect chat sessions scoped to a project (``module_id ==
             null`` → Foundation / project-level session) or a specific
             project module (DESIGN.md §1.11 / §1.5). Deleting a session
@@ -470,7 +470,7 @@ function ArchitectSessionPage() {
       {error && (
         <div
           role="alert"
-          className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800"
+          className="rounded-md border border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/30 p-3 text-sm text-red-800 dark:text-red-300"
         >
           {error}
         </div>
@@ -590,7 +590,7 @@ function ArchitectSessionList({
         <div className="flex flex-col">
           <label
             htmlFor="project-filter"
-            className="mb-1 text-sm font-medium text-gray-700"
+            className="mb-1 text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Project ID
           </label>
@@ -609,7 +609,7 @@ function ArchitectSessionList({
         <div className="flex flex-col">
           <label
             htmlFor="module-filter"
-            className="mb-1 text-sm font-medium text-gray-700"
+            className="mb-1 text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Module ID
           </label>
@@ -628,7 +628,7 @@ function ArchitectSessionList({
         <div className="flex flex-col">
           <label
             htmlFor="status-filter"
-            className="mb-1 text-sm font-medium text-gray-700"
+            className="mb-1 text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Status
           </label>
@@ -654,7 +654,7 @@ function ArchitectSessionList({
         <div className="flex flex-col">
           <label
             htmlFor="created-by-filter"
-            className="mb-1 text-sm font-medium text-gray-700"
+            className="mb-1 text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Created by
           </label>
@@ -670,71 +670,71 @@ function ArchitectSessionList({
           />
         </div>
 
-        <span className="ml-auto text-xs text-gray-500">
+        <span className="ml-auto text-xs text-gray-500 dark:text-gray-400">
           {total} session{total === 1 ? "" : "s"} total
         </span>
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
+      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+          <thead className="bg-gray-50 dark:bg-gray-900">
             <tr>
               <th
                 scope="col"
-                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Session
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Project
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Scope
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Status
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Created by
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Closed at
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Created
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Actions
               </th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-200">
+          <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
             {isLoading && (
               <tr>
                 <td
                   colSpan={8}
-                  className="px-4 py-6 text-center text-sm text-gray-500"
+                  className="px-4 py-6 text-center text-sm text-gray-500 dark:text-gray-400"
                 >
                   Loading Architect sessions…
                 </td>
@@ -744,7 +744,7 @@ function ArchitectSessionList({
               <tr>
                 <td
                   colSpan={8}
-                  className="px-4 py-6 text-center text-sm text-gray-500"
+                  className="px-4 py-6 text-center text-sm text-gray-500 dark:text-gray-400"
                 >
                   No Architect sessions match the current filter.
                 </td>
@@ -752,16 +752,16 @@ function ArchitectSessionList({
             )}
             {!isLoading &&
               items.map((item) => (
-                <tr key={item.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-2 font-mono text-[11px] text-gray-900">
+                <tr key={item.id} className="hover:bg-gray-50 dark:bg-gray-900 dark:hover:bg-gray-800">
+                  <td className="px-4 py-2 font-mono text-[11px] text-gray-900 dark:text-gray-100">
                     {item.id}
                   </td>
-                  <td className="px-4 py-2 font-mono text-[11px] text-gray-500">
+                  <td className="px-4 py-2 font-mono text-[11px] text-gray-500 dark:text-gray-400">
                     {item.project_id}
                   </td>
-                  <td className="px-4 py-2 text-sm text-gray-700">
+                  <td className="px-4 py-2 text-sm text-gray-700 dark:text-gray-300">
                     {item.module_id ? (
-                      <span className="font-mono text-[11px] text-gray-700">
+                      <span className="font-mono text-[11px] text-gray-700 dark:text-gray-300">
                         {item.module_id}
                       </span>
                     ) : (
@@ -777,34 +777,34 @@ function ArchitectSessionList({
                       {item.status}
                     </span>
                   </td>
-                  <td className="px-4 py-2 font-mono text-[11px] text-gray-500">
+                  <td className="px-4 py-2 font-mono text-[11px] text-gray-500 dark:text-gray-400">
                     {item.created_by}
                   </td>
-                  <td className="px-4 py-2 text-xs text-gray-500">
+                  <td className="px-4 py-2 text-xs text-gray-500 dark:text-gray-400">
                     {formatTimestamp(item.closed_at)}
                   </td>
-                  <td className="px-4 py-2 text-xs text-gray-500">
+                  <td className="px-4 py-2 text-xs text-gray-500 dark:text-gray-400">
                     {formatTimestamp(item.created_at)}
                   </td>
                   <td className="px-4 py-2 text-right text-sm">
                     <div className="flex justify-end gap-2">
                       <button
                         type="button"
-                        className="text-primary-700 hover:underline"
+                        className="text-primary-700 hover:underline dark:text-primary-400"
                         onClick={() => onView(item.id)}
                       >
                         View
                       </button>
                       <button
                         type="button"
-                        className="text-primary-700 hover:underline"
+                        className="text-primary-700 hover:underline dark:text-primary-400"
                         onClick={() => onEdit(item.id)}
                       >
                         Edit
                       </button>
                       <button
                         type="button"
-                        className="text-red-700 hover:underline"
+                        className="text-red-700 hover:underline dark:text-red-400"
                         onClick={() => onDelete(item.id)}
                       >
                         Delete
@@ -817,7 +817,7 @@ function ArchitectSessionList({
         </table>
       </div>
 
-      <div className="flex items-center justify-between text-sm text-gray-600">
+      <div className="flex items-center justify-between text-sm text-gray-600 dark:text-gray-400">
         <span>
           Page {currentPage} of {totalPages}
         </span>
@@ -859,7 +859,7 @@ function ArchitectSessionDetail({
 }: ArchitectSessionDetailProps) {
   if (isLoading) {
     return (
-      <div className="rounded-md border border-gray-200 bg-white p-6 text-sm text-gray-600">
+      <div className="rounded-md border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-6 text-sm text-gray-600 dark:text-gray-400">
         Loading Architect session…
       </div>
     );
@@ -867,7 +867,7 @@ function ArchitectSessionDetail({
   if (!row) {
     return (
       <div className="space-y-3">
-        <p className="text-sm text-gray-600">Architect session not found.</p>
+        <p className="text-sm text-gray-600 dark:text-gray-400">Architect session not found.</p>
         <button type="button" className="btn-secondary" onClick={onBack}>
           Back to list
         </button>
@@ -876,18 +876,18 @@ function ArchitectSessionDetail({
   }
 
   return (
-    <div className="space-y-4 rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+    <div className="space-y-4 rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-6 shadow-sm">
       <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Session ID
           </dt>
-          <dd className="break-all font-mono text-sm text-gray-900">
+          <dd className="break-all font-mono text-sm text-gray-900 dark:text-gray-100">
             {row.id}
           </dd>
         </div>
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Status
           </dt>
           <dd>
@@ -899,50 +899,50 @@ function ArchitectSessionDetail({
           </dd>
         </div>
         <div className="sm:col-span-2">
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Project ID
           </dt>
-          <dd className="break-all font-mono text-xs text-gray-900">
+          <dd className="break-all font-mono text-xs text-gray-900 dark:text-gray-100">
             {row.project_id}
           </dd>
         </div>
         <div className="sm:col-span-2">
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Module ID
           </dt>
-          <dd className="break-all font-mono text-xs text-gray-900">
+          <dd className="break-all font-mono text-xs text-gray-900 dark:text-gray-100">
             {row.module_id ?? "— (project-level session)"}
           </dd>
         </div>
         <div className="sm:col-span-2">
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Created by
           </dt>
-          <dd className="break-all font-mono text-xs text-gray-900">
+          <dd className="break-all font-mono text-xs text-gray-900 dark:text-gray-100">
             {row.created_by}
           </dd>
         </div>
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Closed at
           </dt>
-          <dd className="text-sm text-gray-900">
+          <dd className="text-sm text-gray-900 dark:text-gray-100">
             {formatTimestamp(row.closed_at)}
           </dd>
         </div>
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Created at
           </dt>
-          <dd className="text-sm text-gray-900">
+          <dd className="text-sm text-gray-900 dark:text-gray-100">
             {formatTimestamp(row.created_at)}
           </dd>
         </div>
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Updated at
           </dt>
-          <dd className="text-sm text-gray-900">
+          <dd className="text-sm text-gray-900 dark:text-gray-100">
             {formatTimestamp(row.updated_at)}
           </dd>
         </div>
@@ -985,7 +985,7 @@ function ArchitectSessionForm({
 
   if (isLoading) {
     return (
-      <div className="rounded-md border border-gray-200 bg-white p-6 text-sm text-gray-600">
+      <div className="rounded-md border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-6 text-sm text-gray-600 dark:text-gray-400">
         Loading Architect session…
       </div>
     );
@@ -994,9 +994,9 @@ function ArchitectSessionForm({
   return (
     <form
       onSubmit={onSubmit}
-      className="space-y-4 rounded-lg border border-gray-200 bg-white p-6 shadow-sm"
+      className="space-y-4 rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-6 shadow-sm"
     >
-      <h3 className="text-lg font-semibold text-gray-900">
+      <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
         {isEdit ? "Edit Architect session" : "Create Architect session"}
       </h3>
 
@@ -1004,10 +1004,10 @@ function ArchitectSessionForm({
         <div className="sm:col-span-2">
           <label
             htmlFor="project_id"
-            className="mb-1 block text-sm font-medium text-gray-700"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Project ID
-            <span className="ml-1 text-xs font-normal text-gray-500">
+            <span className="ml-1 text-xs font-normal text-gray-500 dark:text-gray-400">
               (UUID; FK → projects, ON DELETE CASCADE; immutable after
               create)
             </span>
@@ -1023,7 +1023,7 @@ function ArchitectSessionForm({
             title="Enter the project UUID this session is scoped to."
             placeholder="e.g. a31d1a12-…"
             className={`block w-full rounded-md border border-gray-300 px-3 py-2 font-mono text-xs shadow-sm focus:border-primary-500 focus:ring-primary-500 ${
-              isEdit ? "bg-gray-100 text-gray-500" : "bg-white text-gray-900"
+              isEdit ? "bg-gray-100 text-gray-500 dark:text-gray-400" : "bg-white text-gray-900 dark:text-gray-100"
             }`}
           />
         </div>
@@ -1031,10 +1031,10 @@ function ArchitectSessionForm({
         <div className="sm:col-span-2">
           <label
             htmlFor="module_id"
-            className="mb-1 block text-sm font-medium text-gray-700"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Module ID
-            <span className="ml-1 text-xs font-normal text-gray-500">
+            <span className="ml-1 text-xs font-normal text-gray-500 dark:text-gray-400">
               (optional UUID; FK → project_modules, ON DELETE SET NULL;
               blank = project-level / Foundation session)
             </span>
@@ -1054,10 +1054,10 @@ function ArchitectSessionForm({
         <div className="sm:col-span-2">
           <label
             htmlFor="created_by"
-            className="mb-1 block text-sm font-medium text-gray-700"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Created by
-            <span className="ml-1 text-xs font-normal text-gray-500">
+            <span className="ml-1 text-xs font-normal text-gray-500 dark:text-gray-400">
               (UUID; FK → users; immutable after create)
             </span>
           </label>
@@ -1072,7 +1072,7 @@ function ArchitectSessionForm({
             title="Enter the UUID of the user opening the session."
             placeholder="e.g. 9f0c8f9e-…"
             className={`block w-full rounded-md border border-gray-300 px-3 py-2 font-mono text-xs shadow-sm focus:border-primary-500 focus:ring-primary-500 ${
-              isEdit ? "bg-gray-100 text-gray-500" : "bg-white text-gray-900"
+              isEdit ? "bg-gray-100 text-gray-500 dark:text-gray-400" : "bg-white text-gray-900 dark:text-gray-100"
             }`}
           />
         </div>
@@ -1080,7 +1080,7 @@ function ArchitectSessionForm({
         <div>
           <label
             htmlFor="status"
-            className="mb-1 block text-sm font-medium text-gray-700"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Status
           </label>
@@ -1092,7 +1092,7 @@ function ArchitectSessionForm({
                 status: event.target.value as ArchitectSessionStatus,
               })
             }
-            className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-primary-500 focus:ring-primary-500"
+            className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-primary-500 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
           >
             {STATUS_OPTIONS.map((option) => (
               <option key={option} value={option}>
@@ -1105,10 +1105,10 @@ function ArchitectSessionForm({
         <div>
           <label
             htmlFor="closed_at"
-            className="mb-1 block text-sm font-medium text-gray-700"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Closed at
-            <span className="ml-1 text-xs font-normal text-gray-500">
+            <span className="ml-1 text-xs font-normal text-gray-500 dark:text-gray-400">
               (optional; stamped automatically by the service when status
               transitions to closed)
             </span>
@@ -1118,7 +1118,7 @@ function ArchitectSessionForm({
             type="datetime-local"
             value={form.closed_at}
             onChange={(event) => patch({ closed_at: event.target.value })}
-            className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-primary-500 focus:ring-primary-500"
+            className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-primary-500 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
           />
         </div>
       </div>

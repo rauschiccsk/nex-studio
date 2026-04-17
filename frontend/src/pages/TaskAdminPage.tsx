@@ -176,13 +176,13 @@ const EMPTY_FORM: TaskFormState = {
 function statusBadgeClass(value: TaskStatus): string {
   switch (value) {
     case "todo":
-      return "bg-gray-100 text-gray-800";
+      return "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300";
     case "in_progress":
-      return "bg-amber-100 text-amber-800";
+      return "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-300";
     case "done":
-      return "bg-emerald-100 text-emerald-800";
+      return "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-300";
     case "failed":
-      return "bg-red-100 text-red-800";
+      return "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300";
   }
 }
 
@@ -512,8 +512,8 @@ function TaskAdminPage() {
     <section className="space-y-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-xl font-semibold text-gray-900">Tasks</h2>
-          <p className="text-sm text-gray-600">
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Tasks</h2>
+          <p className="text-sm text-gray-600 dark:text-gray-400">
             Leaf level of the Epic → Feat → Task task hierarchy
             (DESIGN.md §1.9 / §2 ``tasks`` table). Ordered by ``number``
             ASC (task 1, task 2, …) — auto-assigned per feat at create
@@ -538,7 +538,7 @@ function TaskAdminPage() {
       {error && (
         <div
           role="alert"
-          className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800"
+          className="rounded-md border border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/30 p-3 text-sm text-red-800 dark:text-red-300"
         >
           {error}
         </div>
@@ -654,7 +654,7 @@ function TaskList({
         <div className="flex flex-col">
           <label
             htmlFor="feat-filter"
-            className="mb-1 text-sm font-medium text-gray-700"
+            className="mb-1 text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Feat ID
           </label>
@@ -673,7 +673,7 @@ function TaskList({
         <div className="flex flex-col">
           <label
             htmlFor="task-type-filter"
-            className="mb-1 text-sm font-medium text-gray-700"
+            className="mb-1 text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Task type
           </label>
@@ -697,7 +697,7 @@ function TaskList({
         <div className="flex flex-col">
           <label
             htmlFor="status-filter"
-            className="mb-1 text-sm font-medium text-gray-700"
+            className="mb-1 text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Status
           </label>
@@ -718,85 +718,85 @@ function TaskList({
           </select>
         </div>
 
-        <span className="ml-auto text-xs text-gray-500">
+        <span className="ml-auto text-xs text-gray-500 dark:text-gray-400">
           {total} task{total === 1 ? "" : "s"} total
         </span>
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
+      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+          <thead className="bg-gray-50 dark:bg-gray-900">
             <tr>
               <th
                 scope="col"
-                className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 #
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Title
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Type
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Status
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Feat
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
                 title="Checklist type injected into the CC delegation context (e.g. model, schema, service, router, frontend)."
               >
                 Checklist
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
                 title="Architect's estimated duration (minutes) vs measured actual duration. Blank = unset."
               >
                 Est / Actual
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Task ID
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Created
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Actions
               </th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-200">
+          <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
             {isLoading && (
               <tr>
                 <td
                   colSpan={10}
-                  className="px-4 py-6 text-center text-sm text-gray-500"
+                  className="px-4 py-6 text-center text-sm text-gray-500 dark:text-gray-400"
                 >
                   Loading tasks…
                 </td>
@@ -806,7 +806,7 @@ function TaskList({
               <tr>
                 <td
                   colSpan={10}
-                  className="px-4 py-6 text-center text-sm text-gray-500"
+                  className="px-4 py-6 text-center text-sm text-gray-500 dark:text-gray-400"
                 >
                   No tasks match the current filter.
                 </td>
@@ -814,11 +814,11 @@ function TaskList({
             )}
             {!isLoading &&
               items.map((item) => (
-                <tr key={item.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-2 text-right font-mono text-xs text-gray-700">
+                <tr key={item.id} className="hover:bg-gray-50 dark:bg-gray-900 dark:hover:bg-gray-800">
+                  <td className="px-4 py-2 text-right font-mono text-xs text-gray-700 dark:text-gray-300">
                     T{item.number}
                   </td>
-                  <td className="px-4 py-2 text-sm text-gray-900">
+                  <td className="px-4 py-2 text-sm text-gray-900 dark:text-gray-100">
                     {item.title}
                   </td>
                   <td className="px-4 py-2">
@@ -835,41 +835,41 @@ function TaskList({
                       {item.status}
                     </span>
                   </td>
-                  <td className="px-4 py-2 font-mono text-[11px] text-gray-500">
+                  <td className="px-4 py-2 font-mono text-[11px] text-gray-500 dark:text-gray-400">
                     {item.feat_id}
                   </td>
-                  <td className="px-4 py-2 font-mono text-xs text-gray-700">
+                  <td className="px-4 py-2 font-mono text-xs text-gray-700 dark:text-gray-300">
                     {item.checklist_type ?? "—"}
                   </td>
-                  <td className="px-4 py-2 text-right font-mono text-xs text-gray-700">
+                  <td className="px-4 py-2 text-right font-mono text-xs text-gray-700 dark:text-gray-300">
                     {item.estimated_minutes ?? "—"} /{" "}
                     {item.actual_minutes ?? "—"}
                   </td>
-                  <td className="px-4 py-2 font-mono text-[11px] text-gray-500">
+                  <td className="px-4 py-2 font-mono text-[11px] text-gray-500 dark:text-gray-400">
                     {item.id}
                   </td>
-                  <td className="px-4 py-2 text-xs text-gray-500">
+                  <td className="px-4 py-2 text-xs text-gray-500 dark:text-gray-400">
                     {formatTimestamp(item.created_at)}
                   </td>
                   <td className="px-4 py-2 text-right text-sm">
                     <div className="flex justify-end gap-2">
                       <button
                         type="button"
-                        className="text-primary-700 hover:underline"
+                        className="text-primary-700 hover:underline dark:text-primary-400"
                         onClick={() => onView(item.id)}
                       >
                         View
                       </button>
                       <button
                         type="button"
-                        className="text-primary-700 hover:underline"
+                        className="text-primary-700 hover:underline dark:text-primary-400"
                         onClick={() => onEdit(item.id)}
                       >
                         Edit
                       </button>
                       <button
                         type="button"
-                        className="text-red-700 hover:underline"
+                        className="text-red-700 hover:underline dark:text-red-400"
                         onClick={() => onDelete(item.id)}
                       >
                         Delete
@@ -882,7 +882,7 @@ function TaskList({
         </table>
       </div>
 
-      <div className="flex items-center justify-between text-sm text-gray-600">
+      <div className="flex items-center justify-between text-sm text-gray-600 dark:text-gray-400">
         <span>
           Page {currentPage} of {totalPages}
         </span>
@@ -919,7 +919,7 @@ interface TaskDetailProps {
 function TaskDetail({ row, isLoading, onBack, onEdit }: TaskDetailProps) {
   if (isLoading) {
     return (
-      <div className="rounded-md border border-gray-200 bg-white p-6 text-sm text-gray-600">
+      <div className="rounded-md border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-6 text-sm text-gray-600 dark:text-gray-400">
         Loading task…
       </div>
     );
@@ -927,7 +927,7 @@ function TaskDetail({ row, isLoading, onBack, onEdit }: TaskDetailProps) {
   if (!row) {
     return (
       <div className="space-y-3">
-        <p className="text-sm text-gray-600">Task not found.</p>
+        <p className="text-sm text-gray-600 dark:text-gray-400">Task not found.</p>
         <button type="button" className="btn-secondary" onClick={onBack}>
           Back to list
         </button>
@@ -936,38 +936,38 @@ function TaskDetail({ row, isLoading, onBack, onEdit }: TaskDetailProps) {
   }
 
   return (
-    <div className="space-y-4 rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+    <div className="space-y-4 rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-6 shadow-sm">
       <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Task ID
           </dt>
-          <dd className="break-all font-mono text-sm text-gray-900">
+          <dd className="break-all font-mono text-sm text-gray-900 dark:text-gray-100">
             {row.id}
           </dd>
         </div>
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Number
           </dt>
-          <dd className="font-mono text-sm text-gray-900">T{row.number}</dd>
+          <dd className="font-mono text-sm text-gray-900 dark:text-gray-100">T{row.number}</dd>
         </div>
         <div className="sm:col-span-2">
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Title
           </dt>
-          <dd className="text-sm text-gray-900">{row.title}</dd>
+          <dd className="text-sm text-gray-900 dark:text-gray-100">{row.title}</dd>
         </div>
         <div className="sm:col-span-2">
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Description
           </dt>
-          <dd className="whitespace-pre-wrap text-sm text-gray-900">
+          <dd className="whitespace-pre-wrap text-sm text-gray-900 dark:text-gray-100">
             {row.description.length > 0 ? row.description : "—"}
           </dd>
         </div>
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Task type
           </dt>
           <dd>
@@ -979,7 +979,7 @@ function TaskDetail({ row, isLoading, onBack, onEdit }: TaskDetailProps) {
           </dd>
         </div>
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Status
           </dt>
           <dd>
@@ -991,50 +991,50 @@ function TaskDetail({ row, isLoading, onBack, onEdit }: TaskDetailProps) {
           </dd>
         </div>
         <div className="sm:col-span-2">
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Feat ID
           </dt>
-          <dd className="break-all font-mono text-xs text-gray-900">
+          <dd className="break-all font-mono text-xs text-gray-900 dark:text-gray-100">
             {row.feat_id}
           </dd>
         </div>
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Estimated minutes
           </dt>
-          <dd className="text-sm text-gray-900">
+          <dd className="text-sm text-gray-900 dark:text-gray-100">
             {row.estimated_minutes ?? "—"}
           </dd>
         </div>
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Actual minutes
           </dt>
-          <dd className="text-sm text-gray-900">
+          <dd className="text-sm text-gray-900 dark:text-gray-100">
             {row.actual_minutes ?? "—"}
           </dd>
         </div>
         <div className="sm:col-span-2">
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Checklist type
           </dt>
-          <dd className="font-mono text-sm text-gray-900">
+          <dd className="font-mono text-sm text-gray-900 dark:text-gray-100">
             {row.checklist_type ?? "—"}
           </dd>
         </div>
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Created at
           </dt>
-          <dd className="text-sm text-gray-900">
+          <dd className="text-sm text-gray-900 dark:text-gray-100">
             {formatTimestamp(row.created_at)}
           </dd>
         </div>
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Updated at
           </dt>
-          <dd className="text-sm text-gray-900">
+          <dd className="text-sm text-gray-900 dark:text-gray-100">
             {formatTimestamp(row.updated_at)}
           </dd>
         </div>
@@ -1080,7 +1080,7 @@ function TaskForm({
 
   if (isLoading) {
     return (
-      <div className="rounded-md border border-gray-200 bg-white p-6 text-sm text-gray-600">
+      <div className="rounded-md border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-6 text-sm text-gray-600 dark:text-gray-400">
         Loading task…
       </div>
     );
@@ -1089,9 +1089,9 @@ function TaskForm({
   return (
     <form
       onSubmit={onSubmit}
-      className="space-y-4 rounded-lg border border-gray-200 bg-white p-6 shadow-sm"
+      className="space-y-4 rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-6 shadow-sm"
     >
-      <h3 className="text-lg font-semibold text-gray-900">
+      <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
         {isEdit ? "Edit task" : "Create task"}
       </h3>
 
@@ -1099,10 +1099,10 @@ function TaskForm({
         <div className="sm:col-span-2">
           <label
             htmlFor="feat_id"
-            className="mb-1 block text-sm font-medium text-gray-700"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Feat ID
-            <span className="ml-1 text-xs font-normal text-gray-500">
+            <span className="ml-1 text-xs font-normal text-gray-500 dark:text-gray-400">
               (UUID; FK → feats, ON DELETE CASCADE; immutable after create)
             </span>
           </label>
@@ -1117,7 +1117,7 @@ function TaskForm({
             title="Enter the feat UUID this task belongs to."
             placeholder="e.g. a31d1a12-…"
             className={`block w-full rounded-md border border-gray-300 px-3 py-2 font-mono text-xs shadow-sm focus:border-primary-500 focus:ring-primary-500 ${
-              isEdit ? "bg-gray-100 text-gray-500" : "bg-white text-gray-900"
+              isEdit ? "bg-gray-100 text-gray-500 dark:text-gray-400" : "bg-white text-gray-900 dark:text-gray-100"
             }`}
           />
         </div>
@@ -1125,10 +1125,10 @@ function TaskForm({
         <div className="sm:col-span-2">
           <label
             htmlFor="title"
-            className="mb-1 block text-sm font-medium text-gray-700"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Title
-            <span className="ml-1 text-xs font-normal text-gray-500">
+            <span className="ml-1 text-xs font-normal text-gray-500 dark:text-gray-400">
               (1–500 chars, required)
             </span>
           </label>
@@ -1141,17 +1141,17 @@ function TaskForm({
             minLength={1}
             maxLength={500}
             placeholder="e.g. Implement login handler"
-            className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-primary-500 focus:ring-primary-500"
+            className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-primary-500 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
           />
         </div>
 
         <div className="sm:col-span-2">
           <label
             htmlFor="description"
-            className="mb-1 block text-sm font-medium text-gray-700"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Description
-            <span className="ml-1 text-xs font-normal text-gray-500">
+            <span className="ml-1 text-xs font-normal text-gray-500 dark:text-gray-400">
               (optional; defaults to an empty string)
             </span>
           </label>
@@ -1161,17 +1161,17 @@ function TaskForm({
             onChange={(event) => patch({ description: event.target.value })}
             rows={4}
             placeholder="Implementation notes, acceptance criteria, links…"
-            className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-primary-500 focus:ring-primary-500"
+            className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-primary-500 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
           />
         </div>
 
         <div>
           <label
             htmlFor="task_type"
-            className="mb-1 block text-sm font-medium text-gray-700"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Task type
-            <span className="ml-1 text-xs font-normal text-gray-500">
+            <span className="ml-1 text-xs font-normal text-gray-500 dark:text-gray-400">
               (backend | frontend | migration | test | docs; required —
               no server default)
             </span>
@@ -1183,7 +1183,7 @@ function TaskForm({
               patch({ task_type: event.target.value as TaskType })
             }
             required
-            className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-primary-500 focus:ring-primary-500"
+            className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-primary-500 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
           >
             {TASK_TYPE_OPTIONS.map((option) => (
               <option key={option} value={option}>
@@ -1196,10 +1196,10 @@ function TaskForm({
         <div>
           <label
             htmlFor="status"
-            className="mb-1 block text-sm font-medium text-gray-700"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Status
-            <span className="ml-1 text-xs font-normal text-gray-500">
+            <span className="ml-1 text-xs font-normal text-gray-500 dark:text-gray-400">
               (todo | in_progress | done | failed; defaults to todo)
             </span>
           </label>
@@ -1209,7 +1209,7 @@ function TaskForm({
             onChange={(event) =>
               patch({ status: event.target.value as TaskStatus })
             }
-            className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-primary-500 focus:ring-primary-500"
+            className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-primary-500 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
           >
             {STATUS_OPTIONS.map((option) => (
               <option key={option} value={option}>
@@ -1223,10 +1223,10 @@ function TaskForm({
           <div>
             <label
               htmlFor="number"
-              className="mb-1 block text-sm font-medium text-gray-700"
+              className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
             >
               Number
-              <span className="ml-1 text-xs font-normal text-gray-500">
+              <span className="ml-1 text-xs font-normal text-gray-500 dark:text-gray-400">
                 (auto-assigned per feat; immutable)
               </span>
             </label>
@@ -1243,10 +1243,10 @@ function TaskForm({
         <div>
           <label
             htmlFor="estimated_minutes"
-            className="mb-1 block text-sm font-medium text-gray-700"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Estimated minutes
-            <span className="ml-1 text-xs font-normal text-gray-500">
+            <span className="ml-1 text-xs font-normal text-gray-500 dark:text-gray-400">
               (optional non-negative integer; blank = unset)
             </span>
           </label>
@@ -1260,17 +1260,17 @@ function TaskForm({
               patch({ estimated_minutes: event.target.value })
             }
             placeholder="e.g. 45"
-            className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-primary-500 focus:ring-primary-500"
+            className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-primary-500 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
           />
         </div>
 
         <div>
           <label
             htmlFor="actual_minutes"
-            className="mb-1 block text-sm font-medium text-gray-700"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Actual minutes
-            <span className="ml-1 text-xs font-normal text-gray-500">
+            <span className="ml-1 text-xs font-normal text-gray-500 dark:text-gray-400">
               (typically auto-populated from delegation duration; exposed
               here for backfill / correction)
             </span>
@@ -1283,17 +1283,17 @@ function TaskForm({
             value={form.actual_minutes}
             onChange={(event) => patch({ actual_minutes: event.target.value })}
             placeholder="blank = unset"
-            className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-primary-500 focus:ring-primary-500"
+            className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-primary-500 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
           />
         </div>
 
         <div className="sm:col-span-2">
           <label
             htmlFor="checklist_type"
-            className="mb-1 block text-sm font-medium text-gray-700"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Checklist type
-            <span className="ml-1 text-xs font-normal text-gray-500">
+            <span className="ml-1 text-xs font-normal text-gray-500 dark:text-gray-400">
               (optional; up to 30 chars; e.g. model, schema, service,
               router, frontend — injected into the CC delegation context)
             </span>

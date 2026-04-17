@@ -480,10 +480,10 @@ function ArchitectMessagePage() {
     <section className="space-y-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-xl font-semibold text-gray-900">
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
             Architect messages
           </h2>
-          <p className="text-sm text-gray-600">
+          <p className="text-sm text-gray-600 dark:text-gray-400">
             Architect chat turns — one row per ``user`` prompt or
             ``assistant`` reply inside an Architect session (DESIGN.md
             §1.12 / §1.5). Chat history is append-only: ``session_id``,
@@ -508,7 +508,7 @@ function ArchitectMessagePage() {
       {error && (
         <div
           role="alert"
-          className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800"
+          className="rounded-md border border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/30 p-3 text-sm text-red-800 dark:text-red-300"
         >
           {error}
         </div>
@@ -610,7 +610,7 @@ function ArchitectMessageList({
         <div className="flex flex-col">
           <label
             htmlFor="session-filter"
-            className="mb-1 text-sm font-medium text-gray-700"
+            className="mb-1 text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Session ID
           </label>
@@ -629,7 +629,7 @@ function ArchitectMessageList({
         <div className="flex flex-col">
           <label
             htmlFor="role-filter"
-            className="mb-1 text-sm font-medium text-gray-700"
+            className="mb-1 text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Role
           </label>
@@ -652,71 +652,71 @@ function ArchitectMessageList({
           </select>
         </div>
 
-        <span className="ml-auto text-xs text-gray-500">
+        <span className="ml-auto text-xs text-gray-500 dark:text-gray-400">
           {total} message{total === 1 ? "" : "s"} total
         </span>
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
+      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+          <thead className="bg-gray-50 dark:bg-gray-900">
             <tr>
               <th
                 scope="col"
-                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Message
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Session
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Role
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Content
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Tokens (in / out)
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Cost
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Created
               </th>
               <th
                 scope="col"
-                className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-gray-600"
+                className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400"
               >
                 Actions
               </th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-200">
+          <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
             {isLoading && (
               <tr>
                 <td
                   colSpan={8}
-                  className="px-4 py-6 text-center text-sm text-gray-500"
+                  className="px-4 py-6 text-center text-sm text-gray-500 dark:text-gray-400"
                 >
                   Loading Architect messages…
                 </td>
@@ -726,7 +726,7 @@ function ArchitectMessageList({
               <tr>
                 <td
                   colSpan={8}
-                  className="px-4 py-6 text-center text-sm text-gray-500"
+                  className="px-4 py-6 text-center text-sm text-gray-500 dark:text-gray-400"
                 >
                   No Architect messages match the current filter.
                 </td>
@@ -734,11 +734,11 @@ function ArchitectMessageList({
             )}
             {!isLoading &&
               items.map((item) => (
-                <tr key={item.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-2 font-mono text-[11px] text-gray-900">
+                <tr key={item.id} className="hover:bg-gray-50 dark:bg-gray-900 dark:hover:bg-gray-800">
+                  <td className="px-4 py-2 font-mono text-[11px] text-gray-900 dark:text-gray-100">
                     {item.id}
                   </td>
-                  <td className="px-4 py-2 font-mono text-[11px] text-gray-500">
+                  <td className="px-4 py-2 font-mono text-[11px] text-gray-500 dark:text-gray-400">
                     {item.session_id}
                   </td>
                   <td className="px-4 py-2">
@@ -748,39 +748,39 @@ function ArchitectMessageList({
                       {item.role}
                     </span>
                   </td>
-                  <td className="max-w-sm truncate px-4 py-2 text-sm text-gray-700">
+                  <td className="max-w-sm truncate px-4 py-2 text-sm text-gray-700 dark:text-gray-300">
                     <span title={item.content}>{item.content}</span>
                   </td>
-                  <td className="px-4 py-2 text-right font-mono text-xs text-gray-700">
+                  <td className="px-4 py-2 text-right font-mono text-xs text-gray-700 dark:text-gray-300">
                     {formatOptionalInt(item.input_tokens)}
                     {" / "}
                     {formatOptionalInt(item.output_tokens)}
                   </td>
-                  <td className="px-4 py-2 text-right font-mono text-xs text-gray-700">
+                  <td className="px-4 py-2 text-right font-mono text-xs text-gray-700 dark:text-gray-300">
                     {formatCostUsd(item.cost_usd)}
                   </td>
-                  <td className="px-4 py-2 text-xs text-gray-500">
+                  <td className="px-4 py-2 text-xs text-gray-500 dark:text-gray-400">
                     {formatTimestamp(item.created_at)}
                   </td>
                   <td className="px-4 py-2 text-right text-sm">
                     <div className="flex justify-end gap-2">
                       <button
                         type="button"
-                        className="text-primary-700 hover:underline"
+                        className="text-primary-700 hover:underline dark:text-primary-400"
                         onClick={() => onView(item.id)}
                       >
                         View
                       </button>
                       <button
                         type="button"
-                        className="text-primary-700 hover:underline"
+                        className="text-primary-700 hover:underline dark:text-primary-400"
                         onClick={() => onEdit(item.id)}
                       >
                         Edit
                       </button>
                       <button
                         type="button"
-                        className="text-red-700 hover:underline"
+                        className="text-red-700 hover:underline dark:text-red-400"
                         onClick={() => onDelete(item.id)}
                       >
                         Delete
@@ -793,7 +793,7 @@ function ArchitectMessageList({
         </table>
       </div>
 
-      <div className="flex items-center justify-between text-sm text-gray-600">
+      <div className="flex items-center justify-between text-sm text-gray-600 dark:text-gray-400">
         <span>
           Page {currentPage} of {totalPages}
         </span>
@@ -835,7 +835,7 @@ function ArchitectMessageDetail({
 }: ArchitectMessageDetailProps) {
   if (isLoading) {
     return (
-      <div className="rounded-md border border-gray-200 bg-white p-6 text-sm text-gray-600">
+      <div className="rounded-md border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-6 text-sm text-gray-600 dark:text-gray-400">
         Loading Architect message…
       </div>
     );
@@ -843,7 +843,7 @@ function ArchitectMessageDetail({
   if (!row) {
     return (
       <div className="space-y-3">
-        <p className="text-sm text-gray-600">Architect message not found.</p>
+        <p className="text-sm text-gray-600 dark:text-gray-400">Architect message not found.</p>
         <button type="button" className="btn-secondary" onClick={onBack}>
           Back to list
         </button>
@@ -852,18 +852,18 @@ function ArchitectMessageDetail({
   }
 
   return (
-    <div className="space-y-4 rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+    <div className="space-y-4 rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-6 shadow-sm">
       <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Message ID
           </dt>
-          <dd className="break-all font-mono text-sm text-gray-900">
+          <dd className="break-all font-mono text-sm text-gray-900 dark:text-gray-100">
             {row.id}
           </dd>
         </div>
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Role
           </dt>
           <dd>
@@ -875,58 +875,58 @@ function ArchitectMessageDetail({
           </dd>
         </div>
         <div className="sm:col-span-2">
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Session ID
           </dt>
-          <dd className="break-all font-mono text-xs text-gray-900">
+          <dd className="break-all font-mono text-xs text-gray-900 dark:text-gray-100">
             {row.session_id}
           </dd>
         </div>
         <div className="sm:col-span-2">
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Content
           </dt>
-          <dd className="whitespace-pre-wrap break-words rounded-md border border-gray-200 bg-gray-50 p-3 text-sm text-gray-900">
+          <dd className="whitespace-pre-wrap break-words rounded-md border border-gray-200 bg-gray-50 p-3 text-sm text-gray-900 dark:text-gray-100">
             {row.content}
           </dd>
         </div>
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Input tokens
           </dt>
-          <dd className="font-mono text-sm text-gray-900">
+          <dd className="font-mono text-sm text-gray-900 dark:text-gray-100">
             {formatOptionalInt(row.input_tokens)}
           </dd>
         </div>
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Output tokens
           </dt>
-          <dd className="font-mono text-sm text-gray-900">
+          <dd className="font-mono text-sm text-gray-900 dark:text-gray-100">
             {formatOptionalInt(row.output_tokens)}
           </dd>
         </div>
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Cost (USD)
           </dt>
-          <dd className="font-mono text-sm text-gray-900">
+          <dd className="font-mono text-sm text-gray-900 dark:text-gray-100">
             {formatCostUsd(row.cost_usd)}
           </dd>
         </div>
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Created at
           </dt>
-          <dd className="text-sm text-gray-900">
+          <dd className="text-sm text-gray-900 dark:text-gray-100">
             {formatTimestamp(row.created_at)}
           </dd>
         </div>
         <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Updated at
           </dt>
-          <dd className="text-sm text-gray-900">
+          <dd className="text-sm text-gray-900 dark:text-gray-100">
             {formatTimestamp(row.updated_at)}
           </dd>
         </div>
@@ -969,7 +969,7 @@ function ArchitectMessageForm({
 
   if (isLoading) {
     return (
-      <div className="rounded-md border border-gray-200 bg-white p-6 text-sm text-gray-600">
+      <div className="rounded-md border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-6 text-sm text-gray-600 dark:text-gray-400">
         Loading Architect message…
       </div>
     );
@@ -978,9 +978,9 @@ function ArchitectMessageForm({
   return (
     <form
       onSubmit={onSubmit}
-      className="space-y-4 rounded-lg border border-gray-200 bg-white p-6 shadow-sm"
+      className="space-y-4 rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-6 shadow-sm"
     >
-      <h3 className="text-lg font-semibold text-gray-900">
+      <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
         {isEdit ? "Edit Architect message" : "Create Architect message"}
       </h3>
 
@@ -988,10 +988,10 @@ function ArchitectMessageForm({
         <div className="sm:col-span-2">
           <label
             htmlFor="session_id"
-            className="mb-1 block text-sm font-medium text-gray-700"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Session ID
-            <span className="ml-1 text-xs font-normal text-gray-500">
+            <span className="ml-1 text-xs font-normal text-gray-500 dark:text-gray-400">
               (UUID; FK → architect_sessions, ON DELETE CASCADE;
               immutable after create)
             </span>
@@ -1007,7 +1007,7 @@ function ArchitectMessageForm({
             title="Enter the Architect session UUID this message belongs to."
             placeholder="e.g. a31d1a12-…"
             className={`block w-full rounded-md border border-gray-300 px-3 py-2 font-mono text-xs shadow-sm focus:border-primary-500 focus:ring-primary-500 ${
-              isEdit ? "bg-gray-100 text-gray-500" : "bg-white text-gray-900"
+              isEdit ? "bg-gray-100 text-gray-500 dark:text-gray-400" : "bg-white text-gray-900 dark:text-gray-100"
             }`}
           />
         </div>
@@ -1015,10 +1015,10 @@ function ArchitectMessageForm({
         <div>
           <label
             htmlFor="role"
-            className="mb-1 block text-sm font-medium text-gray-700"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Role
-            <span className="ml-1 text-xs font-normal text-gray-500">
+            <span className="ml-1 text-xs font-normal text-gray-500 dark:text-gray-400">
               (immutable after create)
             </span>
           </label>
@@ -1032,7 +1032,7 @@ function ArchitectMessageForm({
             }
             disabled={isEdit}
             className={`block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-primary-500 focus:ring-primary-500 ${
-              isEdit ? "bg-gray-100 text-gray-500" : "bg-white text-gray-900"
+              isEdit ? "bg-gray-100 text-gray-500 dark:text-gray-400" : "bg-white text-gray-900 dark:text-gray-100"
             }`}
           >
             {ROLE_OPTIONS.map((option) => (
@@ -1046,10 +1046,10 @@ function ArchitectMessageForm({
         <div className="sm:col-span-2">
           <label
             htmlFor="content"
-            className="mb-1 block text-sm font-medium text-gray-700"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Content
-            <span className="ml-1 text-xs font-normal text-gray-500">
+            <span className="ml-1 text-xs font-normal text-gray-500 dark:text-gray-400">
               (required; immutable after create — chat history is
               append-only)
             </span>
@@ -1064,7 +1064,7 @@ function ArchitectMessageForm({
             minLength={1}
             placeholder="Full message body…"
             className={`block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-primary-500 focus:ring-primary-500 ${
-              isEdit ? "bg-gray-100 text-gray-500" : "bg-white text-gray-900"
+              isEdit ? "bg-gray-100 text-gray-500 dark:text-gray-400" : "bg-white text-gray-900 dark:text-gray-100"
             }`}
           />
         </div>
@@ -1072,10 +1072,10 @@ function ArchitectMessageForm({
         <div>
           <label
             htmlFor="input_tokens"
-            className="mb-1 block text-sm font-medium text-gray-700"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Input tokens
-            <span className="ml-1 text-xs font-normal text-gray-500">
+            <span className="ml-1 text-xs font-normal text-gray-500 dark:text-gray-400">
               (optional; backfilled after the SSE stream completes)
             </span>
           </label>
@@ -1094,10 +1094,10 @@ function ArchitectMessageForm({
         <div>
           <label
             htmlFor="output_tokens"
-            className="mb-1 block text-sm font-medium text-gray-700"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Output tokens
-            <span className="ml-1 text-xs font-normal text-gray-500">
+            <span className="ml-1 text-xs font-normal text-gray-500 dark:text-gray-400">
               (optional; backfilled after the SSE stream completes)
             </span>
           </label>
@@ -1116,10 +1116,10 @@ function ArchitectMessageForm({
         <div className="sm:col-span-2">
           <label
             htmlFor="cost_usd"
-            className="mb-1 block text-sm font-medium text-gray-700"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Cost (USD)
-            <span className="ml-1 text-xs font-normal text-gray-500">
+            <span className="ml-1 text-xs font-normal text-gray-500 dark:text-gray-400">
               (optional; DECIMAL(10, 6) — up to 4 integer digits and 6
               fractional digits. Transmitted as a string to preserve
               precision.)

@@ -4,8 +4,8 @@
 function NewProjectPage() {
   return (
     <section className="space-y-2">
-      <h2 className="text-xl font-semibold text-gray-900">New Project</h2>
-      <p className="text-sm text-gray-600">
+      <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">New Project</h2>
+      <p className="text-sm text-gray-600 dark:text-gray-400">
         Project creation form will be rendered here.
       </p>
     </section>

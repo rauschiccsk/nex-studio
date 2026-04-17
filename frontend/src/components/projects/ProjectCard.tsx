@@ -25,9 +25,9 @@ interface ProjectCardProps {
 }
 
 const STATUS_STYLES: Record<string, string> = {
-  active: "bg-green-100 text-green-800",
-  paused: "bg-yellow-100 text-yellow-800",
-  archived: "bg-gray-100 text-gray-600",
+  active: "bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300",
+  paused: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300",
+  archived: "bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400",
 };
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -41,15 +41,15 @@ function ProjectCard({ project, activeVersion }: ProjectCardProps) {
   return (
     <Link
       to={`/projects/${project.slug}`}
-      className="block rounded-lg border border-gray-200 bg-white p-4 shadow-sm transition-shadow hover:shadow-md"
+      className="block rounded-lg border border-gray-200 bg-white p-4 shadow-sm transition-shadow hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:shadow-gray-900/40"
     >
       <div className="flex items-start justify-between gap-2">
-        <h3 className="text-sm font-semibold text-gray-900 truncate">
+        <h3 className="text-sm font-semibold text-gray-900 truncate dark:text-gray-100">
           {project.name}
         </h3>
         <div className="flex shrink-0 items-center gap-1.5">
           {activeVersion && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-primary-100 px-2 py-0.5 text-xs font-medium text-primary-800">
+            <span className="inline-flex items-center gap-1 rounded-full bg-primary-100 px-2 py-0.5 text-xs font-medium text-primary-800 dark:bg-primary-900 dark:text-primary-200">
               <Tag className="h-3 w-3" aria-hidden="true" />
               v{activeVersion}
             </span>
@@ -63,13 +63,13 @@ function ProjectCard({ project, activeVersion }: ProjectCardProps) {
       </div>
 
       {project.description && (
-        <p className="mt-1 line-clamp-2 text-xs text-gray-500">
+        <p className="mt-1 line-clamp-2 text-xs text-gray-500 dark:text-gray-400">
           {project.description}
         </p>
       )}
 
-      <div className="mt-3 flex items-center gap-2 text-xs text-gray-400">
-        <span className="rounded bg-gray-50 px-1.5 py-0.5 font-medium">
+      <div className="mt-3 flex items-center gap-2 text-xs text-gray-400 dark:text-gray-500">
+        <span className="rounded bg-gray-50 px-1.5 py-0.5 font-medium dark:bg-gray-700">
           {CATEGORY_LABELS[project.category] ?? project.category}
         </span>
       </div>

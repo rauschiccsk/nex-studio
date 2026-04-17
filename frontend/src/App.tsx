@@ -2,6 +2,8 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import AppLayout from "./components/layout/AppLayout";
 import ProtectedRoute from "./components/auth/ProtectedRoute";
+import { ThemeProvider } from "./contexts/ThemeContext";
+import { useAuthStore } from "./store/authStore";
 
 import ArchitectMessagePage from "./pages/ArchitectMessagePage";
 import ArchitectPage from "./pages/ArchitectPage";
@@ -75,7 +77,10 @@ import VersionsPage from "./pages/VersionsPage";
  * enumerate them.
  */
 function App() {
+  const username = useAuthStore((s) => s.user?.username);
+
   return (
+    <ThemeProvider username={username}>
     <BrowserRouter>
       <Routes>
         {/* Public route */}
@@ -203,6 +208,7 @@ function App() {
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
     </BrowserRouter>
+    </ThemeProvider>
   );
 }
 

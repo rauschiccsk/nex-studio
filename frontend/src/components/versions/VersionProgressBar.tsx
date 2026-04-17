@@ -19,7 +19,7 @@ export default function VersionProgressBar({
   return (
     <div className="flex items-center gap-2" data-testid="version-progress">
       {/* Track */}
-      <div className="h-2 w-24 rounded-full bg-gray-200">
+      <div className="h-2 w-24 rounded-full bg-gray-200 dark:bg-gray-700">
         {/* Fill */}
         <div
           className="h-2 rounded-full bg-primary-600 transition-all"
@@ -31,7 +31,7 @@ export default function VersionProgressBar({
         />
       </div>
       {/* Label */}
-      <span className="whitespace-nowrap text-xs text-gray-600">
+      <span className="whitespace-nowrap text-xs text-gray-600 dark:text-gray-400">
         {epicsDone}/{epicCount} EPICs
       </span>
     </div>
