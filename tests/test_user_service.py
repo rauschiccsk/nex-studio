@@ -11,6 +11,8 @@ session provided by ``tests/conftest.py``. Verifies:
 * List filters (``role``, ``is_active``) and pagination.
 * ``delete`` raises :class:`ValueError` when a RESTRICT FK still
   references the user, for each inbound relation.
+* ``change_password``: ri can change any user's password, ha/shu can only
+  change their own, bcrypt hash is updated, token rotation invalidates JWTs.
 * No ``commit`` happens inside the service — the outer transaction rolls
   back cleanly at fixture teardown.
 """
@@ -19,11 +21,12 @@ from __future__ import annotations
 
 import uuid
 
+import bcrypt
 import pytest
 
 from backend.db.models.architect import ArchitectSession
 from backend.db.models.bugs import Bug
-from backend.db.models.foundation import User
+from backend.db.models.foundation import User, UserSession
 from backend.db.models.projects import Project
 from backend.db.models.specifications import (
     DesignDocument,
@@ -40,7 +43,7 @@ def _payload(**overrides) -> UserCreate:
     defaults = {
         "username": f"user_{suffix}",
         "email": f"{suffix}@example.com",
-        "password_hash": "hashed_password_placeholder",
+        "password": "SecurePass123",
         "role": "ri",
         "is_active": True,
     }
@@ -90,7 +93,7 @@ class TestUserService:
         payload = UserCreate(
             username=f"def_{uuid.uuid4().hex[:6]}",
             email=f"def_{uuid.uuid4().hex[:6]}@example.com",
-            password_hash="h",
+            password="SecurePass123",
             role="ha",
         )
         created = service.create(db_session, payload)
@@ -124,14 +127,12 @@ class TestUserService:
             UserUpdate(
                 username="new",
                 email="new@example.com",
-                password_hash="new_hash",
                 role="ri",
                 is_active=False,
             ),
         )
         assert updated.username == "new"
         assert updated.email == "new@example.com"
-        assert updated.password_hash == "new_hash"
         assert updated.role == "ri"
         assert updated.is_active is False
         # Immutable fields unchanged.
@@ -415,3 +416,100 @@ class TestUserService:
         assert db_session.in_transaction()
         # Row is visible within the session after flush.
         assert service.get_by_id(db_session, created.id).id == created.id
+
+
+class TestChangePassword:
+    """Tests for :func:`backend.services.user.change_password`.
+
+    Validates authorization rules (ri vs ha/shu), bcrypt hashing,
+    password_hash update, and token rotation (token_version bump).
+    """
+
+    def test_ri_can_change_any_users_password(self, db_session):
+        """An ``ri`` user can change another user's password."""
+        ri_user = service.create(db_session, _payload(username="admin", email="admin@ex.com", role="ri"))
+        target = service.create(db_session, _payload(username="target", email="target@ex.com", role="ha"))
+        old_hash = target.password_hash
+
+        updated = service.change_password(db_session, target.id, "NewSecurePass1!", ri_user)
+
+        assert updated.password_hash != old_hash
+        assert bcrypt.checkpw(b"NewSecurePass1!", updated.password_hash.encode("utf-8"))
+
+    def test_ri_can_change_own_password(self, db_session):
+        """An ``ri`` user can change their own password."""
+        ri_user = service.create(db_session, _payload(username="ri_self", email="ri_self@ex.com", role="ri"))
+        updated = service.change_password(db_session, ri_user.id, "MyNewPass!", ri_user)
+        assert bcrypt.checkpw(b"MyNewPass!", updated.password_hash.encode("utf-8"))
+
+    def test_ha_can_change_own_password(self, db_session):
+        """An ``ha`` user can change their own password."""
+        ha_user = service.create(db_session, _payload(username="ha_user", email="ha@ex.com", role="ha"))
+        updated = service.change_password(db_session, ha_user.id, "HaNewPass!", ha_user)
+        assert bcrypt.checkpw(b"HaNewPass!", updated.password_hash.encode("utf-8"))
+
+    def test_shu_can_change_own_password(self, db_session):
+        """An ``shu`` user can change their own password."""
+        shu_user = service.create(db_session, _payload(username="shu_user", email="shu@ex.com", role="shu"))
+        updated = service.change_password(db_session, shu_user.id, "ShuNewPass!", shu_user)
+        assert bcrypt.checkpw(b"ShuNewPass!", updated.password_hash.encode("utf-8"))
+
+    def test_ha_cannot_change_other_users_password(self, db_session):
+        """An ``ha`` user cannot change another user's password."""
+        ha_user = service.create(db_session, _payload(username="ha_actor", email="ha_a@ex.com", role="ha"))
+        target = service.create(db_session, _payload(username="other", email="other@ex.com", role="shu"))
+        with pytest.raises(ValueError, match="Insufficient permissions"):
+            service.change_password(db_session, target.id, "Nope!", ha_user)
+
+    def test_shu_cannot_change_other_users_password(self, db_session):
+        """An ``shu`` user cannot change another user's password."""
+        shu_user = service.create(db_session, _payload(username="shu_actor", email="shu_a@ex.com", role="shu"))
+        target = service.create(db_session, _payload(username="other2", email="other2@ex.com", role="ha"))
+        with pytest.raises(ValueError, match="Insufficient permissions"):
+            service.change_password(db_session, target.id, "Nope!", shu_user)
+
+    def test_change_password_for_nonexistent_user_raises(self, db_session):
+        """``change_password`` raises ``ValueError`` for unknown user_id."""
+        ri_user = service.create(db_session, _payload(username="ri_404", email="ri404@ex.com", role="ri"))
+        with pytest.raises(ValueError, match="not found"):
+            service.change_password(db_session, uuid.uuid4(), "Pass!", ri_user)
+
+    def test_password_rotation_invalidates_tokens(self, db_session):
+        """``change_password`` bumps ``token_version``, invalidating old JWTs."""
+        from sqlalchemy import select
+
+        ri_user = service.create(db_session, _payload(username="ri_rot", email="ri_rot@ex.com", role="ri"))
+        target = service.create(db_session, _payload(username="rot_target", email="rot@ex.com", role="ha"))
+
+        # create() now creates a session with token_version=0
+        stmt = select(UserSession).where(UserSession.user_id == target.id)
+        session_before = db_session.execute(stmt).scalar_one_or_none()
+        assert session_before is not None
+        assert session_before.token_version == 0
+
+        # Change password → bumps token_version to 1
+        service.change_password(db_session, target.id, "Rotated1!", ri_user)
+
+        db_session.expire(session_before)
+        session_after = db_session.execute(stmt).scalar_one_or_none()
+        assert session_after is not None
+        assert session_after.token_version == 1
+
+        # Change password again → bumps token_version to 2
+        service.change_password(db_session, target.id, "Rotated2!", ri_user)
+
+        db_session.expire(session_after)
+        session_final = db_session.execute(stmt).scalar_one()
+        assert session_final.token_version == 2
+
+    def test_change_password_produces_valid_bcrypt_hash(self, db_session):
+        """The stored hash is a valid bcrypt hash verifiable with the new password."""
+        user = service.create(db_session, _payload(username="hash_test", email="hash@ex.com", role="ri"))
+        service.change_password(db_session, user.id, "V3ryS3cure!", user)
+
+        # Verify the hash starts with the bcrypt prefix
+        assert user.password_hash.startswith("$2")
+        # Verify the new password matches the hash
+        assert bcrypt.checkpw(b"V3ryS3cure!", user.password_hash.encode("utf-8"))
+        # Verify the old password does NOT match
+        assert not bcrypt.checkpw(b"SecurePass123", user.password_hash.encode("utf-8"))

@@ -154,6 +154,7 @@ from backend.schemas.task import (
     TaskUpdate,
 )
 from backend.schemas.user import (
+    ChangePasswordRequest,
     UserCreate,
     UserRead,
     UserRole,
@@ -274,6 +275,7 @@ __all__ = [
     "TaskStatus",
     "TaskType",
     "TaskUpdate",
+    "ChangePasswordRequest",
     "UserCreate",
     "UserRead",
     "UserRole",

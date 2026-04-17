@@ -110,6 +110,7 @@ import uuid
 from typing import Any
 
 import pytest
+from sqlalchemy import select
 
 from backend.db.models.bugs import Bug
 from backend.db.models.foundation import User
@@ -485,9 +486,8 @@ class TestRegisterBugHappyPath:
         #    query — "all project members with role=ri" — is
         #    modelled here via the users endpoint. Both directors
         #    are persisted and active.
-        ri_users = client.get("/api/v1/users", params={"role": "ri"})
-        assert ri_users.status_code == 200
-        ri_usernames = {row["username"] for row in ri_users.json()["items"]}
+        ri_rows = db_session.execute(select(User).where(User.role == "ri", User.is_active.is_(True))).scalars().all()
+        ri_usernames = {u.username for u in ri_rows}
         assert {"zoltan", "tibor"} <= ri_usernames
 
         # --- Postcondition verification (DB state) ---------------------

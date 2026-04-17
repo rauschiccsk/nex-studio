@@ -97,6 +97,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from sqlalchemy import select
 
 from backend.db.models.delegations import AutoFixAttempt, Delegation, ExecutionLog
 from backend.db.models.foundation import User
@@ -878,12 +879,8 @@ class TestAutoFixMaxAttemptsExceeded:
         # §3.13 step 6 + §4.14: the notification routes to Zoltán
         # and Tibor. Persisted as user rows; the transport is
         # off-API.
-        recipients_resp = client.get(
-            "/api/v1/users",
-            params={"role": "ri"},
-        )
-        assert recipients_resp.status_code == 200
-        recipient_usernames = {row["username"] for row in recipients_resp.json()["items"]}
+        ri_rows = db_session.execute(select(User).where(User.role == "ri", User.is_active.is_(True))).scalars().all()
+        recipient_usernames = {u.username for u in ri_rows}
         assert {"zoltan", "tibor"}.issubset(recipient_usernames)
 
         # --- Postcondition verification (DB state) ----------------------

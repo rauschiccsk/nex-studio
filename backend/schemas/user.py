@@ -32,6 +32,10 @@ class UserCreate(BaseModel):
     therefore excluded.  ``is_active`` defaults to ``True`` in the
     database (``server_default='true'``); we mirror that default here so
     callers may omit it.
+
+    The ``password`` field accepts a plaintext password (min 8, max 128
+    characters).  The service layer hashes it with bcrypt before persisting
+    to the ``password_hash`` column.
     """
 
     username: str = Field(
@@ -46,11 +50,11 @@ class UserCreate(BaseModel):
         max_length=255,
         description="Contact email, unique across the system.",
     )
-    password_hash: str = Field(
+    password: str = Field(
         ...,
-        min_length=1,
-        max_length=255,
-        description="bcrypt hash of the user's password.",
+        min_length=8,
+        max_length=128,
+        description="Plaintext password (hashed with bcrypt before storage).",
     )
     role: UserRole = Field(
         ...,
@@ -83,12 +87,6 @@ class UserUpdate(BaseModel):
         max_length=255,
         description="Updated contact email.",
     )
-    password_hash: Optional[str] = Field(
-        default=None,
-        min_length=1,
-        max_length=255,
-        description="Updated bcrypt password hash.",
-    )
     role: Optional[UserRole] = Field(
         default=None,
         description="Updated role: ri | ha | shu.",
@@ -99,10 +97,27 @@ class UserUpdate(BaseModel):
     )
 
 
+class ChangePasswordRequest(BaseModel):
+    """Payload for the ``POST /users/{id}/change-password`` endpoint.
+
+    Only the new plaintext password is required — the service layer hashes
+    it with bcrypt before persisting.
+    """
+
+    new_password: str = Field(
+        ...,
+        min_length=8,
+        max_length=128,
+        description="New plaintext password (min 8, max 128 characters).",
+    )
+
+
 class UserRead(BaseModel):
     """Serialised representation of a user row.
 
-    Mirrors every column on :class:`backend.db.models.foundation.User`.
+    Mirrors :class:`backend.db.models.foundation.User` columns except
+    ``password_hash`` which is deliberately excluded to prevent leaking
+    credential hashes to API clients.
     ``from_attributes=True`` enables construction directly from an ORM
     instance via ``UserRead.model_validate(obj)``.
     """
@@ -112,7 +127,6 @@ class UserRead(BaseModel):
     id: UUID
     username: str = Field(..., min_length=1, max_length=50)
     email: str = Field(..., min_length=1, max_length=255)
-    password_hash: str = Field(..., min_length=1, max_length=255)
     role: UserRole
     is_active: bool
     created_at: datetime

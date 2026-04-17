@@ -7,7 +7,9 @@ Exposes the standard CRUD surface for users:
 * ``GET    /{user_id}``   → single user by primary key.
 * ``POST   /``            → create a new user.
 * ``PATCH  /{user_id}``   → partial update of the mutable fields.
-* ``DELETE /{user_id}``   → hard-delete a user (HTTP 204).
+* ``DELETE /{user_id}``   → soft-delete (deactivate) a user (HTTP 204).
+* ``POST   /{user_id}/change-password`` → change a user's password
+  (ri may change any; ha/shu only own).
 
 All endpoints are synchronous ``def`` — pg8000 is a synchronous driver and
 FastAPI dispatches sync endpoints to a thread pool automatically. The
@@ -27,9 +29,11 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
+from backend.core.security import get_current_user, require_ri_role
+from backend.db.models.foundation import User
 from backend.db.session import get_db
 from backend.schemas.pagination import PaginatedResponse
-from backend.schemas.user import UserCreate, UserRead, UserRole, UserUpdate
+from backend.schemas.user import ChangePasswordRequest, UserCreate, UserRead, UserRole, UserUpdate
 from backend.services import user as user_service
 
 router = APIRouter(tags=["Users"])
@@ -65,6 +69,7 @@ def list_users(
     skip: int = Query(default=0, ge=0, description="Number of rows to skip."),
     limit: int = Query(default=50, ge=1, le=100, description="Maximum rows to return."),
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_ri_role),
 ) -> PaginatedResponse[UserRead]:
     """Return a paginated list of users."""
     try:
@@ -95,6 +100,7 @@ def list_users(
 def get_user(
     user_id: UUID,
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_ri_role),
 ) -> UserRead:
     """Return a single user by primary key."""
     try:
@@ -112,8 +118,13 @@ def get_user(
 def create_user(
     payload: UserCreate,
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_ri_role),
 ) -> UserRead:
-    """Create a new user."""
+    """Create a new user (ri role only).
+
+    The service layer hashes the plaintext password with bcrypt and creates
+    a :class:`UserSession` with ``token_version=0`` for the new user.
+    """
     try:
         user = user_service.create(db, payload)
         db.commit()
@@ -129,8 +140,18 @@ def update_user(
     user_id: UUID,
     payload: UserUpdate,
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_ri_role),
 ) -> UserRead:
-    """Partially update a user's mutable fields."""
+    """Partially update a user's mutable fields (ri only).
+
+    An ``ri`` user cannot set ``is_active=False`` on their own account —
+    this prevents accidental self-lockout.
+    """
+    if payload.is_active is False and user_id == current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot deactivate your own account",
+        )
     try:
         user = user_service.update(db, user_id, payload)
         db.commit()
@@ -149,19 +170,55 @@ def update_user(
 def delete_user(
     user_id: UUID,
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_ri_role),
 ) -> Response:
-    """Hard-delete a user by primary key.
+    """Soft-delete a user by setting ``is_active=False`` (ri only).
 
-    Routine deactivation should prefer ``PATCH`` with ``is_active=False``.
-    Delete is blocked (HTTP 422) when the user is still referenced by a
-    project, bug, architect session, raw specification, professional
-    specification, or design document (inbound ``ondelete='RESTRICT'``
-    foreign keys).
+    An ``ri`` user cannot delete (deactivate) their own account — this
+    prevents accidental self-lockout.
     """
+    if user_id == current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete your own account",
+        )
     try:
-        user_service.delete(db, user_id)
+        user_service.update(db, user_id, UserUpdate(is_active=False))
         db.commit()
     except ValueError as exc:
         db.rollback()
         raise _map_value_error(exc) from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/{user_id}/change-password", response_model=UserRead)
+def change_password(
+    user_id: UUID,
+    payload: ChangePasswordRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> UserRead:
+    """Change a user's password (ri role only).
+
+    The service layer hashes the new password with bcrypt and bumps
+    ``token_version`` to invalidate all existing JWTs for the target user.
+    """
+    try:
+        user = user_service.change_password(
+            db,
+            user_id=user_id,
+            new_password=payload.new_password,
+            current_user=current_user,
+        )
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        message = str(exc)
+        if "permissions" in message.lower():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=message,
+            ) from exc
+        raise _map_value_error(exc) from exc
+    db.refresh(user)
+    return UserRead.model_validate(user)

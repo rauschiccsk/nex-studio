@@ -38,12 +38,13 @@ from __future__ import annotations
 from typing import Optional
 from uuid import UUID
 
+import bcrypt
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.db.models.architect import ArchitectSession
 from backend.db.models.bugs import Bug
-from backend.db.models.foundation import User
+from backend.db.models.foundation import User, UserSession
 from backend.db.models.projects import Project
 from backend.db.models.specifications import (
     DesignDocument,
@@ -140,16 +141,21 @@ def _get_by_email(db: Session, email: str) -> Optional[User]:
 
 
 def create(db: Session, data: UserCreate) -> User:
-    """Create a new user.
+    """Create a new user with bcrypt-hashed password and initial session.
 
     Validates both unique constraints (``username``, ``email``) before
     insertion so the caller receives a clean :class:`ValueError` (HTTP 409
     at the router layer) instead of a raw
     :class:`~sqlalchemy.exc.IntegrityError` coming out of ``flush``.
 
+    The plaintext ``data.password`` is hashed with bcrypt before being
+    stored in the ``password_hash`` column.  A :class:`UserSession` row
+    is created alongside the user with ``token_version=0`` so that
+    subsequent JWT issuance has a session to reference.
+
     Args:
         db: Active SQLAlchemy session.
-        data: Validated creation payload.
+        data: Validated creation payload (contains plaintext password).
 
     Returns:
         The newly created and flushed :class:`User` with its server-
@@ -164,22 +170,33 @@ def create(db: Session, data: UserCreate) -> User:
     if _get_by_email(db, data.email) is not None:
         raise ValueError(f"User with email {data.email!r} already exists")
 
+    hashed = bcrypt.hashpw(
+        data.password.encode("utf-8"),
+        bcrypt.gensalt(),
+    ).decode("utf-8")
+
     user = User(
         username=data.username,
         email=data.email,
-        password_hash=data.password_hash,
+        password_hash=hashed,
         role=data.role,
         is_active=data.is_active,
     )
     db.add(user)
     db.flush()
+
+    # Create initial user session with token_version=0
+    session = UserSession(user_id=user.id, token_version=0)
+    db.add(session)
+    db.flush()
+
     return user
 
 
 def update(db: Session, user_id: UUID, data: UserUpdate) -> User:
     """Partially update a user.
 
-    Only ``username``, ``email``, ``password_hash``, ``role`` and
+    Only ``username``, ``email``, ``role`` and
     ``is_active`` may be changed — ``id``, ``created_at`` and
     ``updated_at`` are immutable (``updated_at`` is refreshed automatically
     by the ORM ``onupdate=func.now()`` trigger). Fields that are ``None``
@@ -199,7 +216,7 @@ def update(db: Session, user_id: UUID, data: UserUpdate) -> User:
     update_data = data.model_dump(exclude_unset=True)
     # Defensive guard — the schema already excludes immutable fields, but
     # silently dropping any that slip through keeps the service honest.
-    allowed_fields = {"username", "email", "password_hash", "role", "is_active"}
+    allowed_fields = {"username", "email", "role", "is_active"}
 
     # Uniqueness checks only for actually-changing values.
     new_username = update_data.get("username")
@@ -279,3 +296,58 @@ def delete(db: Session, user_id: UUID) -> None:
 
     db.delete(user)
     db.flush()
+
+
+def change_password(
+    db: Session,
+    user_id: UUID,
+    new_password: str,
+    current_user: User,
+) -> User:
+    """Change a user's password, hash it with bcrypt, and rotate tokens.
+
+    Authorization rules:
+        * A user with role ``ri`` (Director/Senior) may change **any** user's
+          password — this is the admin "reset password" flow.
+        * Users with role ``ha`` or ``shu`` may only change **their own**
+          password.
+
+    After updating ``password_hash`` the function bumps the user's
+    ``token_version`` via :func:`backend.services.auth._bump_token_version`
+    so that all previously issued JWTs for that user are invalidated.
+
+    Args:
+        db: Active SQLAlchemy session.
+        user_id: The target user whose password will be changed.
+        new_password: The new plaintext password (will be bcrypt-hashed).
+        current_user: The authenticated user performing the action.
+
+    Returns:
+        The updated :class:`User` instance with the new ``password_hash``.
+
+    Raises:
+        ValueError: If ``current_user`` lacks permission (not ``ri`` and
+            ``user_id != current_user.id``), or if the target user does
+            not exist.
+    """
+    # --- Authorization ---
+    if current_user.role != "ri" and current_user.id != user_id:
+        raise ValueError("Insufficient permissions: only ri role can change another user's password")
+
+    # --- Fetch target user ---
+    user = get_by_id(db, user_id)
+
+    # --- Hash and persist ---
+    hashed = bcrypt.hashpw(
+        new_password.encode("utf-8"),
+        bcrypt.gensalt(),
+    ).decode("utf-8")
+    user.password_hash = hashed
+    db.flush()
+
+    # --- Rotate tokens (invalidate all existing JWTs) ---
+    from backend.services.auth import _bump_token_version
+
+    _bump_token_version(db, user_id)
+
+    return user

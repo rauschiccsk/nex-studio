@@ -28,7 +28,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from backend.api.routes.users import router as users_router
-from backend.db.models.projects import Project
+from backend.core.security import get_current_user, require_ri_role
+from backend.db.models.foundation import User
 from backend.db.session import get_db
 
 
@@ -38,7 +39,21 @@ def router_client(db_session):
 
     Keeping this fixture local to the router tests avoids coupling to the
     global ``main.app``, which does not yet include this router.
+    Auth dependencies are overridden to simulate an ri user.
     """
+    # Create a real ri user in DB for the dependency override
+    import bcrypt
+
+    ri_user = User(
+        username=f"ri_override_{uuid.uuid4().hex[:8]}",
+        email=f"ri_override_{uuid.uuid4().hex[:8]}@test.local",
+        password_hash=bcrypt.hashpw(b"test", bcrypt.gensalt(rounds=4)).decode(),
+        role="ri",
+        is_active=True,
+    )
+    db_session.add(ri_user)
+    db_session.flush()
+
     app = FastAPI()
     app.include_router(users_router, prefix="/api/v1/users")
 
@@ -46,6 +61,8 @@ def router_client(db_session):
         yield db_session
 
     app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_current_user] = lambda: ri_user
+    app.dependency_overrides[require_ri_role] = lambda: ri_user
 
     with TestClient(app) as client:
         yield client
@@ -59,7 +76,7 @@ def _payload(**overrides) -> dict:
     body = {
         "username": f"user_{suffix}",
         "email": f"{suffix}@example.com",
-        "password_hash": "hashed_password_placeholder",
+        "password": "SecurePass123",
         "role": "ri",
         "is_active": True,
     }
@@ -192,31 +209,15 @@ class TestUserRouter:
         )
         assert resp.status_code == 404
 
-    def test_delete_returns_204(self, router_client):
+    def test_delete_returns_204_and_deactivates(self, router_client):
         created = router_client.post("/api/v1/users", json=_payload()).json()
         resp = router_client.delete(f"/api/v1/users/{created['id']}")
         assert resp.status_code == 204
-        # Second read confirms removal.
-        assert router_client.get(f"/api/v1/users/{created['id']}").status_code == 404
+        # User still exists but is deactivated (soft-delete).
+        get_resp = router_client.get(f"/api/v1/users/{created['id']}")
+        assert get_resp.status_code == 200
+        assert get_resp.json()["is_active"] is False
 
     def test_delete_missing_returns_404(self, router_client):
         resp = router_client.delete(f"/api/v1/users/{uuid.uuid4()}")
         assert resp.status_code == 404
-
-    def test_delete_blocked_by_restrict_fk_returns_422(self, router_client, db_session):
-        """A user referenced by ``projects.created_by`` cannot be deleted."""
-        created = router_client.post("/api/v1/users", json=_payload()).json()
-
-        project = Project(
-            slug=f"proj-{uuid.uuid4().hex[:8]}",
-            name=f"Blocking project {uuid.uuid4().hex[:8]}",
-            category="singlemodule",
-            description="Holds a RESTRICT FK to the user under test.",
-            created_by=uuid.UUID(created["id"]),
-        )
-        db_session.add(project)
-        db_session.commit()
-
-        resp = router_client.delete(f"/api/v1/users/{created['id']}")
-        assert resp.status_code == 422
-        assert "projects" in resp.json()["detail"].lower()

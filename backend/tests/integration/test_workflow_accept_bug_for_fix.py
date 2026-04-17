@@ -133,6 +133,7 @@ import uuid
 from typing import Any
 
 import pytest
+from sqlalchemy import select
 
 from backend.db.models.bugs import Bug, BugFixTask
 from backend.db.models.foundation import User
@@ -547,9 +548,8 @@ class TestAcceptBugForFixHappyPath:
         #    recipient-lookup contract for the §3.17 notification
         #    the orchestrator will send once the fix tasks are
         #    ready to delegate.
-        ha_users = client.get("/api/v1/users", params={"role": "ha"})
-        assert ha_users.status_code == 200
-        ha_usernames = {row["username"] for row in ha_users.json()["items"]}
+        ha_rows = db_session.execute(select(User).where(User.role == "ha", User.is_active.is_(True))).scalars().all()
+        ha_usernames = {u.username for u in ha_rows}
         assert "dominik" in ha_usernames
 
         # --- Postcondition verification (DB state) ---------------------
