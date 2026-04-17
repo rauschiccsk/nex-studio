@@ -10,23 +10,29 @@
  * global store is added in a later feat this page can switch over
  * without changing its visible surface.
  *
+ * **Access control:** Only users with role ``ri`` (Director / Senior)
+ * may access this page.  Non-ri users see a "not authorised" message.
+ * Per DESIGN.md § 3.1, the ``/settings`` SettingsPage routes here
+ * and the ``Správa používateľov`` section is ``ri``-only.
+ *
  * User flow (single-page, four modes):
  *
  *   - ``list``   — paginated table with role + active filters, plus
- *     row-level "View", "Edit" and "Delete" actions.
- *   - ``detail`` — read-only view of a single user.  The
- *     ``password_hash`` field is masked to avoid leaking the stored
- *     bcrypt digest through the UI.
- *   - ``create`` — form that ``POST``s a new user.
+ *     row-level "Edit", "Change Password" and "Deactivate" actions.
+ *   - ``detail`` — read-only view of a single user.
+ *   - ``create`` — form that ``POST``s a new user.  The ``password``
+ *     field accepts a plaintext password; the backend hashes it with
+ *     bcrypt before storage.
  *   - ``edit``   — form that ``PATCH``es the mutable fields of an
- *     existing user.  The password hash field is optional on edit; an
- *     empty value means "do not change the password".
+ *     existing user.  Password changes use a separate endpoint
+ *     (``POST /users/{id}/change-password``).
  *
  * All network errors are surfaced inline via the ``ApiError.message``
  * propagated from ``services/api.ts``.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import ChangePasswordDialog from "../components/users/ChangePasswordDialog";
 import { ApiError, api } from "../services/api";
 import type {
   PaginatedResponse,
@@ -35,6 +41,7 @@ import type {
   UserRole,
   UserUpdate,
 } from "../types";
+import { getUserRole } from "../utils/auth";
 
 /** REST prefix for the User router (see backend/main.py). */
 const ENDPOINT = "/users";
@@ -53,7 +60,7 @@ type Mode =
 interface UserFormState {
   username: string;
   email: string;
-  password_hash: string;
+  password: string;
   role: UserRole;
   is_active: boolean;
 }
@@ -75,7 +82,7 @@ const ROLE_LABELS: Record<UserRole, string> = {
 const EMPTY_FORM: UserFormState = {
   username: "",
   email: "",
-  password_hash: "",
+  password: "",
   role: "shu",
   is_active: true,
 };
@@ -109,6 +116,28 @@ function formatTimestamp(iso: string): string {
 }
 
 function UserPage() {
+  // --------------------------------------------------------------- role guard
+  const currentRole = getUserRole();
+  const isRi = currentRole === "ri";
+
+  if (!isRi) {
+    return (
+      <section className="space-y-6" data-testid="user-page-denied">
+        <header>
+          <h2 className="text-xl font-semibold text-gray-900">Users</h2>
+          <p className="text-sm text-red-600">
+            Access denied. Only users with the <strong>ri</strong> role may
+            manage users.
+          </p>
+        </header>
+      </section>
+    );
+  }
+
+  return <UserPageContent />;
+}
+
+function UserPageContent() {
   // ------------------------------------------------------------------ state
   const [mode, setMode] = useState<Mode>({ kind: "list" });
 
@@ -124,6 +153,11 @@ function UserPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Change-password dialog state
+  const [changePasswordUser, setChangePasswordUser] = useState<UserRead | null>(
+    null,
+  );
 
   // --------------------------------------------------------------- fetchers
   const loadList = useCallback(async () => {
@@ -196,9 +230,8 @@ function UserPage() {
         setForm({
           username: row.username,
           email: row.email,
-          // Never pre-fill the existing hash — an empty value on PATCH
-          // means "leave password unchanged".
-          password_hash: "",
+          // Password is not pre-filled — changes go through separate endpoint.
+          password: "",
           role: row.role,
           is_active: row.is_active,
         });
@@ -244,21 +277,22 @@ function UserPage() {
     setMode({ kind: "edit", id });
   };
 
-  const handleDelete = async (id: string) => {
+  const handleDeactivate = async (id: string, currentlyActive: boolean) => {
+    const action = currentlyActive ? "deactivate" : "activate";
     if (
       !window.confirm(
-        "Delete this user? Prefer deactivating via Edit → Active = false unless the user has no references.",
+        `Are you sure you want to ${action} this user?`,
       )
     ) {
       return;
     }
     setError(null);
     try {
-      await api.delete(`${ENDPOINT}/${id}`);
+      await api.patch(`${ENDPOINT}/${id}`, { is_active: !currentlyActive });
       await loadList();
     } catch (exc) {
       const message =
-        exc instanceof ApiError ? exc.message : "Failed to delete user.";
+        exc instanceof ApiError ? exc.message : `Failed to ${action} user.`;
       setError(message);
     }
   };
@@ -271,7 +305,7 @@ function UserPage() {
       const payload: UserCreate = {
         username: form.username.trim(),
         email: form.email.trim(),
-        password_hash: form.password_hash.trim(),
+        password: form.password,
         role: form.role,
         is_active: form.is_active,
       };
@@ -295,20 +329,12 @@ function UserPage() {
     setIsSaving(true);
     setError(null);
     try {
-      // PATCH-style payload: only include fields the operator changed.
-      // The password hash is omitted unless the operator typed a value —
-      // the backend's ``UserUpdate`` schema treats missing fields as "no
-      // change" per DESIGN.md § 3.4.
       const payload: UserUpdate = {
         username: form.username.trim(),
         email: form.email.trim(),
         role: form.role,
         is_active: form.is_active,
       };
-      const trimmedHash = form.password_hash.trim();
-      if (trimmedHash.length > 0) {
-        payload.password_hash = trimmedHash;
-      }
       await api.patch<UserRead>(`${ENDPOINT}/${mode.id}`, payload);
       openList();
     } catch (exc) {
@@ -331,7 +357,7 @@ function UserPage() {
 
   // ---------------------------------------------------------------- render
   return (
-    <section className="space-y-6">
+    <section className="space-y-6" data-testid="user-page">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-semibold text-gray-900">Users</h2>
@@ -346,6 +372,7 @@ function UserPage() {
             className="btn-primary"
             onClick={openCreate}
             aria-label="Create new user"
+            data-testid="create-user-btn"
           >
             New User
           </button>
@@ -386,7 +413,8 @@ function UserPage() {
           }}
           onView={openDetail}
           onEdit={openEdit}
-          onDelete={handleDelete}
+          onChangePassword={(user) => setChangePasswordUser(user)}
+          onDeactivate={handleDeactivate}
         />
       )}
 
@@ -410,6 +438,13 @@ function UserPage() {
           onSubmit={mode.kind === "create" ? handleCreate : handleUpdate}
         />
       )}
+
+      <ChangePasswordDialog
+        open={changePasswordUser !== null}
+        user={changePasswordUser}
+        onClose={() => setChangePasswordUser(null)}
+        onChanged={() => void loadList()}
+      />
     </section>
   );
 }
@@ -432,7 +467,8 @@ interface UserListProps {
   onNextPage: () => void;
   onView: (id: string) => void;
   onEdit: (id: string) => void;
-  onDelete: (id: string) => void;
+  onChangePassword: (user: UserRead) => void;
+  onDeactivate: (id: string, currentlyActive: boolean) => void;
 }
 
 function UserList({
@@ -449,7 +485,8 @@ function UserList({
   onNextPage,
   onView,
   onEdit,
-  onDelete,
+  onChangePassword,
+  onDeactivate,
 }: UserListProps) {
   return (
     <div className="space-y-4">
@@ -601,16 +638,30 @@ function UserList({
                       <button
                         type="button"
                         className="text-primary-700 hover:underline"
+                        data-testid={`edit-btn-${item.id}`}
                         onClick={() => onEdit(item.id)}
                       >
                         Edit
                       </button>
                       <button
                         type="button"
-                        className="text-red-700 hover:underline"
-                        onClick={() => onDelete(item.id)}
+                        className="text-primary-700 hover:underline"
+                        data-testid={`change-password-btn-${item.id}`}
+                        onClick={() => onChangePassword(item)}
                       >
-                        Delete
+                        Change Password
+                      </button>
+                      <button
+                        type="button"
+                        className={
+                          item.is_active
+                            ? "text-amber-700 hover:underline"
+                            : "text-emerald-700 hover:underline"
+                        }
+                        data-testid={`deactivate-btn-${item.id}`}
+                        onClick={() => onDeactivate(item.id, item.is_active)}
+                      >
+                        {item.is_active ? "Deactivate" : "Activate"}
                       </button>
                     </div>
                   </td>
@@ -718,16 +769,6 @@ function UserDetail({ user, isLoading, onBack, onEdit }: UserDetailProps) {
             >
               {user.is_active ? "active" : "inactive"}
             </span>
-          </dd>
-        </div>
-        <div>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-            Password hash
-          </dt>
-          <dd className="font-mono text-xs text-gray-500">
-            {/* Masked deliberately — the bcrypt digest is present on the
-                API response but must not surface in the UI. */}
-            •••••••••••• (hidden)
           </dd>
         </div>
         <div>
@@ -841,29 +882,31 @@ function UserForm({
           />
         </div>
 
-        <div className="sm:col-span-2">
-          <label
-            htmlFor="password_hash"
-            className="mb-1 block text-sm font-medium text-gray-700"
-          >
-            Password hash
-            <span className="ml-1 text-xs font-normal text-gray-500">
-              (bcrypt digest, e.g. ``$2b$12$…``
-              {isEdit ? " — leave blank to keep current password" : ""})
-            </span>
-          </label>
-          <input
-            id="password_hash"
-            type="text"
-            value={form.password_hash}
-            onChange={(event) => patch({ password_hash: event.target.value })}
-            required={!isEdit}
-            minLength={isEdit ? 0 : 1}
-            maxLength={255}
-            placeholder="$2b$12$…"
-            className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 font-mono text-xs text-gray-900 shadow-sm focus:border-primary-500 focus:ring-primary-500"
-          />
-        </div>
+        {!isEdit && (
+          <div className="sm:col-span-2">
+            <label
+              htmlFor="password"
+              className="mb-1 block text-sm font-medium text-gray-700"
+            >
+              Password
+              <span className="ml-1 text-xs font-normal text-gray-500">
+                (min 8 characters)
+              </span>
+            </label>
+            <input
+              id="password"
+              type="password"
+              data-testid="password-field"
+              value={form.password}
+              onChange={(event) => patch({ password: event.target.value })}
+              required
+              minLength={8}
+              maxLength={128}
+              placeholder="Enter password"
+              className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-primary-500 focus:ring-primary-500"
+            />
+          </div>
+        )}
 
         <div>
           <label

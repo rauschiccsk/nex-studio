@@ -24,8 +24,8 @@ export interface UserCreate {
   username: string;
   /** Contact email — unique across the system. Max 255 chars. */
   email: string;
-  /** bcrypt hash of the user's password. Max 255 chars. */
-  password_hash: string;
+  /** Plaintext password (min 8, max 128 chars). Hashed server-side. */
+  password: string;
   /** Access level: ``ri`` | ``ha`` | ``shu``. */
   role: UserRole;
   /** Soft-disable flag; defaults to ``true`` on the server. */
@@ -37,22 +37,26 @@ export interface UserCreate {
  *
  * ``id`` and ``created_at`` are immutable; ``updated_at`` is managed by
  * the ORM.  All remaining fields are optional to support PATCH-style
- * semantics.
+ * semantics.  Password changes use a separate endpoint
+ * (``POST /users/{id}/change-password``).
  */
 export interface UserUpdate {
   username?: string;
   email?: string;
-  password_hash?: string;
   role?: UserRole;
   is_active?: boolean;
 }
 
-/** Serialised representation of a user row. */
+/**
+ * Serialised representation of a user row.
+ *
+ * The backend deliberately excludes ``password_hash`` from the response
+ * to prevent leaking credential hashes to API clients.
+ */
 export interface UserRead {
   id: string;
   username: string;
   email: string;
-  password_hash: string;
   role: UserRole;
   is_active: boolean;
   /** ISO-8601 timestamp. */
