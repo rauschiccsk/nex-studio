@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
+from backend.api.routes.architect import router as architect_router
 from backend.api.routes.architect_messages import router as architect_messages_router
 from backend.api.routes.architect_sessions import router as architect_sessions_router
 from backend.api.routes.auth import router as auth_router
@@ -96,6 +97,9 @@ app.include_router(
 app.include_router(design_documents_router, prefix="/api/v1/design-documents")
 app.include_router(kb_documents_router, prefix="/api/v1/kb-documents")
 app.include_router(architect_sessions_router, prefix="/api/v1/architect-sessions")
+# The architect router spans two URL families (/projects/{id}/architect and
+# /architect/sessions/{id}) — mount at bare /api/v1 like the versions router.
+app.include_router(architect_router, prefix="/api/v1")
 app.include_router(architect_messages_router, prefix="/api/v1/architect-messages")
 app.include_router(epics_router, prefix="/api/v1/epics")
 app.include_router(feats_router, prefix="/api/v1/feats")
