@@ -16,7 +16,7 @@ If Claude CLI is not yet installed on the host machine:
 
 ```bash
 # Install via npm (recommended)
-npm install -g @anthropic-ai/claude-cli
+npm install -g @anthropic-ai/claude-code
 
 # Verify installation
 claude --version
@@ -114,7 +114,7 @@ These should not need modification unless the container's filesystem layout chan
 
 **Fix**: Ensure the backend Dockerfile installs Claude CLI:
 ```dockerfile
-RUN npm install -g @anthropic-ai/claude-cli
+RUN npm install -g @anthropic-ai/claude-code
 ```
 
 Rebuild the image:
