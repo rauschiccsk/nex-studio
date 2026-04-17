@@ -57,3 +57,6 @@ export * from "./reportConfig";
 export * from "./migrationBatch";
 export * from "./migrationCategoryStatus";
 export * from "./migrationIdMap";
+
+// Versions.
+export * from "./version";

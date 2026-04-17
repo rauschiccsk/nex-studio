@@ -1,10 +1,12 @@
-import { NavLink } from "react-router-dom";
+import { NavLink, useMatch } from "react-router-dom";
+import { Tag } from "lucide-react";
 
 /**
  * Application sidebar — primary navigation surface for NEX Studio.
  *
  * Per DESIGN.md § 3.2 the Sidebar is responsible for:
  *   - Top-level end-user navigation (Dashboard, Projects, Settings)
+ *   - Project-context navigation (Versions, etc.) when viewing a project
  *   - Connection status indicator
  *
  * Feat 6 introduces a parallel set of admin-CRUD pages that sit alongside
@@ -16,10 +18,6 @@ import { NavLink } from "react-router-dom";
  * guardian, knowledge, migration, reports) so an operator can jump
  * directly from one entity surface to a related one without going back
  * to the dashboard.
- *
- * The component is deliberately stateless: project-list wiring, active
- * module context, and authentication-aware rendering are deferred to
- * later feats as noted in DESIGN.md § 3.2 / § 3.3.
  */
 
 type NavItem = {
@@ -152,6 +150,10 @@ function navLinkClass({ isActive }: { isActive: boolean }): string {
 }
 
 function Sidebar() {
+  /** Detect whether the current URL is inside ``/projects/:slug/*``. */
+  const projectMatch = useMatch("/projects/:slug/*");
+  const slug = projectMatch?.params.slug;
+
   return (
     <aside className="flex w-64 shrink-0 flex-col border-r border-gray-200 bg-white">
       <div className="flex h-14 items-center border-b border-gray-200 px-4">
@@ -177,6 +179,27 @@ function Sidebar() {
             </NavLink>
           ))}
         </div>
+
+        {/* Project-context navigation — visible only when viewing a
+            specific project (``/projects/:slug/…``). */}
+        {slug && (
+          <div className="mt-4 border-t border-gray-200 pt-3">
+            <p className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+              Project
+            </p>
+            <div className="space-y-1">
+              <NavLink
+                to={`/projects/${slug}/versions`}
+                className={navLinkClass}
+              >
+                <span className="flex items-center gap-2">
+                  <Tag className="h-4 w-4" aria-hidden="true" />
+                  Versions
+                </span>
+              </NavLink>
+            </div>
+          </div>
+        )}
 
         {/* Admin-CRUD surface (Feat 6).  Each heading is purely visual
             and is rendered as an ``h2`` so screen readers can navigate

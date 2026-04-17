@@ -44,6 +44,8 @@ import TaskAdminPage from "./pages/TaskAdminPage";
 import TasksPage from "./pages/TasksPage";
 import UserPage from "./pages/UserPage";
 import UserSessionPage from "./pages/UserSessionPage";
+import VersionDetailPage from "./pages/VersionDetailPage";
+import VersionsPage from "./pages/VersionsPage";
 
 /**
  * Root application component — declares the full route table for NEX Studio.
@@ -100,6 +102,11 @@ function App() {
           <Route
             path="projects/:slug/modules/:code/architect"
             element={<ArchitectPage />}
+          />
+          <Route path="projects/:slug/versions" element={<VersionsPage />} />
+          <Route
+            path="projects/:slug/versions/:vid"
+            element={<VersionDetailPage />}
           />
           <Route path="projects/:slug/tasks" element={<TasksPage />} />
           <Route path="projects/:slug/delegate" element={<DelegationPage />} />

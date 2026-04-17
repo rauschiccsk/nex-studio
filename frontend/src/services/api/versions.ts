@@ -1,0 +1,53 @@
+/**
+ * API client for the Version resource.
+ *
+ * Maps to the backend routes defined in ``backend.api.routes.versions``:
+ *
+ *   - ``GET    /projects/{projectId}/versions``        → listVersions
+ *   - ``POST   /projects/{projectId}/versions``        → createVersion
+ *   - ``GET    /versions/{id}``                        → getVersion
+ *   - ``PATCH  /versions/{id}``                        → updateVersion
+ *   - ``POST   /versions/{id}/release``                → releaseVersion
+ */
+
+import api from "../api";
+import type { Version, VersionCreate, VersionUpdate } from "../../types/version";
+
+/**
+ * List every version belonging to a project, ordered by
+ * ``version_number DESC``.
+ */
+export function listVersions(projectId: string): Promise<Version[]> {
+  return api.get<Version[]>(`/projects/${projectId}/versions`);
+}
+
+/** Fetch a single version by its UUID. */
+export function getVersion(id: string): Promise<Version> {
+  return api.get<Version>(`/versions/${id}`);
+}
+
+/** Create a new version scoped to the given project. */
+export function createVersion(
+  projectId: string,
+  data: VersionCreate,
+): Promise<Version> {
+  return api.post<Version>(`/projects/${projectId}/versions`, data);
+}
+
+/** Partially update a version's mutable fields. */
+export function updateVersion(
+  id: string,
+  data: VersionUpdate,
+): Promise<Version> {
+  return api.patch<Version>(`/versions/${id}`, data);
+}
+
+/**
+ * Trigger the release gate for a version.
+ *
+ * Sets ``status = 'released'`` and ``release_date = today`` on success.
+ * Returns HTTP 422 when blocking EPICs remain.
+ */
+export function releaseVersion(id: string): Promise<Version> {
+  return api.post<Version>(`/versions/${id}/release`);
+}
