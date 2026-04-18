@@ -62,6 +62,7 @@ def _resolve_created_by(db: Session, created_by: Optional[UUID]) -> UUID:
     if created_by is not None:
         return created_by
     from sqlalchemy import select
+
     user = db.execute(
         select(User).where(User.is_active.is_(True)).where(User.role == "ri").limit(1)
     ).scalar_one_or_none()
