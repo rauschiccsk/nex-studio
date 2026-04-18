@@ -13,7 +13,9 @@ RUN npm ci --no-audit --no-fund
 COPY . .
 
 ARG VITE_API_BASE_URL=http://localhost:9176
+ARG VITE_APP_VERSION=dev
 ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
+ENV VITE_APP_VERSION=${VITE_APP_VERSION}
 
 RUN npm run build
 
