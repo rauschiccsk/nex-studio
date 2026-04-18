@@ -54,10 +54,18 @@ RUN npm install -g @anthropic-ai/claude-code \
 COPY --from=deps /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=deps /usr/local/bin /usr/local/bin
 
-# Copy application code
-COPY backend/ ./backend/
-COPY alembic.ini ./alembic.ini
-COPY migrations/ ./migrations/
+# Create non-root user matching the host andros uid (1000).
+# Claude CLI refuses to run as root — same pattern as NEX Command backend.
+RUN useradd -m -u 1000 -s /bin/bash andros \
+    && mkdir -p /home/andros/.claude \
+    && chown -R andros:andros /app /home/andros
+
+# Copy application code with correct ownership
+COPY --chown=andros:andros backend/ ./backend/
+COPY --chown=andros:andros alembic.ini ./alembic.ini
+COPY --chown=andros:andros migrations/ ./migrations/
+
+USER andros
 
 EXPOSE 9176
 
