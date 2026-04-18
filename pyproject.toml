@@ -17,6 +17,7 @@ pydantic = "^2.10"
 pydantic-settings = "^2.7"
 python-jose = {version = "^3.3", extras = ["cryptography"]}
 passlib = {version = "^1.7", extras = ["bcrypt"]}
+python-multipart = "^0.0.20"
 httpx = "^0.28.1"
 
 [tool.poetry.group.dev.dependencies]
