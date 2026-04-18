@@ -229,15 +229,21 @@ function SpecificationPage() {
     const ctrl = generateProfessionalSpec(
       rawSpec.id,
       (chunk) => {
-        setProfContent((prev) => {
-          const next = prev + chunk;
+        // Accumulate chunks — pure state update, no side effects inside setState
+        setProfContent((prev) => prev + chunk);
+        // Scroll after React commits the update
+        requestAnimationFrame(() => {
           if (specTextRef.current) {
             specTextRef.current.scrollTop = specTextRef.current.scrollHeight;
           }
-          return next;
         });
       },
       (event) => {
+        // Use event.content as authoritative full text — guarantees content
+        // is shown even if individual chunk state updates were batched/lost
+        if (event.content) {
+          setProfContent(event.content);
+        }
         setProfGenerating(false);
         setChatMessages([
           {
@@ -310,12 +316,11 @@ function SpecificationPage() {
       },
       // onSpecChunk
       (chunk) => {
-        setProfContent((prev) => {
-          const next = prev + chunk;
+        setProfContent((prev) => prev + chunk);
+        requestAnimationFrame(() => {
           if (specTextRef.current) {
             specTextRef.current.scrollTop = specTextRef.current.scrollHeight;
           }
-          return next;
         });
       },
       // onDone
