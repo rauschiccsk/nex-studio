@@ -373,9 +373,7 @@ def delete(db: Session, version_id: UUID) -> None:
     epic_count_stmt = select(func.count(Epic.id)).where(Epic.version_id == version_id)
     epic_count = db.execute(epic_count_stmt).scalar_one()
     if epic_count > 0:
-        raise ValueError(
-            f"Cannot delete version {version_id}: it has {epic_count} EPIC(s) (Task Plan not empty)"
-        )
+        raise ValueError(f"Cannot delete version {version_id}: it has {epic_count} EPIC(s) (Task Plan not empty)")
 
     db.delete(version)
     db.flush()
