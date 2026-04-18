@@ -477,17 +477,45 @@ async def generate_design_doc(
 
     doc_label = "DESIGN.md" if doc_type == "design" else "BEHAVIOR.md"
 
-    system_prompt = (
-        f"Si ICC Architect AI. Tvojou úlohou je vytvoriť {doc_label} technický dokument"
-        f" z profesionálnej špecifikácie podľa ICC šablóny.\n\n"
-        "Pravidlá:\n"
-        "- Výstup musí byť validný Markdown podľa šablóny\n"
-        "- Vypln VŠETKY sekcie šablóny\n"
-        "- Jazyk: angličtina (technický dokument pre vývojárov)\n"
-        "- Buď konkrétny — žiadne placeholder texty\n"
-        "- Tech stack: Python FastAPI backend, React+TypeScript+Tailwind frontend, PostgreSQL\n\n"
-        f"ŠABLÓNA:\n\n{template_content}"
-    )
+    if doc_type == "design":
+        system_prompt = (
+            "Si ICC Architect AI. Tvojou úlohou je vytvoriť DESIGN.md technický dokument"
+            " z profesionálnej špecifikácie podľa ICC šablóny.\n\n"
+            "POVINNÉ PRAVIDLÁ — dodržuj presne:\n"
+            "- Výstup musí byť validný Markdown podľa šablóny\n"
+            "- Vypln VŠETKY sekcie šablóny — žiadne placeholder texty, žiadne [ARCHITECT] značky\n"
+            "- Jazyk: angličtina (technický dokument pre vývojárov)\n"
+            "- Tech stack: FastAPI (sync def), SQLAlchemy 2.0 SYNC, pg8000"
+            " (NIKDY asyncpg/psycopg2), PostgreSQL 16, React+TS+Tailwind\n\n"
+            "ICC PORT REGISTRY — KRITICKÉ:\n"
+            "- Všetky porty MUSIA byť v rozsahu 9100–9299\n"
+            "- Ak špecifikácia neuvádza konkrétne porty, priraď z rozsahu 9170–9199\n"
+            "- Port 5432 je ZAKÁZANÝ ako host-mapped port (je to container-internal port)\n"
+            "- DATABASE_URL používa db:5432 (interný), Section 1.1 uvádza host port (napr. 9171)\n"
+            "- Pridaj komentár '# container-internal: db:5432' vedľa DATABASE_URL\n\n"
+            "KONZISTENCIA — KRITICKÉ:\n"
+            "- FK definície MUSIA byť identické v Section 3.3 aj Section 5\n"
+            "- Ak AuditLog nemá FK 'by design', uveď to TAK v Section 3.3 aj Section 5\n"
+            "- Unique constraints v Section 5 musia zodpovedať business rules v Section 4\n"
+            "- Open questions (Q-xx) len ak existuje dedikovaná sekcia s ich registrom\n\n"
+            f"ŠABLÓNA:\n\n{template_content}"
+        )
+    else:
+        system_prompt = (
+            "Si ICC Architect AI. Tvojou úlohou je vytvoriť BEHAVIOR.md dokument"
+            " z profesionálnej špecifikácie podľa ICC šablóny.\n\n"
+            "POVINNÉ PRAVIDLÁ — dodržuj presne:\n"
+            "- Výstup musí byť čistý Markdown — BEZ akýchkoľvek <!-- komentárov --> zo šablóny\n"
+            "- Všetky {placeholder} hodnoty MUSIA byť nahradené reálnym obsahom\n"
+            "- Všetky example_* anchory MUSIA byť premenované na reálne názvy z projektu\n"
+            "- Vypln VŠETKY sekcie: Actors, Entry Points, Workflows, Edge Cases,"
+            " State Machines, Business Rules, Error Taxonomy, Glossary\n"
+            "- Workflow 3.1 MUSÍ byť user_login — blocker EPIC-1, nesmie byť vynechaný\n"
+            "- Jazyk: slovenčina pre user-facing texty, angličtina pre technické identifikátory\n"
+            "- Každý workflow musí mať: Precondition + Steps (tabuľka) + Postcondition\n"
+            "- Minimálne 10 workflows (happy paths) + 8 edge cases\n\n"
+            f"ŠABLÓNA:\n\n{template_content}"
+        )
 
     user_prompt = (
         f"Vytvor {doc_label} technický dokument z nasledujúcej profesionálnej špecifikácie:\n\n{prof_spec.content}"

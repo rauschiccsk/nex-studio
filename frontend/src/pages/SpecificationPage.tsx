@@ -59,6 +59,9 @@ interface GenDocState {
   content: string;
   savedDoc: DesignDocumentRead | null;
   error: string | null;
+  mode: "view" | "edit";
+  copyDone: boolean;
+  currentSection: string;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -98,6 +101,38 @@ function StepHeader({
       )}
     </button>
   );
+}
+
+// ── Section detector (for streaming progress indicator) ──────────────────────
+
+function extractCurrentSection(content: string): string {
+  const lines = content.split("\n");
+  let last = "";
+  for (const line of lines) {
+    if (/^## /.test(line)) last = line.slice(3).trim();
+  }
+  return last;
+}
+
+// ── Clipboard helper ─────────────────────────────────────────────────────────
+
+function copyToClipboard(text: string, onFlash: () => void) {
+  const fallback = () => {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+    onFlash();
+  };
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(text).then(onFlash).catch(fallback);
+  } else {
+    fallback();
+  }
 }
 
 // ── Markdown renderer ────────────────────────────────────────────────────────
@@ -228,12 +263,12 @@ function SpecificationPage() {
   const specTextRef = useRef<HTMLTextAreaElement | null>(null);
 
   // ── Step 3: Design Documents ───────────────────────────────────────────
-  const [designDoc, setDesignDoc] = useState<GenDocState>({
+  const emptyDocState: GenDocState = {
     streaming: false, content: "", savedDoc: null, error: null,
-  });
-  const [behaviorDoc, setBehaviorDoc] = useState<GenDocState>({
-    streaming: false, content: "", savedDoc: null, error: null,
-  });
+    mode: "edit", copyDone: false, currentSection: "",
+  };
+  const [designDoc, setDesignDoc] = useState<GenDocState>(emptyDocState);
+  const [behaviorDoc, setBehaviorDoc] = useState<GenDocState>(emptyDocState);
   const designAbortRef = useRef<AbortController | null>(null);
   const behaviorAbortRef = useRef<AbortController | null>(null);
   const designTextRef = useRef<HTMLTextAreaElement | null>(null);
@@ -278,14 +313,14 @@ function SpecificationPage() {
     listDesignDocuments({ project_id: project.id, doc_type: "design", limit: 1 })
       .then((res) => {
         const d = res.items[0];
-        if (d) setDesignDoc((p) => ({ ...p, content: d.content, savedDoc: d }));
+        if (d) setDesignDoc((p) => ({ ...p, content: d.content, savedDoc: d, mode: "view" }));
       })
       .catch(() => { /* ignore */ });
 
     listDesignDocuments({ project_id: project.id, doc_type: "behavior", limit: 1 })
       .then((res) => {
         const d = res.items[0];
-        if (d) setBehaviorDoc((p) => ({ ...p, content: d.content, savedDoc: d }));
+        if (d) setBehaviorDoc((p) => ({ ...p, content: d.content, savedDoc: d, mode: "view" }));
       })
       .catch(() => { /* ignore */ });
   }, [project.id]);
@@ -494,7 +529,7 @@ function SpecificationPage() {
       const abortRef = docType === "design" ? designAbortRef : behaviorAbortRef;
       const textRef = docType === "design" ? designTextRef : behaviorTextRef;
 
-      setDoc((p) => ({ ...p, streaming: true, content: "", error: null }));
+      setDoc((p) => ({ ...p, streaming: true, content: "", error: null, currentSection: "", mode: "edit" }));
 
       const ctrl = generateDesignDoc(
         profSpec.id,
@@ -503,11 +538,11 @@ function SpecificationPage() {
           setDoc((p) => {
             const next = p.content + chunk;
             if (textRef.current) textRef.current.scrollTop = textRef.current.scrollHeight;
-            return { ...p, content: next };
+            return { ...p, content: next, currentSection: extractCurrentSection(next) };
           });
         },
         (event) => {
-          setDoc((p) => ({ ...p, streaming: false }));
+          setDoc((p) => ({ ...p, streaming: false, mode: "view", currentSection: "" }));
           if (event.design_doc_id) {
             listDesignDocuments({ project_id: project.id, doc_type: docType, limit: 1 })
               .then((res) => {
@@ -804,6 +839,7 @@ function SpecificationPage() {
 
               return (
                 <div key={docType} className="space-y-2">
+                  {/* Header row: label + generate button + saved indicator */}
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-mono text-sm font-semibold text-gray-300">
                       {label}
@@ -821,22 +857,81 @@ function SpecificationPage() {
                         <><Wand2 className="h-3 w-3" />Generovať</>
                       )}
                     </button>
-                    {state.savedDoc && (
+                    {state.savedDoc && !state.streaming && (
                       <span className="flex items-center gap-1 text-xs text-green-400">
                         <CheckCircle className="h-3 w-3" />
                         Uložený — {new Date(state.savedDoc.created_at).toLocaleDateString("sk-SK")}
                       </span>
                     )}
+                    {/* Live progress indicator */}
+                    {state.streaming && state.content.length > 0 && (
+                      <span className="text-xs text-indigo-300">
+                        {state.currentSection
+                          ? `${state.currentSection} · ${(state.content.length / 1000).toFixed(1)}k znakov`
+                          : `${(state.content.length / 1000).toFixed(1)}k znakov`}
+                      </span>
+                    )}
                   </div>
 
-                  <textarea
-                    ref={textRef}
-                    className="w-full resize-y rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-xs text-gray-200 placeholder-gray-500 focus:border-primary focus:outline-none"
-                    rows={16}
-                    value={state.content}
-                    onChange={(e) => setState((p) => ({ ...p, content: e.target.value }))}
-                    placeholder={`Tu sa objaví vygenerovaný ${label}…`}
-                  />
+                  {/* View/Edit panel */}
+                  <div className="overflow-hidden rounded-lg border border-gray-700 bg-gray-900">
+                    {/* Toolbar */}
+                    <div className="flex shrink-0 items-center gap-1 border-b border-gray-700 px-2 py-1">
+                      <button
+                        onClick={() => setState((p) => ({ ...p, mode: "view" }))}
+                        title="View (rendered)"
+                        disabled={!state.content}
+                        className={`flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors disabled:opacity-30 ${state.mode === "view" ? "bg-gray-700 text-gray-100" : "text-gray-400 hover:bg-gray-800 hover:text-gray-200"}`}
+                      >
+                        <Eye className="h-3.5 w-3.5" />
+                        View
+                      </button>
+                      <button
+                        onClick={() => setState((p) => ({ ...p, mode: "edit" }))}
+                        title="Edit (markdown)"
+                        className={`flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors ${state.mode === "edit" ? "bg-gray-700 text-gray-100" : "text-gray-400 hover:bg-gray-800 hover:text-gray-200"}`}
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                        Edit
+                      </button>
+                      <div className="flex-1" />
+                      <button
+                        onClick={() =>
+                          copyToClipboard(state.content, () => {
+                            setState((p) => ({ ...p, copyDone: true }));
+                            setTimeout(() => setState((p) => ({ ...p, copyDone: false })), 1500);
+                          })
+                        }
+                        disabled={!state.content}
+                        title="Copy to clipboard"
+                        className={`flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors disabled:opacity-30 ${state.copyDone ? "text-green-400" : "text-gray-400 hover:bg-gray-800 hover:text-gray-200"}`}
+                      >
+                        {state.copyDone ? (
+                          <><Check className="h-3.5 w-3.5" />Copied!</>
+                        ) : (
+                          <><ClipboardCopy className="h-3.5 w-3.5" />Copy</>
+                        )}
+                      </button>
+                    </div>
+
+                    {/* Content */}
+                    {state.mode === "view" && state.content ? (
+                      <div
+                        className="overflow-y-auto px-4 py-3"
+                        style={{ maxHeight: "520px" }}
+                        dangerouslySetInnerHTML={{ __html: renderMarkdown(state.content) }}
+                      />
+                    ) : (
+                      <textarea
+                        ref={textRef}
+                        className="w-full resize-y bg-gray-900 px-3 py-2 font-mono text-xs text-gray-200 placeholder-gray-500 focus:outline-none"
+                        rows={16}
+                        value={state.content}
+                        onChange={(e) => setState((p) => ({ ...p, content: e.target.value }))}
+                        placeholder={`Tu sa objaví vygenerovaný ${label}…`}
+                      />
+                    )}
+                  </div>
                   {state.error && <p className="text-xs text-red-400">{state.error}</p>}
                 </div>
               );
