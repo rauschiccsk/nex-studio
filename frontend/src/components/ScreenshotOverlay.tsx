@@ -1,14 +1,18 @@
 /**
  * ScreenshotOverlay — captures the current page via html2canvas,
- * uploads the PNG to the backend, and shows a preview with a copy-link action.
+ * uploads the PNG to the backend (Ubuntu server), and shows a preview.
  *
  * Trigger: Ctrl+Shift+S keyboard shortcut (wired in App.tsx).
  * Dismiss: Escape key or clicking outside the modal.
+ *
+ * The file is saved server-side to /app/uploads/ (Ubuntu). There is no
+ * client-side download — the browser download would land on the local
+ * machine (e.g. Windows C:\), not on the Ubuntu server.
  */
 
 import { useEffect, useRef, useState } from "react";
 import html2canvas from "html2canvas";
-import { Check, Download, Loader2, X } from "lucide-react";
+import { Check, Loader2, X } from "lucide-react";
 
 import api from "@/services/api";
 
@@ -16,11 +20,17 @@ interface Props {
   onClose: () => void;
 }
 
+interface UploadResult {
+  filename: string;
+  size: number;
+}
+
 type Phase = "capturing" | "uploading" | "done" | "error";
 
 export function ScreenshotOverlay({ onClose }: Props) {
   const [phase, setPhase] = useState<Phase>("capturing");
   const [dataUrl, setDataUrl] = useState<string | null>(null);
+  const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
 
@@ -50,14 +60,17 @@ export function ScreenshotOverlay({ onClose }: Props) {
         setDataUrl(url);
         setPhase("uploading");
 
-        // Convert to Blob and upload
+        // Convert to Blob and upload to backend (saved on Ubuntu server)
         const blob = await (await fetch(url)).blob();
         const form = new FormData();
         form.append("file", blob, "screenshot.png");
 
-        await api.post("/uploads/screenshot", form);
+        const result = await api.post<UploadResult>("/uploads/screenshot", form);
 
-        if (!cancelled) setPhase("done");
+        if (!cancelled) {
+          setUploadResult(result);
+          setPhase("done");
+        }
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : "Screenshot failed");
@@ -69,14 +82,6 @@ export function ScreenshotOverlay({ onClose }: Props) {
     capture();
     return () => { cancelled = true; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleDownload = () => {
-    if (!dataUrl) return;
-    const a = document.createElement("a");
-    a.href = dataUrl;
-    a.download = `nex-studio-${Date.now()}.png`;
-    a.click();
-  };
 
   return (
     <div
@@ -104,12 +109,23 @@ export function ScreenshotOverlay({ onClose }: Props) {
             <><Loader2 className="h-4 w-4 animate-spin text-indigo-400" />Uploading…</>
           )}
           {phase === "done" && (
-            <><Check className="h-4 w-4 text-green-400" /><span className="text-green-400">Screenshot saved</span></>
+            <><Check className="h-4 w-4 text-green-400" /><span className="text-green-400">Uložené na serveri</span></>
           )}
           {phase === "error" && (
             <span className="text-red-400">{error}</span>
           )}
         </div>
+
+        {/* Server path */}
+        {phase === "done" && uploadResult && (
+          <div className="mb-4 rounded-lg border border-gray-700 bg-gray-900 px-3 py-2">
+            <p className="mb-0.5 text-[10px] uppercase tracking-wider text-gray-500">Cesta na serveri</p>
+            <code className="text-xs text-green-300">uploads/{uploadResult.filename}</code>
+            <p className="mt-1 text-[10px] text-gray-500">
+              {(uploadResult.size / 1024).toFixed(1)} KB
+            </p>
+          </div>
+        )}
 
         {/* Preview */}
         {dataUrl && (
@@ -117,28 +133,19 @@ export function ScreenshotOverlay({ onClose }: Props) {
             src={dataUrl}
             alt="Screenshot preview"
             className="mb-4 w-full rounded-lg border border-gray-700 object-contain"
-            style={{ maxHeight: "300px" }}
+            style={{ maxHeight: "280px" }}
           />
         )}
 
         {/* Actions */}
-        {dataUrl && (
-          <div className="flex gap-2">
-            <button
-              onClick={handleDownload}
-              className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500"
-            >
-              <Download className="h-3.5 w-3.5" />
-              Download PNG
-            </button>
-            <button
-              onClick={onClose}
-              className="rounded-lg bg-gray-700 px-3 py-1.5 text-xs font-medium text-gray-200 hover:bg-gray-600"
-            >
-              Close
-            </button>
-          </div>
-        )}
+        <div className="flex justify-end">
+          <button
+            onClick={onClose}
+            className="rounded-lg bg-gray-700 px-4 py-1.5 text-xs font-medium text-gray-200 hover:bg-gray-600"
+          >
+            Close
+          </button>
+        </div>
       </div>
     </div>
   );

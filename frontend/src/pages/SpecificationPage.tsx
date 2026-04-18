@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useOutletContext } from "react-router-dom";
 import {
+  Check,
   CheckCircle,
   ChevronDown,
   ChevronRight,
@@ -119,7 +120,7 @@ function renderMarkdown(text: string): string {
         const cells = trimmed
           .slice(1, -1)
           .split("|")
-          .map((c) => `<th class="border border-gray-600 px-2 py-1 bg-gray-700 text-left">${c.trim()}</th>`);
+          .map((c) => `<th class="border border-gray-600 px-2 py-1 bg-gray-700 text-left whitespace-nowrap">${c.trim()}</th>`);
         out.push(cells.join(""));
         out.push("</tr></thead><tbody>");
         continue;
@@ -131,7 +132,7 @@ function renderMarkdown(text: string): string {
         const cells = trimmed
           .slice(1, -1)
           .split("|")
-          .map((c) => `<td class="border border-gray-600 px-2 py-1">${c.trim()}</td>`);
+          .map((c) => `<td class="border border-gray-600 px-2 py-1 whitespace-nowrap">${c.trim()}</td>`);
         out.push(cells.join(""));
         out.push("</tr>");
         continue;
@@ -721,10 +722,13 @@ function SpecificationPage() {
                       });
                     }}
                     title="Copy to clipboard"
-                    className="flex items-center gap-1 rounded px-2 py-1 text-xs text-gray-400 hover:bg-gray-800 hover:text-gray-200 transition-colors"
+                    className={`flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors ${copyDone ? "text-green-400" : "text-gray-400 hover:bg-gray-800 hover:text-gray-200"}`}
                   >
-                    <ClipboardCopy className="h-3.5 w-3.5" />
-                    {copyDone ? "Copied!" : "Copy"}
+                    {copyDone ? (
+                      <><Check className="h-3.5 w-3.5" />Copied!</>
+                    ) : (
+                      <><ClipboardCopy className="h-3.5 w-3.5" />Copy</>
+                    )}
                   </button>
                 </div>
 
