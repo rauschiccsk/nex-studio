@@ -479,8 +479,8 @@ async def generate_design_doc(
 
     if doc_type == "design":
         system_prompt = (
-            "Si ICC Architect AI. Tvojou úlohou je vytvoriť DESIGN.md technický dokument"
-            " z profesionálnej špecifikácie podľa ICC šablóny.\n\n"
+            "Si ICC Architect AI. Tvoja odpoveď = kompletný obsah DESIGN.md dokumentu v Markdown."
+            " Žiadny úvod, žiadne vysvetlenie, žiadny popis — iba čistý Markdown od prvého riadku.\n\n"
             "POVINNÉ PRAVIDLÁ — dodržuj presne:\n"
             "- Výstup musí byť validný Markdown podľa šablóny\n"
             "- Vypln VŠETKY sekcie šablóny — žiadne placeholder texty, žiadne [ARCHITECT] značky\n"
@@ -502,8 +502,8 @@ async def generate_design_doc(
         )
     else:
         system_prompt = (
-            "Si ICC Architect AI. Tvojou úlohou je vytvoriť BEHAVIOR.md dokument"
-            " z profesionálnej špecifikácie podľa ICC šablóny.\n\n"
+            "Si ICC Architect AI. Tvoja odpoveď = kompletný obsah BEHAVIOR.md dokumentu v Markdown."
+            " Žiadny úvod, žiadne vysvetlenie, žiadny popis — iba čistý Markdown od prvého riadku.\n\n"
             "POVINNÉ PRAVIDLÁ — dodržuj presne:\n"
             "- Výstup musí byť čistý Markdown — BEZ akýchkoľvek <!-- komentárov --> zo šablóny\n"
             "- Všetky {placeholder} hodnoty MUSIA byť nahradené reálnym obsahom\n"
@@ -518,7 +518,10 @@ async def generate_design_doc(
         )
 
     user_prompt = (
-        f"Vytvor {doc_label} technický dokument z nasledujúcej profesionálnej špecifikácie:\n\n{prof_spec.content}"
+        f"Vypíš kompletný obsah {doc_label} dokumentu podľa šablóny a pravidiel."
+        f" Začni priamo prvým riadkom dokumentu — '# {doc_label} —'."
+        f" Žiadny text pred týmto riadkom.\n\n"
+        f"PROFESIONÁLNA ŠPECIFIKÁCIA:\n{prof_spec.content}"
     )
 
     project_id = prof_spec.project_id
