@@ -533,12 +533,12 @@ function SpecificationPage() {
             )}
 
             {/* Split view */}
-            <div className="flex gap-3" style={{ height: "560px" }}>
+            <div className="flex gap-3 overflow-hidden" style={{ height: "560px" }}>
 
               {/* ── Left: Chat panel ── */}
-              <div className="flex w-2/5 shrink-0 flex-col rounded-lg border border-gray-700 bg-gray-900">
+              <div className="flex w-2/5 min-h-0 shrink-0 flex-col rounded-lg border border-gray-700 bg-gray-900">
                 {/* Messages */}
-                <div className="flex-1 overflow-y-auto p-3 space-y-3">
+                <div className="min-h-0 flex-1 overflow-y-auto p-3 space-y-3">
                   {chatMessages.length === 0 && (
                     <p className="text-center text-xs text-gray-500 mt-8">
                       Klikni „Generovať prvý draft" pre začatie.
@@ -592,15 +592,15 @@ function SpecificationPage() {
               </div>
 
               {/* ── Right: Spec editor ── */}
-              <div className="flex flex-1 flex-col">
+              <div className="flex min-h-0 flex-1 flex-col gap-1">
                 <textarea
                   ref={specTextRef}
-                  className="flex-1 resize-none rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-xs text-gray-200 placeholder-gray-500 focus:border-primary focus:outline-none"
+                  className="min-h-0 flex-1 resize-none rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-xs text-gray-200 placeholder-gray-500 focus:border-primary focus:outline-none"
                   value={profContent}
                   onChange={(e) => setProfContent(e.target.value)}
                   placeholder="Tu sa objaví vygenerovaná profesionálna špecifikácia…"
                 />
-                <p className="mt-1 text-right text-[10px] text-gray-500">
+                <p className="shrink-0 text-right text-[10px] text-gray-500">
                   Môžeš editovať priamo. Po úpravách klikni „Schváliť a uložiť".
                 </p>
               </div>
