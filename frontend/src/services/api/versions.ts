@@ -51,3 +51,13 @@ export function updateVersion(
 export function releaseVersion(id: string): Promise<Version> {
   return api.post<Version>(`/versions/${id}/release`);
 }
+
+/**
+ * Permanently delete a version.
+ *
+ * Only allowed when the version has no EPICs and is not ``released``.
+ * Returns HTTP 204 on success.
+ */
+export function deleteVersion(id: string): Promise<void> {
+  return api.delete<void>(`/versions/${id}`);
+}

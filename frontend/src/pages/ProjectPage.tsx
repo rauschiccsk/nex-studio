@@ -16,12 +16,8 @@ import { useEffect, useState } from "react";
 import { NavLink, Outlet, useParams } from "react-router-dom";
 import {
   AlertCircle,
-  Database,
-  ExternalLink,
-  Globe,
   Layers,
   Package,
-  Server,
 } from "lucide-react";
 
 import { api, ApiError } from "@/services/api";
@@ -119,19 +115,19 @@ function ProjectLayout() {
   return (
     <section className="space-y-6">
       {/* ── Project header ── */}
-      <div className="rounded-xl border border-gray-700 bg-gray-800 p-6">
-        <div className="flex items-start justify-between gap-4 flex-wrap">
+      <div className="rounded-xl border border-gray-700 bg-gray-800 px-5 py-3">
+        <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-3 min-w-0">
             <span className="text-gray-500">
               {project.category === "multimodule"
-                ? <Layers className="h-5 w-5" />
-                : <Package className="h-5 w-5" />}
+                ? <Layers className="h-4 w-4" />
+                : <Package className="h-4 w-4" />}
             </span>
             <div className="min-w-0">
-              <h2 className="text-xl font-bold text-gray-100 truncate">
+              <h2 className="text-base font-bold text-gray-100 truncate">
                 {project.name}
               </h2>
-              <p className="mt-0.5 font-mono text-xs text-gray-500">
+              <p className="font-mono text-xs text-gray-500">
                 {project.slug}
               </p>
             </div>
@@ -142,43 +138,6 @@ function ProjectLayout() {
           >
             {STATUS_LABEL[project.status] ?? project.status}
           </span>
-        </div>
-
-        {project.description && (
-          <p className="mt-3 text-sm text-gray-400">{project.description}</p>
-        )}
-
-        {/* Port + repo badges */}
-        <div className="mt-4 flex flex-wrap items-center gap-2">
-          {project.backend_port && (
-            <span className="flex items-center gap-1.5 rounded-md bg-gray-700/60 px-2.5 py-1 text-xs text-gray-300">
-              <Server className="h-3.5 w-3.5 text-gray-500" />
-              BE&nbsp;{project.backend_port}
-            </span>
-          )}
-          {project.frontend_port && (
-            <span className="flex items-center gap-1.5 rounded-md bg-gray-700/60 px-2.5 py-1 text-xs text-gray-300">
-              <Globe className="h-3.5 w-3.5 text-gray-500" />
-              FE&nbsp;{project.frontend_port}
-            </span>
-          )}
-          {project.db_port && (
-            <span className="flex items-center gap-1.5 rounded-md bg-gray-700/60 px-2.5 py-1 text-xs text-gray-300">
-              <Database className="h-3.5 w-3.5 text-gray-500" />
-              DB&nbsp;{project.db_port}
-            </span>
-          )}
-          {project.repo_url && (
-            <a
-              href={`https://github.com/${project.repo_url}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1.5 rounded-md bg-gray-700/60 px-2.5 py-1 text-xs text-gray-300 hover:bg-gray-700 hover:text-white transition-colors"
-            >
-              <ExternalLink className="h-3.5 w-3.5 text-gray-500" />
-              {project.repo_url}
-            </a>
-          )}
         </div>
       </div>
 

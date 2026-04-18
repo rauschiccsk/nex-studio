@@ -21,11 +21,13 @@ import VersionStatusBadge from "../components/versions/VersionStatusBadge";
 import { ApiError } from "../services/api";
 import {
   createVersion,
+  deleteVersion,
   listVersions,
   releaseVersion,
+  updateVersion,
 } from "../services/api/versions";
 import type { ProjectLayoutContext } from "./ProjectPage";
-import type { Version, VersionCreate } from "../types/version";
+import type { Version, VersionCreate, VersionUpdate } from "../types/version";
 import { getUserRole } from "../utils/auth";
 import { formatDate } from "../utils/format";
 
@@ -201,6 +203,153 @@ function CreateVersionDialog({
   );
 }
 
+// ── Edit Version Dialog ──────────────────────────────────────────────────────
+
+interface EditVersionDialogProps {
+  version: Version;
+  onClose: () => void;
+  onUpdated: (v: Version) => void;
+}
+
+function EditVersionDialog({ version, onClose, onUpdated }: EditVersionDialogProps) {
+  const [form, setForm] = useState<VersionUpdate>({
+    version_number: version.version_number,
+    name: version.name ?? "",
+    description: version.description ?? "",
+    target_date: version.target_date ?? "",
+  });
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSubmit = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault();
+      setIsSaving(true);
+      setError(null);
+      try {
+        const payload: VersionUpdate = {};
+        if (form.version_number) payload.version_number = form.version_number;
+        if (form.name !== undefined)        payload.name        = form.name        || undefined;
+        if (form.description !== undefined) payload.description = form.description || undefined;
+        if (form.target_date !== undefined) payload.target_date = form.target_date || undefined;
+        const updated = await updateVersion(version.id, payload);
+        onUpdated(updated);
+      } catch (err) {
+        setError(err instanceof ApiError ? err.message : "Neočakávaná chyba.");
+      } finally {
+        setIsSaving(false);
+      }
+    },
+    [form, version.id, onUpdated],
+  );
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLFormElement>) => {
+      if (e.key !== "Enter" || !(e.target instanceof HTMLInputElement)) return;
+      e.preventDefault();
+      const form = e.currentTarget;
+      const focusables = Array.from(
+        form.querySelectorAll<HTMLElement>(
+          "input:not([disabled]), textarea:not([disabled]), select:not([disabled]), button:not([disabled])",
+        ),
+      );
+      const idx  = focusables.indexOf(e.target as HTMLElement);
+      const next = focusables[idx + 1];
+      if (next !== undefined) {
+        next.focus();
+      }
+    },
+    [],
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+      <div className="w-full max-w-md rounded-xl border border-gray-700 bg-gray-800 p-6 shadow-2xl">
+        <h3 className="mb-5 text-lg font-semibold text-gray-100">
+          Upraviť verziu
+        </h3>
+
+        {error && (
+          <div className="mb-4 flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-400">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            {error}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} onKeyDown={handleKeyDown} className="space-y-4">
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-300">
+              Číslo verzie <span className="text-red-400">*</span>
+            </label>
+            <input
+              type="text"
+              required
+              value={form.version_number ?? ""}
+              onChange={(e) => setForm((f) => ({ ...f, version_number: e.target.value }))}
+              className="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+              autoFocus
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-300">
+              Názov
+            </label>
+            <input
+              type="text"
+              value={form.name ?? ""}
+              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+              className="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-300">
+              Popis
+            </label>
+            <textarea
+              value={form.description ?? ""}
+              onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+              rows={3}
+              className="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-300">
+              Cieľový dátum
+            </label>
+            <input
+              type="date"
+              value={form.target_date ?? ""}
+              onChange={(e) => setForm((f) => ({ ...f, target_date: e.target.value }))}
+              className="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={isSaving}
+              className="rounded-lg border border-gray-600 px-4 py-2 text-sm font-medium text-gray-300 hover:bg-gray-700 disabled:opacity-50"
+            >
+              Zrušiť
+            </button>
+            <button
+              type="submit"
+              disabled={isSaving}
+              className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-600 disabled:opacity-50"
+            >
+              {isSaving ? "Ukladám…" : "Uložiť"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 // ── Main page ────────────────────────────────────────────────────────────────
 
 function VersionsPage() {
@@ -211,7 +360,9 @@ function VersionsPage() {
   const [isLoading,  setIsLoading]  = useState(true);
   const [error,      setError]      = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [editTarget, setEditTarget] = useState<Version | null>(null);
   const [releasing,  setReleasing]  = useState<string | null>(null);
+  const [deleting,   setDeleting]   = useState<string | null>(null);
 
   const role = getUserRole();
   const isRi = role === "ri";
@@ -252,6 +403,30 @@ function VersionsPage() {
     } finally {
       setReleasing(null);
     }
+  }, []);
+
+  // ── Delete handler ────────────────────────────────────────────────────────
+
+  const handleDelete = useCallback(async (id: string) => {
+    if (!window.confirm("Zmazať túto verziu? Akcia je nevratná.")) return;
+    setDeleting(id);
+    try {
+      await deleteVersion(id);
+      setVersions((prev) => prev.filter((v) => v.id !== id));
+    } catch (err) {
+      window.alert(
+        err instanceof ApiError ? err.message : "Mazanie zlyhalo.",
+      );
+    } finally {
+      setDeleting(null);
+    }
+  }, []);
+
+  // ── Edit handler ──────────────────────────────────────────────────────────
+
+  const handleUpdated = useCallback((updated: Version) => {
+    setVersions((prev) => prev.map((v) => (v.id === updated.id ? updated : v)));
+    setEditTarget(null);
   }, []);
 
   // ── Create handler ────────────────────────────────────────────────────────
@@ -369,6 +544,13 @@ function VersionsPage() {
                   {isRi && (
                     <td className="whitespace-nowrap px-4 py-3 text-sm">
                       <div className="flex gap-2">
+                        <button
+                          className="rounded-md border border-gray-600 px-3 py-1 text-xs font-medium text-gray-300 hover:bg-gray-700 disabled:opacity-50"
+                          data-testid={`edit-btn-${v.id}`}
+                          onClick={() => setEditTarget(v)}
+                        >
+                          Upraviť
+                        </button>
                         {v.status !== "released" && (
                           <button
                             className="rounded-md border border-primary/40 px-3 py-1 text-xs font-medium text-primary hover:bg-primary/10 disabled:opacity-50"
@@ -377,6 +559,16 @@ function VersionsPage() {
                             onClick={() => void handleRelease(v.id)}
                           >
                             {releasing === v.id ? "Uvoľňujem…" : "Uvoľniť"}
+                          </button>
+                        )}
+                        {v.status !== "released" && v.epic_count === 0 && (
+                          <button
+                            className="rounded-md border border-red-500/40 px-3 py-1 text-xs font-medium text-red-400 hover:bg-red-500/10 disabled:opacity-50"
+                            data-testid={`delete-btn-${v.id}`}
+                            disabled={deleting === v.id}
+                            onClick={() => void handleDelete(v.id)}
+                          >
+                            {deleting === v.id ? "Mažem…" : "Zmazať"}
                           </button>
                         )}
                       </div>
@@ -395,6 +587,15 @@ function VersionsPage() {
           projectId={project.id}
           onClose={() => setShowCreate(false)}
           onCreated={handleCreated}
+        />
+      )}
+
+      {/* Edit dialog */}
+      {editTarget !== null && (
+        <EditVersionDialog
+          version={editTarget}
+          onClose={() => setEditTarget(null)}
+          onUpdated={handleUpdated}
         />
       )}
     </section>

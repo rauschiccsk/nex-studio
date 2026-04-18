@@ -219,6 +219,37 @@ def update_version(
     return VersionRead.model_validate(version)
 
 
+@router.delete(
+    "/versions/{version_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_version(
+    version_id: UUID,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_ri_role),
+) -> None:
+    """Permanently delete a version.
+
+    Only allowed when the version has no EPICs (Task Plan is empty) and
+    its status is not ``released``. Released versions are permanent
+    artefacts of project history and may not be deleted.
+
+    Error mapping:
+
+    * **404** — the version does not exist.
+    * **409** — the version is ``released``, or it still has one or more
+      EPICs attached (Task Plan not empty).
+
+    Restricted to users with role ``ri``.
+    """
+    try:
+        version_service.delete(db, version_id)
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        raise _map_value_error(exc) from exc
+
+
 @router.post(
     "/versions/{version_id}/release",
     response_model=VersionRead,
