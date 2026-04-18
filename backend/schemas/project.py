@@ -126,9 +126,9 @@ class ProjectCreate(BaseModel):
         default=False,
         description="Whether Guardian review is enabled for this project.",
     )
-    created_by: UUID = Field(
-        ...,
-        description="User who created the project.",
+    created_by: Optional[UUID] = Field(
+        default=None,
+        description="User who created the project. If omitted, resolved from the active session.",
     )
 
 

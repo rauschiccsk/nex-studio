@@ -43,6 +43,7 @@ from backend.schemas.project import (
     ProjectStatus,
     ProjectUpdate,
 )
+from backend.db.models.foundation import User
 from backend.services import github_validation as github_validation_service
 from backend.services import port_registry as port_registry_service
 from backend.services import project as project_service
@@ -50,6 +51,26 @@ from backend.services import project as project_service
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Projects"])
+
+
+def _resolve_created_by(db: Session, created_by: Optional[UUID]) -> UUID:
+    """Return the supplied UUID or fall back to the first active 'ri' user.
+
+    This is a placeholder until JWT auth is wired up — at that point the
+    router will extract the user ID from the token instead.
+    """
+    if created_by is not None:
+        return created_by
+    from sqlalchemy import select
+    user = db.execute(
+        select(User).where(User.is_active.is_(True)).where(User.role == "ri").limit(1)
+    ).scalar_one_or_none()
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="No active 'ri' user found — cannot resolve created_by.",
+        )
+    return user.id
 
 
 def _validate_ports(db: Session, payload: ProjectCreate) -> None:
@@ -276,6 +297,9 @@ def create_project(
     # directly so they bypass the generic ValueError mapping below.
     _validate_ports(db, payload)
     _validate_github_repo(payload.repo_url)
+
+    # Resolve created_by — use supplied UUID or fall back to active ri user.
+    payload.created_by = _resolve_created_by(db, payload.created_by)
 
     try:
         project = project_service.create(db, payload)
