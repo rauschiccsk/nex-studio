@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     claude_cli_path: str = "claude"
     claude_stream_timeout: int = 300
     claude_design_doc_timeout: int = 1800
+    claude_task_plan_timeout: int = 1800
 
     # Knowledge Base path (mounted read-only from host)
     knowledge_base_path: str = "/home/icc/knowledge"

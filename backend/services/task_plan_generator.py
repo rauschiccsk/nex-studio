@@ -22,6 +22,7 @@ from sqlalchemy import func as sqlfunc
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from backend.config.settings import settings
 from backend.db.models.specifications import DesignDocument
 from backend.db.models.tasks import Epic, Feat, Task
 from backend.db.models.versions import Version
@@ -230,7 +231,7 @@ async def generate_task_plan_stream(
         async for chunk in claude_subprocess.run_claude_stream(
             prompt=user_prompt,
             context=_SYSTEM_PROMPT,
-            timeout=900,  # 15 min — task plans can be large
+            timeout=settings.claude_task_plan_timeout,
         ):
             full_response_parts.append(chunk)
             chunk_count += 1
