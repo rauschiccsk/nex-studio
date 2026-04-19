@@ -8,6 +8,8 @@
 import { TOKEN_STORAGE_KEY } from "../api";
 import type { TaskPlanEvent } from "../../types/taskPlan";
 
+type TaskPlanDoneEvent = Extract<TaskPlanEvent, { type: "done" }>;
+
 const API_PREFIX = "/api/v1";
 
 function resolveBaseUrl(): string {
@@ -16,6 +18,31 @@ function resolveBaseUrl(): string {
     return fromEnv.replace(/\/$/, "");
   }
   return "";
+}
+
+/**
+ * Fetch the existing Task Plan for a version from the database.
+ *
+ * Returns null when no EPICs exist yet (plan not generated).
+ */
+export async function fetchTaskPlan(versionId: string): Promise<TaskPlanDoneEvent | null> {
+  const baseUrl = resolveBaseUrl();
+  const url = `${baseUrl}${API_PREFIX}/versions/${versionId}/task-plan`;
+  const token =
+    typeof window !== "undefined" ? window.localStorage.getItem(TOKEN_STORAGE_KEY) : null;
+
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  try {
+    const resp = await fetch(url, { headers, credentials: "same-origin" });
+    if (!resp.ok) return null;
+    const data = (await resp.json()) as { plan: TaskPlanDoneEvent["plan"]; epic_count: number; feat_count: number; task_count: number };
+    if (!data.plan || data.plan.length === 0) return null;
+    return { type: "done", plan: data.plan, epic_count: data.epic_count, feat_count: data.feat_count, task_count: data.task_count };
+  } catch {
+    return null;
+  }
 }
 
 /**

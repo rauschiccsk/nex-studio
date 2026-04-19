@@ -50,10 +50,12 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.core.security import get_current_user, require_ri_role
 from backend.db.models.foundation import User
+from backend.db.models.tasks import Epic, Feat, Task
 from backend.db.session import SessionLocal, get_db
 from backend.schemas.version import VersionCreate, VersionRead, VersionUpdate
 from backend.services import task_plan_generator
@@ -255,6 +257,87 @@ def delete_version(
         db.rollback()
         raise _map_value_error(exc) from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+class _TaskPlanResponse(BaseModel):
+    """Response for GET /versions/{version_id}/task-plan."""
+
+    plan: list[dict]
+    epic_count: int
+    feat_count: int
+    task_count: int
+
+
+@router.get(
+    "/versions/{version_id}/task-plan",
+    response_model=_TaskPlanResponse,
+)
+def get_task_plan(
+    version_id: UUID,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_user),
+) -> _TaskPlanResponse:
+    """Return the existing task plan (EPICs → Feats → Tasks) for a version.
+
+    Returns an empty plan (``epic_count=0``) when no EPICs exist yet.
+    """
+    epics = db.execute(select(Epic).where(Epic.version_id == version_id).order_by(Epic.number)).scalars().all()
+
+    if not epics:
+        return _TaskPlanResponse(plan=[], epic_count=0, feat_count=0, task_count=0)
+
+    epic_ids = [e.id for e in epics]
+    feats = (
+        db.execute(select(Feat).where(Feat.epic_id.in_(epic_ids)).order_by(Feat.epic_id, Feat.number)).scalars().all()
+    )
+
+    feat_ids = [f.id for f in feats]
+    tasks_all = (
+        db.execute(select(Task).where(Task.feat_id.in_(feat_ids)).order_by(Task.feat_id, Task.number)).scalars().all()
+        if feat_ids
+        else []
+    )
+
+    tasks_by_feat: dict[str, list[dict]] = {}
+    for t in tasks_all:
+        tasks_by_feat.setdefault(str(t.feat_id), []).append(
+            {
+                "number": t.number,
+                "title": t.title,
+                "task_type": t.task_type,
+                "status": t.status,
+            }
+        )
+
+    feats_by_epic: dict[str, list[dict]] = {}
+    for f in feats:
+        feats_by_epic.setdefault(str(f.epic_id), []).append(
+            {
+                "id": str(f.id),
+                "number": f.number,
+                "title": f.title,
+                "status": f.status,
+                "tasks": tasks_by_feat.get(str(f.id), []),
+            }
+        )
+
+    plan = [
+        {
+            "id": str(e.id),
+            "number": e.number,
+            "title": e.title,
+            "status": e.status,
+            "feats": feats_by_epic.get(str(e.id), []),
+        }
+        for e in epics
+    ]
+
+    return _TaskPlanResponse(
+        plan=plan,
+        epic_count=len(epics),
+        feat_count=len(feats),
+        task_count=len(tasks_all),
+    )
 
 
 class _GenerateTaskPlanRequest(BaseModel):

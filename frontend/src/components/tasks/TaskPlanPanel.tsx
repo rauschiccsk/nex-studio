@@ -15,7 +15,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Loader2, Play, RefreshCw, Zap } from "lucide-react";
 
-import { generateTaskPlan } from "../../services/api/taskPlan";
+import { fetchTaskPlan, generateTaskPlan } from "../../services/api/taskPlan";
 import type { TaskPlanEpic, TaskPlanFeat } from "../../types/taskPlan";
 
 /* ------------------------------------------------------------------ */
@@ -152,6 +152,24 @@ function EpicRow({ epic }: { epic: TaskPlanEpic }) {
 export function TaskPlanPanel({ versionId, canGenerate }: Props) {
   const [state, setState] = useState<PanelState>({ phase: "idle" });
   const abortRef = useRef<AbortController | null>(null);
+
+  // On mount: load existing plan from DB so it survives page refresh
+  useEffect(() => {
+    let cancelled = false;
+    fetchTaskPlan(versionId).then((data) => {
+      if (cancelled || !data) return;
+      setState({
+        phase: "done",
+        epics: data.plan,
+        epicCount: data.epic_count,
+        featCount: data.feat_count,
+        taskCount: data.task_count,
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [versionId]);
 
   // Cancel any in-progress generation on unmount
   useEffect(() => {
