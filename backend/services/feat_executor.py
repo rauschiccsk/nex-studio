@@ -138,13 +138,14 @@ async def execute_feat_stream(feat_id: UUID, db: Session) -> AsyncGenerator[str,
         return
 
     if not project.source_path:
-        yield _sse({
-            "type": "error",
-            "content": (
-                f"Project '{project.name}' nemá nastavený source_path. "
-                "Nastav ho v Project Admin → Source Path."
-            ),
-        })
+        yield _sse(
+            {
+                "type": "error",
+                "content": (
+                    f"Project '{project.name}' nemá nastavený source_path. Nastav ho v Project Admin → Source Path."
+                ),
+            }
+        )
         return
 
     # ---- Load tasks (todo + failed, ordered) -------------------------
@@ -189,12 +190,14 @@ async def execute_feat_stream(feat_id: UUID, db: Session) -> AsyncGenerator[str,
         task.status = "in_progress"
         db.commit()
 
-        yield _sse({
-            "type": "task_start",
-            "task_id": str(task.id),
-            "task_number": task.number,
-            "task_title": task.title,
-        })
+        yield _sse(
+            {
+                "type": "task_start",
+                "task_id": str(task.id),
+                "task_number": task.number,
+                "task_title": task.title,
+            }
+        )
 
         prompt = _build_task_prompt(epic, feat, task, design_content)
         task_output: list[str] = []
@@ -209,7 +212,8 @@ async def execute_feat_stream(feat_id: UUID, db: Session) -> AsyncGenerator[str,
                 yield _sse({"type": "chunk", "text": chunk, "task_id": str(task.id)})
         except TimeoutError:
             task_failed = True
-            yield _sse({"type": "chunk", "text": "\n[TIMEOUT — CC process exceeded time limit]\n", "task_id": str(task.id)})
+            msg = "\n[TIMEOUT — CC process exceeded time limit]\n"
+            yield _sse({"type": "chunk", "text": msg, "task_id": str(task.id)})
         except RuntimeError as exc:
             task_failed = True
             yield _sse({"type": "chunk", "text": f"\n[ERROR: {exc}]\n", "task_id": str(task.id)})
@@ -230,11 +234,13 @@ async def execute_feat_stream(feat_id: UUID, db: Session) -> AsyncGenerator[str,
 
         all_output.append("".join(task_output))
 
-        yield _sse({
-            "type": "task_done",
-            "task_id": str(task.id),
-            "status": task.status,
-        })
+        yield _sse(
+            {
+                "type": "task_done",
+                "task_id": str(task.id),
+                "status": task.status,
+            }
+        )
 
     # ---- Finalize Delegation record ----------------------------------
     delegation.status = "failed" if feat_failed else "done"
@@ -245,8 +251,10 @@ async def execute_feat_stream(feat_id: UUID, db: Session) -> AsyncGenerator[str,
     # ---- Reload feat status after cascade ----------------------------
     db.refresh(feat)
 
-    yield _sse({
-        "type": "feat_done",
-        "feat_id": str(feat_id),
-        "feat_status": feat.status,
-    })
+    yield _sse(
+        {
+            "type": "feat_done",
+            "feat_id": str(feat_id),
+            "feat_status": feat.status,
+        }
+    )
