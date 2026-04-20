@@ -24,6 +24,9 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# Re-export so routers can import TaskPriority from this module.
+__all__ = ["TaskCreate", "TaskUpdate", "TaskRead", "TaskType", "TaskStatus", "TaskPriority"]
+
 # Mirrors the CHECK constraint
 # ``task_type IN ('backend', 'frontend', 'migration', 'test', 'docs')``
 # on the ``tasks`` table.
@@ -33,6 +36,11 @@ TaskType = Literal["backend", "frontend", "migration", "test", "docs"]
 # ``status IN ('todo', 'in_progress', 'done', 'failed')``
 # on the ``tasks`` table.
 TaskStatus = Literal["todo", "in_progress", "done", "failed"]
+
+# Mirrors the CHECK constraint
+# ``priority IN ('normal', 'high', 'urgent')``
+# on the ``tasks`` table.
+TaskPriority = Literal["normal", "high", "urgent"]
 
 
 class TaskCreate(BaseModel):
@@ -88,6 +96,10 @@ class TaskCreate(BaseModel):
             "(e.g. 'model', 'schema', 'service', 'router', 'frontend')."
         ),
     )
+    priority: TaskPriority = Field(
+        default="normal",
+        description="Task priority: normal | high | urgent.",
+    )
 
 
 class TaskUpdate(BaseModel):
@@ -135,6 +147,10 @@ class TaskUpdate(BaseModel):
         max_length=30,
         description="Updated checklist type.",
     )
+    priority: Optional[TaskPriority] = Field(
+        default=None,
+        description="Updated task priority: normal | high | urgent.",
+    )
 
 
 class TaskRead(BaseModel):
@@ -157,5 +173,6 @@ class TaskRead(BaseModel):
     estimated_minutes: Optional[int] = None
     actual_minutes: Optional[int] = None
     checklist_type: Optional[str] = Field(default=None, max_length=30)
+    priority: TaskPriority = "normal"
     created_at: datetime
     updated_at: datetime

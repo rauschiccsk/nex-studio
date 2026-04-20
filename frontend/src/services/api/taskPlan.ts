@@ -1,16 +1,26 @@
 /**
- * API client for Task Plan generation.
+ * API client for the Task Plan pipeline.
  *
- * Maps to the backend route:
- *   - ``POST /versions/{version_id}/generate-task-plan`` → generateTaskPlan (SSE)
+ * Covers:
+ *   - GET  /versions/{id}/task-plan        → fetchTaskPlan
+ *   - POST /versions/{id}/generate-task-plan (SSE) → generateTaskPlan
+ *   - POST /versions/{id}/append-epic       (SSE) → appendEpic
+ *   - POST /versions/{id}/reset-tasks       → resetTasks
+ *   - POST /versions/{id}/reset-plan        → resetPlan
+ *   - POST /tasks                           → createTask
+ *   - PATCH /tasks/{id}                     → patchTask
+ *   - DELETE /tasks/{id}                    → deleteTask
+ *   - POST /feats                           → createFeat
+ *   - DELETE /feats/{id}                    → deleteFeat
+ *   - DELETE /epics/{id}                    → deleteEpic
  */
 
 import { TOKEN_STORAGE_KEY } from "../api";
-import type { TaskPlanEvent } from "../../types/taskPlan";
-
-type TaskPlanDoneEvent = Extract<TaskPlanEvent, { type: "done" }>;
+import type { TaskPlanEpic, TaskPlanEvent, TaskPriority, TaskStatus } from "../../types/taskPlan";
 
 const API_PREFIX = "/api/v1";
+
+type TaskPlanDoneEvent = Extract<TaskPlanEvent, { type: "done" }>;
 
 function resolveBaseUrl(): string {
   const fromEnv = import.meta.env.VITE_API_BASE_URL;
@@ -20,24 +30,37 @@ function resolveBaseUrl(): string {
   return "";
 }
 
-/**
- * Fetch the existing Task Plan for a version from the database.
- *
- * Returns null when no EPICs exist yet (plan not generated).
- */
-export async function fetchTaskPlan(versionId: string): Promise<TaskPlanDoneEvent | null> {
-  const baseUrl = resolveBaseUrl();
-  const url = `${baseUrl}${API_PREFIX}/versions/${versionId}/task-plan`;
+function authHeaders(): Record<string, string> {
   const token =
     typeof window !== "undefined" ? window.localStorage.getItem(TOKEN_STORAGE_KEY) : null;
+  const h: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) h.Authorization = `Bearer ${token}`;
+  return h;
+}
 
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (token) headers.Authorization = `Bearer ${token}`;
+const base = () => `${resolveBaseUrl()}${API_PREFIX}`;
 
+// ---------------------------------------------------------------------------
+// Fetch existing plan
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch the existing Task Plan for a version from the database.
+ * Returns null when no EPICs exist yet.
+ */
+export async function fetchTaskPlan(versionId: string): Promise<TaskPlanDoneEvent | null> {
   try {
-    const resp = await fetch(url, { headers, credentials: "same-origin" });
+    const resp = await fetch(`${base()}/versions/${versionId}/task-plan`, {
+      headers: authHeaders(),
+      credentials: "same-origin",
+    });
     if (!resp.ok) return null;
-    const data = (await resp.json()) as { plan: TaskPlanDoneEvent["plan"]; epic_count: number; feat_count: number; task_count: number };
+    const data = (await resp.json()) as {
+      plan: TaskPlanEpic[];
+      epic_count: number;
+      feat_count: number;
+      task_count: number;
+    };
     if (!data.plan || data.plan.length === 0) return null;
     return { type: "done", plan: data.plan, epic_count: data.epic_count, feat_count: data.feat_count, task_count: data.task_count };
   } catch {
@@ -45,55 +68,9 @@ export async function fetchTaskPlan(versionId: string): Promise<TaskPlanDoneEven
   }
 }
 
-/**
- * Stream-generate a Task Plan for the given version from the project's DESIGN.md.
- *
- * Returns an {@link AbortController} so the caller can cancel the stream.
- *
- * @param versionId  UUID of the target version.
- * @param replaceExisting  When true, existing EPICs under this version are
- *   deleted before generating the new plan.
- * @param onProgress  Called for each ``progress`` event.
- * @param onDone  Called once with the final plan summary on ``done``.
- * @param onError  Called on ``error`` or network failure.
- * @param onValidationError  Called on ``validation_error`` (e.g. missing DESIGN.md).
- */
-export function generateTaskPlan(
-  versionId: string,
-  replaceExisting: boolean,
-  onProgress: (message: string, percent: number) => void,
-  onDone: (event: Extract<TaskPlanEvent, { type: "done" }>) => void,
-  onError?: (error: Error) => void,
-  onValidationError?: (reason: string) => void,
-): AbortController {
-  const controller = new AbortController();
-  const baseUrl = resolveBaseUrl();
-  const url = `${baseUrl}${API_PREFIX}/versions/${versionId}/generate-task-plan`;
-
-  const token =
-    typeof window !== "undefined"
-      ? window.localStorage.getItem(TOKEN_STORAGE_KEY)
-      : null;
-
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    Accept: "text/event-stream",
-  };
-  if (token) headers.Authorization = `Bearer ${token}`;
-
-  _consumeStream(
-    url,
-    headers,
-    { replace_existing: replaceExisting },
-    controller.signal,
-    onProgress,
-    onDone,
-    onError,
-    onValidationError,
-  );
-
-  return controller;
-}
+// ---------------------------------------------------------------------------
+// SSE streaming helpers
+// ---------------------------------------------------------------------------
 
 async function _consumeStream(
   url: string,
@@ -101,7 +78,7 @@ async function _consumeStream(
   body: object,
   signal: AbortSignal,
   onProgress: (message: string, percent: number) => void,
-  onDone: (event: Extract<TaskPlanEvent, { type: "done" }>) => void,
+  onDone: (event: TaskPlanDoneEvent) => void,
   onError?: (error: Error) => void,
   onValidationError?: (reason: string) => void,
 ): Promise<void> {
@@ -116,7 +93,7 @@ async function _consumeStream(
 
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(`Task plan generation failed (${response.status}): ${text}`);
+      throw new Error(`Request failed (${response.status}): ${text}`);
     }
 
     const reader = response.body?.getReader();
@@ -160,7 +137,6 @@ async function _consumeStream(
       }
     }
 
-    // Flush remaining buffer
     if (buffer.trim().startsWith("data: ")) {
       try {
         const event = JSON.parse(buffer.trim().slice(6)) as TaskPlanEvent;
@@ -168,11 +144,167 @@ async function _consumeStream(
         else if (event.type === "error") onError?.(new Error(event.content));
         else if (event.type === "validation_error") onValidationError?.(event.content);
       } catch {
-        // ignore malformed trailing data
+        /* ignore malformed trailing data */
       }
     }
   } catch (err: unknown) {
     if (err instanceof DOMException && err.name === "AbortError") return;
     onError?.(err instanceof Error ? err : new Error(String(err)));
   }
+}
+
+/**
+ * Stream-generate a Task Plan for the given version from the project's DESIGN.md.
+ * Returns an AbortController so the caller can cancel the stream.
+ */
+export function generateTaskPlan(
+  versionId: string,
+  replaceExisting: boolean,
+  onProgress: (message: string, percent: number) => void,
+  onDone: (event: TaskPlanDoneEvent) => void,
+  onError?: (error: Error) => void,
+  onValidationError?: (reason: string) => void,
+): AbortController {
+  const controller = new AbortController();
+  const headers = { ...authHeaders(), Accept: "text/event-stream" };
+  _consumeStream(
+    `${base()}/versions/${versionId}/generate-task-plan`,
+    headers,
+    { replace_existing: replaceExisting },
+    controller.signal,
+    onProgress,
+    onDone,
+    onError,
+    onValidationError,
+  );
+  return controller;
+}
+
+/**
+ * Stream-append a new EPIC to the existing task plan (non-destructive).
+ * Returns an AbortController so the caller can cancel the stream.
+ */
+export function appendEpic(
+  versionId: string,
+  onProgress: (message: string, percent: number) => void,
+  onDone: (event: TaskPlanDoneEvent) => void,
+  onError?: (error: Error) => void,
+  onValidationError?: (reason: string) => void,
+): AbortController {
+  const controller = new AbortController();
+  const headers = { ...authHeaders(), Accept: "text/event-stream" };
+  _consumeStream(
+    `${base()}/versions/${versionId}/append-epic`,
+    headers,
+    {},
+    controller.signal,
+    onProgress,
+    onDone,
+    onError,
+    onValidationError,
+  );
+  return controller;
+}
+
+// ---------------------------------------------------------------------------
+// Plan-level actions
+// ---------------------------------------------------------------------------
+
+export async function resetTasks(versionId: string): Promise<void> {
+  const resp = await fetch(`${base()}/versions/${versionId}/reset-tasks`, {
+    method: "POST",
+    headers: authHeaders(),
+    credentials: "same-origin",
+  });
+  if (!resp.ok) throw new Error(`Reset tasks failed (${resp.status})`);
+}
+
+export async function resetPlan(versionId: string): Promise<void> {
+  const resp = await fetch(`${base()}/versions/${versionId}/reset-plan`, {
+    method: "POST",
+    headers: authHeaders(),
+    credentials: "same-origin",
+  });
+  if (!resp.ok) throw new Error(`Reset plan failed (${resp.status})`);
+}
+
+// ---------------------------------------------------------------------------
+// Task CRUD
+// ---------------------------------------------------------------------------
+
+export interface TaskCreatePayload {
+  feat_id: string;
+  title: string;
+  task_type: "backend" | "frontend" | "migration" | "test" | "docs";
+  priority?: TaskPriority;
+}
+
+export async function createTask(payload: TaskCreatePayload): Promise<{ id: string; number: number }> {
+  const resp = await fetch(`${base()}/tasks`, {
+    method: "POST",
+    headers: authHeaders(),
+    credentials: "same-origin",
+    body: JSON.stringify(payload),
+  });
+  if (!resp.ok) throw new Error(`Create task failed (${resp.status})`);
+  return (await resp.json()) as { id: string; number: number };
+}
+
+export async function patchTask(
+  taskId: string,
+  updates: { status?: TaskStatus; priority?: TaskPriority; title?: string },
+): Promise<void> {
+  const resp = await fetch(`${base()}/tasks/${taskId}`, {
+    method: "PATCH",
+    headers: authHeaders(),
+    credentials: "same-origin",
+    body: JSON.stringify(updates),
+  });
+  if (!resp.ok) throw new Error(`Patch task failed (${resp.status})`);
+}
+
+export async function deleteTask(taskId: string): Promise<void> {
+  const resp = await fetch(`${base()}/tasks/${taskId}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+    credentials: "same-origin",
+  });
+  if (!resp.ok) throw new Error(`Delete task failed (${resp.status})`);
+}
+
+// ---------------------------------------------------------------------------
+// Feat CRUD
+// ---------------------------------------------------------------------------
+
+export async function createFeat(epicId: string, title: string): Promise<{ id: string; number: number }> {
+  const resp = await fetch(`${base()}/feats`, {
+    method: "POST",
+    headers: authHeaders(),
+    credentials: "same-origin",
+    body: JSON.stringify({ epic_id: epicId, title }),
+  });
+  if (!resp.ok) throw new Error(`Create feat failed (${resp.status})`);
+  return (await resp.json()) as { id: string; number: number };
+}
+
+export async function deleteFeat(featId: string): Promise<void> {
+  const resp = await fetch(`${base()}/feats/${featId}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+    credentials: "same-origin",
+  });
+  if (!resp.ok) throw new Error(`Delete feat failed (${resp.status})`);
+}
+
+// ---------------------------------------------------------------------------
+// Epic CRUD
+// ---------------------------------------------------------------------------
+
+export async function deleteEpic(epicId: string): Promise<void> {
+  const resp = await fetch(`${base()}/epics/${epicId}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+    credentials: "same-origin",
+  });
+  if (!resp.ok) throw new Error(`Delete epic failed (${resp.status})`);
 }

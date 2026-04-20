@@ -69,7 +69,7 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from backend.db.models.tasks import Task
+from backend.db.models.tasks import Epic, Feat, Task
 from backend.schemas.task import (
     TaskCreate,
     TaskStatus,
@@ -240,6 +240,7 @@ def create(db: Session, data: TaskCreate) -> Task:
         description=data.description,
         task_type=data.task_type,
         status=data.status,
+        priority=data.priority,
         estimated_minutes=data.estimated_minutes,
         actual_minutes=data.actual_minutes,
         checklist_type=data.checklist_type,
@@ -281,6 +282,7 @@ def update(db: Session, task_id: UUID, data: TaskUpdate) -> Task:
         "description",
         "task_type",
         "status",
+        "priority",
         "estimated_minutes",
         "actual_minutes",
         "checklist_type",
@@ -291,7 +293,76 @@ def update(db: Session, task_id: UUID, data: TaskUpdate) -> Task:
             setattr(task, field, value)
 
     db.flush()
+
+    # Propagate status change upward through the hierarchy.
+    if "status" in update_data:
+        recompute_feat_status(db, task.feat_id)
+
     return task
+
+
+def recompute_feat_status(db: Session, feat_id: UUID) -> None:
+    """Recompute and persist ``Feat.status`` from its tasks.
+
+    Rules (mirrors NEX Command FeatExecutor logic):
+    - All tasks done → ``done``
+    - Any task ``failed`` (and none ``in_progress``) → ``failed``
+    - Any task ``in_progress`` → ``in_progress``
+    - Otherwise → ``todo``
+
+    Also propagates to the parent Epic via :func:`recompute_epic_status`.
+    """
+    feat = db.get(Feat, feat_id)
+    if feat is None:
+        return
+
+    tasks = list(db.execute(select(Task).where(Task.feat_id == feat_id)).scalars().all())
+    if not tasks:
+        return
+
+    statuses = {t.status for t in tasks}
+    if statuses == {"done"}:
+        new_status = "done"
+    elif "in_progress" in statuses:
+        new_status = "in_progress"
+    elif "failed" in statuses:
+        new_status = "failed"
+    else:
+        new_status = "todo"
+
+    if feat.status != new_status:
+        feat.status = new_status
+        db.flush()
+        recompute_epic_status(db, feat.epic_id)
+
+
+def recompute_epic_status(db: Session, epic_id: UUID) -> None:
+    """Recompute and persist ``Epic.status`` from its feats.
+
+    Rules:
+    - All feats done → ``done``
+    - Any feat ``in_progress`` or ``failed`` → ``in_progress``
+    - Otherwise → ``planned``
+    """
+    epic = db.get(Epic, epic_id)
+    if epic is None:
+        return
+
+    feats = list(db.execute(select(Feat).where(Feat.epic_id == epic_id)).scalars().all())
+    if not feats:
+        return
+
+    statuses = {f.status for f in feats}
+    if statuses == {"done"}:
+        new_status = "done"
+    elif "in_progress" in statuses or "failed" in statuses:
+        new_status = "in_progress"
+    else:
+        new_status = "planned"
+
+    if epic.status != new_status:
+        epic.status = new_status
+        db.flush()
 
 
 def delete(db: Session, task_id: UUID) -> None:

@@ -102,6 +102,7 @@ class Task(Base, UUIDMixin, TimestampMixin):
     description = Column(Text, nullable=False, server_default="")
     task_type = Column(String(20), nullable=False)
     status = Column(String(20), nullable=False, server_default="todo", index=True)
+    priority = Column(String(10), nullable=False, server_default="normal")
     estimated_minutes = Column(Integer, nullable=True)
     actual_minutes = Column(Integer, nullable=True)
     checklist_type = Column(String(30), nullable=True)
@@ -115,5 +116,9 @@ class Task(Base, UUIDMixin, TimestampMixin):
         CheckConstraint(
             "status IN ('todo', 'in_progress', 'done', 'failed')",
             name="ck_tasks_status",
+        ),
+        CheckConstraint(
+            "priority IN ('normal', 'high', 'urgent')",
+            name="ck_tasks_priority",
         ),
     )

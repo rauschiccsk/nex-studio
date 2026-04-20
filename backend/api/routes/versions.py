@@ -302,10 +302,14 @@ def get_task_plan(
     for t in tasks_all:
         tasks_by_feat.setdefault(str(t.feat_id), []).append(
             {
+                "id": str(t.id),
                 "number": t.number,
                 "title": t.title,
                 "task_type": t.task_type,
                 "status": t.status,
+                "priority": t.priority,
+                "checklist_type": t.checklist_type,
+                "description": t.description,
             }
         )
 
@@ -337,6 +341,107 @@ def get_task_plan(
         epic_count=len(epics),
         feat_count=len(feats),
         task_count=len(tasks_all),
+    )
+
+
+@router.post("/versions/{version_id}/reset-tasks", status_code=status.HTTP_200_OK)
+def reset_tasks(
+    version_id: UUID,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_ri_role),
+) -> dict:
+    """Reset all tasks in a version back to ``todo`` status.
+
+    Sets every Task under every Epic of this version to ``todo``, and
+    recomputes Feat / Epic statuses accordingly. Does not delete any records.
+    ``ri`` role only.
+    """
+    epics = db.execute(select(Epic).where(Epic.version_id == version_id)).scalars().all()
+    epic_ids = [e.id for e in epics]
+    if not epic_ids:
+        return {"reset": 0}
+
+    feats = db.execute(select(Feat).where(Feat.epic_id.in_(epic_ids))).scalars().all()
+    feat_ids = [f.id for f in feats]
+
+    task_count = 0
+    if feat_ids:
+        tasks = db.execute(select(Task).where(Task.feat_id.in_(feat_ids))).scalars().all()
+        for t in tasks:
+            t.status = "todo"
+            task_count += 1
+        db.flush()
+
+    for f in feats:
+        f.status = "todo"
+    for e in epics:
+        e.status = "planned"
+    db.commit()
+
+    return {"reset": task_count}
+
+
+@router.post("/versions/{version_id}/reset-plan", status_code=status.HTTP_200_OK)
+def reset_plan(
+    version_id: UUID,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_ri_role),
+) -> dict:
+    """Delete the entire task plan for a version (all EPICs, Feats and Tasks).
+
+    Hard-deletes every Epic under this version. Feats and Tasks are removed
+    via ``ON DELETE CASCADE`` at the DB level. ``ri`` role only.
+    """
+    epics = db.execute(select(Epic).where(Epic.version_id == version_id)).scalars().all()
+    count = len(epics)
+    for e in epics:
+        db.delete(e)
+    db.commit()
+    return {"deleted_epics": count}
+
+
+@router.post("/versions/{version_id}/append-epic", status_code=status.HTTP_200_OK)
+async def append_epic(
+    version_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_ri_role),
+):
+    """Stream-generate a new EPIC appended to the existing task plan.
+
+    Uses the same DESIGN.md + Claude pipeline as ``generate-task-plan`` but
+    never deletes existing EPICs — computes the next epic number offset and
+    appends the new EPIC(s) / Feats / Tasks after the last existing one.
+    ``ri`` role only.
+    """
+    try:
+        version = version_service.get_by_id(db, version_id)
+    except ValueError as exc:
+        raise _map_value_error(exc) from exc
+
+    project_id = version.project_id
+
+    async def _sse_generator():
+        gen_db = SessionLocal()
+        try:
+            async for event in task_plan_generator.generate_task_plan_stream(
+                version_id=version_id,
+                project_id=project_id,
+                db=gen_db,
+                replace_existing=False,
+            ):
+                yield event
+        except Exception as exc:
+            import json as _json
+
+            logger.exception("Unexpected error in append-epic SSE for version %s", version_id)
+            yield f"data: {_json.dumps({'type': 'error', 'content': str(exc)})}\n\n"
+        finally:
+            gen_db.close()
+
+    return StreamingResponse(
+        _sse_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
