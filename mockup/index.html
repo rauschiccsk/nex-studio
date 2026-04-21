@@ -54,6 +54,8 @@
     #screen-login.active         { display: flex !important; position: fixed; inset: 0; z-index: 100; background: #0f172a; }
     @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
     #screen-kb.active          { display: flex !important; flex-direction: column; }
+    #screen-summary.active      { display: flex !important; flex-direction: column; }
+    #screen-architecture.active { display: flex !important; flex-direction: column; }
     .bug-row { cursor: pointer; transition: background 0.1s; border-left: 2px solid transparent; }
     .bug-row:hover { background: rgba(255,255,255,0.03); }
     .bug-row.active { background: rgba(99,102,241,0.1); border-left-color: #6366f1; }
@@ -149,6 +151,10 @@
       <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2"/></svg>
       <span class="sb-text">Versions</span>
     </a>
+    <a class="nav-item flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-gray-400 cursor-pointer" onclick="showScreen('version')">
+      <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/></svg>
+      <span class="sb-text">Workflow</span>
+    </a>
     <a class="nav-item flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-gray-400 cursor-pointer" onclick="showScreen('spec')">
       <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
       <span class="sb-text">Specification</span>
@@ -157,9 +163,13 @@
       <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zM14 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"/></svg>
       <span class="sb-text">UI Design</span>
     </a>
-    <a class="nav-item flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-gray-400 cursor-pointer" onclick="showScreen('version')">
-      <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/></svg>
-      <span class="sb-text">Workflow</span>
+    <a class="nav-item flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-gray-400 cursor-pointer" onclick="showScreen('summary')">
+      <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+      <span class="sb-text">Summary</span>
+    </a>
+    <a class="nav-item flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-gray-400 cursor-pointer" onclick="showScreen('architecture')">
+      <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+      <span class="sb-text">Architecture</span>
     </a>
     <a class="nav-item flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-gray-400 cursor-pointer" onclick="showScreen('taskplan')">
       <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
@@ -622,101 +632,107 @@
         </div>
       </div>
 
-      <!-- STEP 2: BEHAVIOR.md — DONE -->
-      <div class="rounded-xl border border-green-500/20 bg-slate-900 p-4 flex items-center gap-4">
-        <div class="w-10 h-10 rounded-full bg-green-500 flex items-center justify-center text-base font-bold text-white shrink-0">✓</div>
-        <div class="flex-1 min-w-0">
-          <div class="flex items-center gap-2 mb-0.5">
-            <span class="text-xs text-green-500 font-semibold uppercase tracking-wider">Krok 2</span>
-          </div>
-          <div class="text-sm font-semibold text-gray-100">BEHAVIOR.md</div>
-          <div class="text-xs text-gray-500 mt-0.5 truncate">4 scenáre, 3 edge cases · Upomienky po 3 a 14 dňoch</div>
+      <!-- STEP 2: Paralelná fáza — Vývojová dok. DONE + UI Design IN PROGRESS -->
+      <div id="version-step-2" class="rounded-xl border border-primary-500/40 bg-slate-900 p-4">
+        <div class="flex items-center gap-2 mb-3">
+          <div class="w-8 h-8 rounded-full bg-primary-600 ring-2 ring-primary-500/25 flex items-center justify-center text-xs font-bold text-white shrink-0">2</div>
+          <span class="text-xs text-primary-400 font-semibold uppercase tracking-wider">Krok 2 · Paralelná fáza · Aktívny</span>
         </div>
-        <div class="flex items-center gap-2 shrink-0">
-          <span class="text-[10px] bg-green-500/10 border border-green-500/25 text-green-400 px-2 py-0.5 rounded-full">Schválené</span>
-          <button onclick="showScreen('spec')" class="text-xs text-gray-500 hover:text-gray-300 transition-colors">Zobraziť →</button>
+        <div class="grid grid-cols-2 gap-3">
+          <!-- 2A: Vývojová dokumentácia — DONE -->
+          <div class="rounded-lg border border-green-500/20 bg-slate-950/60 p-3 flex items-start gap-3">
+            <div class="w-7 h-7 rounded-full bg-green-500 flex items-center justify-center text-xs font-bold text-white shrink-0 mt-0.5">✓</div>
+            <div class="flex-1 min-w-0">
+              <div class="text-[10px] text-green-500 font-semibold uppercase tracking-wider mb-0.5">2A</div>
+              <div class="text-xs font-semibold text-gray-200">Vývojová dokumentácia</div>
+              <div class="text-[10px] text-gray-500 mt-0.5 leading-relaxed">FR-001 až FR-007 · FastAPI + React + PostgreSQL</div>
+              <div class="flex items-center gap-2 mt-2">
+                <span class="text-[10px] bg-green-500/10 border border-green-500/25 text-green-400 px-2 py-0.5 rounded-full">Schválené</span>
+                <button onclick="showScreen('spec')" class="text-[10px] text-gray-500 hover:text-gray-300 transition-colors">Zobraziť →</button>
+              </div>
+            </div>
+          </div>
+          <!-- 2B: UI Design — IN PROGRESS -->
+          <div id="version-step-2b" class="rounded-lg border border-primary-500/40 bg-primary-600/5 p-3 flex items-start gap-3">
+            <div id="version-step-2b-circle" class="w-7 h-7 rounded-full bg-primary-600 ring-2 ring-primary-500/20 flex items-center justify-center text-xs font-bold text-white shrink-0 mt-0.5">2B</div>
+            <div class="flex-1 min-w-0">
+              <div class="text-[10px] text-primary-400 font-semibold uppercase tracking-wider mb-0.5">2B</div>
+              <div class="text-xs font-semibold text-gray-200">UI Design</div>
+              <div class="text-[10px] text-gray-500 mt-0.5 leading-relaxed">Mockup schvaľovaný so zákazníkom — 2. iterácia</div>
+              <div id="version-step-2b-actions" class="flex items-center gap-2 mt-2">
+                <span class="text-[10px] bg-yellow-500/15 border border-yellow-500/30 text-yellow-400 px-2 py-0.5 rounded-full">In Progress</span>
+                <button onclick="showScreen('uidesign')" class="text-[10px] text-primary-400 hover:text-primary-300 transition-colors font-medium">Pokračovať →</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- Gate indicator -->
+        <div class="flex items-center gap-2 mt-3 pt-3 border-t border-slate-800 text-[10px]">
+          <span class="text-gray-600">Gate:</span>
+          <span class="text-green-400">Dev Docs ✓</span>
+          <span class="text-gray-600">·</span>
+          <span id="version-gate-uidesign" class="text-yellow-400">UI Design ⏳</span>
+          <span class="text-gray-600 ml-1">— Krok 3 sa odomkne po schválení oboch</span>
         </div>
       </div>
 
-      <!-- STEP 3: Vývojová dokumentácia — DONE -->
-      <div class="rounded-xl border border-green-500/20 bg-slate-900 p-4 flex items-center gap-4">
-        <div class="w-10 h-10 rounded-full bg-green-500 flex items-center justify-center text-base font-bold text-white shrink-0">✓</div>
+      <!-- STEP 3: Súhrnná dokumentácia — GATE LOCKED -->
+      <div id="version-step-3" class="rounded-xl border border-slate-800 bg-slate-900 p-4 flex items-center gap-4 opacity-50 transition-all duration-300">
+        <div class="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center text-sm font-bold text-gray-500 shrink-0">3</div>
         <div class="flex-1 min-w-0">
           <div class="flex items-center gap-2 mb-0.5">
-            <span class="text-xs text-green-500 font-semibold uppercase tracking-wider">Krok 3</span>
+            <span class="text-xs text-gray-600 font-semibold uppercase tracking-wider">Krok 3</span>
           </div>
-          <div class="text-sm font-semibold text-gray-100">Vývojová dokumentácia</div>
-          <div class="text-xs text-gray-500 mt-0.5 truncate">FR-001 až FR-007 · Python FastAPI + React + PostgreSQL</div>
+          <div class="text-sm font-semibold text-gray-400">Súhrnná dokumentácia</div>
+          <div class="text-xs text-gray-500 mt-0.5">Prehľad zmien pre projektového manažéra — AI generuje z Dev Docs + UI Design</div>
         </div>
-        <div class="flex items-center gap-2 shrink-0">
-          <span class="text-[10px] bg-green-500/10 border border-green-500/25 text-green-400 px-2 py-0.5 rounded-full">Schválené</span>
-          <button onclick="showScreen('spec')" class="text-xs text-gray-500 hover:text-gray-300 transition-colors">Zobraziť →</button>
+        <div id="version-step-3-actions" class="shrink-0">
+          <span class="text-[10px] bg-slate-800 text-gray-600 px-2 py-0.5 rounded-full border border-slate-700">🔒 Čaká na UI Design</span>
         </div>
       </div>
 
-      <!-- STEP 4: UI Design — ACTIVE -->
-      <div id="version-step-4" class="rounded-xl border border-primary-500/40 bg-primary-600/5 p-4 flex items-center gap-4">
-        <div id="version-step-4-circle" class="w-10 h-10 rounded-full bg-primary-600 ring-4 ring-primary-500/20 flex items-center justify-center text-sm font-bold text-white shrink-0">4</div>
+      <!-- STEP 4: Architecture — PENDING -->
+      <div class="rounded-xl border border-slate-800 bg-slate-900 p-4 flex items-center gap-4 opacity-40">
+        <div class="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center text-sm font-bold text-gray-500 shrink-0">4</div>
         <div class="flex-1 min-w-0">
           <div class="flex items-center gap-2 mb-0.5">
-            <span id="version-step-4-label" class="text-xs text-primary-400 font-semibold uppercase tracking-wider">Krok 4 · Aktívny</span>
+            <span class="text-xs text-gray-600 font-semibold uppercase tracking-wider">Krok 4</span>
           </div>
-          <div class="text-sm font-semibold text-gray-100">UI Design</div>
-          <div class="text-xs text-gray-500 mt-0.5">Mockup schvaľovaný so zákazníkom — 2. iterácia</div>
+          <div class="text-sm font-semibold text-gray-400">Architecture</div>
+          <div class="text-xs text-gray-500 mt-0.5">BEHAVIOR.md + DESIGN.md — business rules, DB schéma, API endpoints</div>
         </div>
-        <div id="version-step-4-actions" class="flex items-center gap-2 shrink-0">
-          <span class="text-[10px] bg-yellow-500/15 border border-yellow-500/30 text-yellow-400 px-2 py-0.5 rounded-full">In Progress</span>
-          <button onclick="showScreen('uidesign')" class="flex items-center gap-1.5 bg-primary-600 hover:bg-primary-500 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors">
-            Pokračovať →
-          </button>
+        <div class="shrink-0">
+          <span class="text-[10px] bg-slate-800 text-gray-600 px-2 py-0.5 rounded-full border border-slate-700">Čaká na Súhrn</span>
         </div>
       </div>
 
-      <!-- STEP 5: DESIGN.md — PENDING -->
-      <div id="version-step-5" class="rounded-xl border border-slate-800 bg-slate-900 p-4 flex items-center gap-4 cursor-pointer card-hover" onclick="designOpen()">
-        <div id="version-step-5-circle" class="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center text-sm font-bold text-gray-500 shrink-0">5</div>
+      <!-- STEP 5: Task Plan — PENDING -->
+      <div class="rounded-xl border border-slate-800 bg-slate-900 p-4 flex items-center gap-4 opacity-40 cursor-pointer card-hover" onclick="taskplanOpen()">
+        <div class="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center text-sm font-bold text-gray-500 shrink-0">5</div>
         <div class="flex-1 min-w-0">
           <div class="flex items-center gap-2 mb-0.5">
-            <span id="version-step-5-label" class="text-xs text-gray-600 font-semibold uppercase tracking-wider">Krok 5</span>
+            <span class="text-xs text-gray-600 font-semibold uppercase tracking-wider">Krok 5</span>
           </div>
-          <div class="text-sm font-semibold text-gray-300">DESIGN.md</div>
-          <div class="text-xs text-gray-500 mt-0.5">Technická architektúra, DB schéma, API endpoints — generuje AI</div>
-        </div>
-        <div id="version-step-5-actions" class="shrink-0 flex items-center gap-2">
-          <span class="text-[10px] bg-slate-800 text-gray-600 px-2 py-0.5 rounded-full border border-slate-700">Čaká na UI Design</span>
-          <span class="text-[10px] text-gray-500">→ Otvoriť</span>
-        </div>
-      </div>
-
-      <!-- STEP 6: Task Plan — PENDING -->
-      <div id="version-step-6" class="rounded-xl border border-slate-800 bg-slate-900 p-4 flex items-center gap-4 cursor-pointer card-hover" onclick="taskplanOpen()">
-        <div id="version-step-6-circle" class="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center text-sm font-bold text-gray-500 shrink-0">6</div>
-        <div class="flex-1 min-w-0">
-          <div class="flex items-center gap-2 mb-0.5">
-            <span id="version-step-6-label" class="text-xs text-gray-600 font-semibold uppercase tracking-wider">Krok 6</span>
-          </div>
-          <div class="text-sm font-semibold text-gray-300">Task Plan</div>
+          <div class="text-sm font-semibold text-gray-400">Task Plan</div>
           <div class="text-xs text-gray-500 mt-0.5">Epic → Feat → Task breakdown, CC delegácia pripravená</div>
         </div>
-        <div id="version-step-6-actions" class="shrink-0 flex items-center gap-2">
-          <span class="text-[10px] bg-slate-800 text-gray-600 px-2 py-0.5 rounded-full border border-slate-700">Čaká na DESIGN.md</span>
-          <span class="text-[10px] text-gray-500">→ Otvoriť</span>
+        <div class="shrink-0 flex items-center gap-2">
+          <span class="text-[10px] bg-slate-800 text-gray-600 px-2 py-0.5 rounded-full border border-slate-700">Čaká na Architecture</span>
         </div>
       </div>
 
-      <!-- STEP 7: Implementácia — PENDING -->
-      <div id="version-step-7" class="rounded-xl border border-slate-800 bg-slate-900 p-4 flex items-center gap-4 cursor-pointer card-hover" onclick="implementaciaOpen()">
-        <div id="version-step-7-circle" class="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center text-sm font-bold text-gray-500 shrink-0">7</div>
+      <!-- STEP 6: Implementácia — PENDING -->
+      <div class="rounded-xl border border-slate-800 bg-slate-900 p-4 flex items-center gap-4 opacity-40 cursor-pointer card-hover" onclick="implementaciaOpen()">
+        <div class="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center text-sm font-bold text-gray-500 shrink-0">6</div>
         <div class="flex-1 min-w-0">
           <div class="flex items-center gap-2 mb-0.5">
-            <span id="version-step-7-label" class="text-xs text-gray-600 font-semibold uppercase tracking-wider">Krok 7</span>
+            <span class="text-xs text-gray-600 font-semibold uppercase tracking-wider">Krok 6</span>
           </div>
-          <div class="text-sm font-semibold text-gray-300">Implementácia</div>
+          <div class="text-sm font-semibold text-gray-400">Implementácia</div>
           <div class="text-xs text-gray-500 mt-0.5">CC agent píše kód, testy, commity — automatizované</div>
         </div>
-        <div id="version-step-7-extra" class="shrink-0 flex items-center gap-2">
+        <div class="shrink-0 flex items-center gap-2">
           <span class="text-[10px] bg-slate-800 text-gray-600 px-2 py-0.5 rounded-full border border-slate-700">Čaká na Task Plan</span>
-          <button onclick="implementaciaOpen()" class="text-xs text-gray-500 hover:text-gray-300 transition-colors">Zobraziť →</button>
         </div>
       </div>
 
@@ -1940,6 +1956,449 @@ Potrebujem účtovný systém pre malú firmu (do 20 zamestnancov). Systém mus�
 
   </div>
 </div><!-- /screen-uidesign -->
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SCREEN: SUMMARY DOCUMENTATION
+════════════════════════════════════════════════════════════════════ -->
+<div id="screen-summary" class="screen flex flex-col h-full">
+
+  <!-- Topbar -->
+  <div class="flex-shrink-0 bg-slate-900/50 border-b border-slate-800 px-5 py-2.5 flex items-center gap-3">
+    <div class="flex items-center gap-2 text-xs">
+      <span class="ctx-project text-gray-400 font-medium">NEX Ledger</span>
+      <span class="text-gray-600">·</span>
+      <span class="ctx-version bg-slate-800 text-gray-300 font-mono px-2 py-0.5 rounded">v0.1</span>
+    </div>
+    <!-- Gate sync indicator -->
+    <div class="flex items-center gap-1.5 ml-2 px-2.5 py-1 rounded-full bg-slate-800/60 border border-slate-700">
+      <span class="text-[10px] text-green-400 font-medium">Dev Docs ✓</span>
+      <span class="text-gray-600 text-[10px]">|</span>
+      <span id="sum-gate-uidesign" class="text-[10px] text-yellow-400 font-medium">UI Design ⏳</span>
+    </div>
+    <div class="flex-1"></div>
+    <div class="flex items-center gap-1.5 text-xs text-gray-600">
+      <span>Krok</span><span class="text-primary-400 font-semibold">3</span><span>/ 7 · Súhrnná dokumentácia</span>
+    </div>
+  </div>
+
+  <!-- STATE: GATE NOT MET -->
+  <div id="sum-state-gate" class="flex-1 flex flex-col items-center justify-center gap-5 p-8">
+    <div class="w-16 h-16 rounded-2xl bg-slate-800 border border-slate-700 flex items-center justify-center">
+      <svg class="w-8 h-8 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+      </svg>
+    </div>
+    <div class="text-center">
+      <div class="text-sm font-semibold text-gray-300 mb-1">Čaká na schválenie oboch vetiev</div>
+      <div class="text-xs text-gray-500 max-w-xs leading-relaxed">Súhrnná dokumentácia sa odomkne po schválení Vývojovej dokumentácie aj UI Design mockupu.</div>
+    </div>
+    <div class="flex items-center gap-4 text-xs">
+      <div class="flex items-center gap-2">
+        <span class="w-2 h-2 rounded-full bg-green-500"></span>
+        <span class="text-green-400">Vývojová dokumentácia — Schválená</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="w-2 h-2 rounded-full bg-yellow-500 animate-pulse"></span>
+        <span class="text-yellow-400">UI Design — In Progress</span>
+      </div>
+    </div>
+    <!-- Demo shortcut -->
+    <button onclick="sumShowGenerate()" class="mt-2 text-[10px] text-gray-600 hover:text-gray-400 border border-slate-700 hover:border-slate-600 px-3 py-1.5 rounded-lg transition-colors">Demo: Preskočiť gate →</button>
+  </div>
+
+  <!-- STATE: READY TO GENERATE -->
+  <div id="sum-state-empty" class="hidden flex-1 flex flex-col items-center justify-center gap-5 p-8">
+    <div class="w-16 h-16 rounded-2xl bg-slate-800 border border-slate-700 flex items-center justify-center">
+      <svg class="w-8 h-8 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+      </svg>
+    </div>
+    <div class="text-center">
+      <div class="text-sm font-semibold text-gray-300 mb-1">Súhrnná dokumentácia ešte neexistuje</div>
+      <div class="text-xs text-gray-500 max-w-xs leading-relaxed">AI vygeneruje štruktúrovaný prehľad zmien z Vývojovej dokumentácie a UI Design podkladov.</div>
+    </div>
+    <div class="flex items-center gap-2 text-[10px] text-gray-600 border border-slate-700 rounded-lg px-3 py-2">
+      <span class="text-green-400">Dev Docs ✓</span>
+      <span>·</span>
+      <span class="text-green-400">UI Design ✓</span>
+      <span class="ml-1">— Gate splnený</span>
+    </div>
+    <button onclick="sumGenerate()" class="flex items-center gap-2 bg-primary-600 hover:bg-primary-500 text-white text-sm font-medium px-5 py-2.5 rounded-xl transition-colors">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+      Generovať súhrnnú dokumentáciu
+    </button>
+  </div>
+
+  <!-- STATE: GENERATING -->
+  <div id="sum-state-generating" class="hidden flex-1 flex flex-col items-center justify-center gap-6 p-8">
+    <div class="w-16 h-16 rounded-2xl bg-primary-600/10 border border-primary-500/30 flex items-center justify-center">
+      <svg class="w-8 h-8 text-primary-400 animate-spin" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+      </svg>
+    </div>
+    <div class="text-center">
+      <div class="text-sm font-semibold text-gray-300 mb-1">Generujem súhrnnú dokumentáciu…</div>
+      <div id="sum-gen-status" class="text-xs text-gray-500">Analyzujem Vývojovú dokumentáciu…</div>
+    </div>
+    <div class="w-64 bg-slate-800 rounded-full h-1.5 overflow-hidden">
+      <div id="sum-gen-bar" class="bg-primary-500 h-full rounded-full transition-all duration-500" style="width:15%"></div>
+    </div>
+  </div>
+
+  <!-- STATE: DONE (generated, awaiting approval) -->
+  <div id="sum-state-done" class="hidden flex-1 flex flex-col overflow-hidden">
+    <!-- Action bar -->
+    <div class="flex-shrink-0 flex items-center gap-2 px-5 py-2.5 border-b border-slate-800 bg-slate-900/40">
+      <span class="text-[10px] bg-yellow-500/15 border border-yellow-500/30 text-yellow-400 px-2 py-0.5 rounded-full">Vygenerované · Čaká na schválenie</span>
+      <div class="flex-1"></div>
+      <button id="sum-btn-edit" onclick="sumToggleEdit()" class="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-200 border border-slate-700 hover:border-slate-600 px-2.5 py-1.5 rounded-lg transition-colors">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+        Upraviť
+      </button>
+      <button onclick="sumCopy()" class="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-200 border border-slate-700 hover:border-slate-600 px-2.5 py-1.5 rounded-lg transition-colors">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+        Kopírovať
+      </button>
+      <button onclick="sumApprove()" class="flex items-center gap-1.5 bg-green-600 hover:bg-green-500 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+        Schváliť
+      </button>
+    </div>
+
+    <!-- Document view -->
+    <div id="sum-view" class="flex-1 overflow-y-auto p-6">
+      <div class="max-w-3xl mx-auto space-y-4">
+
+        <!-- Header -->
+        <div class="mb-6">
+          <h1 class="text-lg font-bold text-gray-100">Súhrnná dokumentácia zmien</h1>
+          <div class="flex items-center gap-3 mt-1.5 text-xs text-gray-500">
+            <span class="ctx-project">NEX Ledger</span>
+            <span>·</span>
+            <span class="ctx-version">v0.1</span>
+            <span>·</span>
+            <span>Vygenerované AI · 21.4.2026</span>
+          </div>
+        </div>
+
+        <!-- Nová funkcionalita -->
+        <div class="rounded-xl border border-slate-800 bg-slate-900 overflow-hidden">
+          <div class="flex items-center gap-2 px-4 py-2.5 border-b border-slate-800 bg-slate-800/40">
+            <span class="w-2 h-2 rounded-full bg-green-500 shrink-0"></span>
+            <span class="text-xs font-semibold text-gray-200">Nová funkcionalita</span>
+            <span class="ml-auto text-[10px] bg-green-500/10 border border-green-500/25 text-green-400 px-2 py-0.5 rounded-full">3 položky</span>
+          </div>
+          <div class="p-4 space-y-3">
+            <div class="flex items-start gap-2.5">
+              <span class="w-1.5 h-1.5 rounded-full bg-green-500 mt-1.5 shrink-0"></span>
+              <div>
+                <div class="text-xs font-medium text-gray-300">Modul fakturácie</div>
+                <div class="text-[11px] text-gray-500 mt-0.5">Vystavovanie a evidencia vydaných faktúr, príjem a evidencia prijatých faktúr, opravné daňové doklady (dobropisy). Podpora PDF exportu a emailového odosielania.</div>
+              </div>
+            </div>
+            <div class="flex items-start gap-2.5">
+              <span class="w-1.5 h-1.5 rounded-full bg-green-500 mt-1.5 shrink-0"></span>
+              <div>
+                <div class="text-xs font-medium text-gray-300">Modul platieb</div>
+                <div class="text-[11px] text-gray-500 mt-0.5">Párovanie platieb s faktúrami, automatické upomienky (3. deň, 14. deň po splatnosti), integrácia Tatra Banka API pre import bankových výpisov.</div>
+              </div>
+            </div>
+            <div class="flex items-start gap-2.5">
+              <span class="w-1.5 h-1.5 rounded-full bg-green-500 mt-1.5 shrink-0"></span>
+              <div>
+                <div class="text-xs font-medium text-gray-300">Register klientov</div>
+                <div class="text-[11px] text-gray-500 mt-0.5">Základná evidencia odberateľov a dodávateľov, prepojenie s fakturáciou a platbami.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Zmenená funkcionalita -->
+        <div class="rounded-xl border border-slate-800 bg-slate-900 overflow-hidden">
+          <div class="flex items-center gap-2 px-4 py-2.5 border-b border-slate-800 bg-slate-800/40">
+            <span class="w-2 h-2 rounded-full bg-yellow-500 shrink-0"></span>
+            <span class="text-xs font-semibold text-gray-200">Zmenená funkcionalita</span>
+            <span class="ml-auto text-[10px] bg-slate-800 border border-slate-700 text-gray-500 px-2 py-0.5 rounded-full">0 položiek</span>
+          </div>
+          <div class="p-4">
+            <div class="text-[11px] text-gray-600 italic">Nová verzia — žiadne zmeny voči predchádzajúcej verzii.</div>
+          </div>
+        </div>
+
+        <!-- Zrušená funkcionalita -->
+        <div class="rounded-xl border border-slate-800 bg-slate-900 overflow-hidden">
+          <div class="flex items-center gap-2 px-4 py-2.5 border-b border-slate-800 bg-slate-800/40">
+            <span class="w-2 h-2 rounded-full bg-red-500 shrink-0"></span>
+            <span class="text-xs font-semibold text-gray-200">Zrušená funkcionalita</span>
+            <span class="ml-auto text-[10px] bg-slate-800 border border-slate-700 text-gray-500 px-2 py-0.5 rounded-full">0 položiek</span>
+          </div>
+          <div class="p-4">
+            <div class="text-[11px] text-gray-600 italic">Žiadna funkcionalita nie je zrušená v tejto verzii.</div>
+          </div>
+        </div>
+
+        <!-- DB tabuľky -->
+        <div class="rounded-xl border border-slate-800 bg-slate-900 overflow-hidden">
+          <div class="flex items-center gap-2 px-4 py-2.5 border-b border-slate-800 bg-slate-800/40">
+            <span class="w-2 h-2 rounded-full bg-blue-400 shrink-0"></span>
+            <span class="text-xs font-semibold text-gray-200">Databázové tabuľky</span>
+          </div>
+          <div class="p-4 space-y-3">
+            <div>
+              <div class="text-[10px] text-green-400 font-semibold uppercase tracking-wider mb-1.5">Nové tabuľky</div>
+              <div class="flex flex-wrap gap-1.5">
+                <span class="font-mono text-[11px] bg-slate-800 border border-slate-700 text-gray-300 px-2 py-0.5 rounded">invoices</span>
+                <span class="font-mono text-[11px] bg-slate-800 border border-slate-700 text-gray-300 px-2 py-0.5 rounded">invoice_items</span>
+                <span class="font-mono text-[11px] bg-slate-800 border border-slate-700 text-gray-300 px-2 py-0.5 rounded">payments</span>
+                <span class="font-mono text-[11px] bg-slate-800 border border-slate-700 text-gray-300 px-2 py-0.5 rounded">payment_reminders</span>
+                <span class="font-mono text-[11px] bg-slate-800 border border-slate-700 text-gray-300 px-2 py-0.5 rounded">clients</span>
+                <span class="font-mono text-[11px] bg-slate-800 border border-slate-700 text-gray-300 px-2 py-0.5 rounded">bank_accounts</span>
+                <span class="font-mono text-[11px] bg-slate-800 border border-slate-700 text-gray-300 px-2 py-0.5 rounded">bank_transactions</span>
+              </div>
+            </div>
+            <div>
+              <div class="text-[10px] text-yellow-400 font-semibold uppercase tracking-wider mb-1">Zmenené tabuľky</div>
+              <div class="text-[11px] text-gray-600 italic">Žiadne (nová verzia).</div>
+            </div>
+            <div>
+              <div class="text-[10px] text-red-400 font-semibold uppercase tracking-wider mb-1">Zrušené tabuľky</div>
+              <div class="text-[11px] text-gray-600 italic">Žiadne.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Konfiguračné parametre -->
+        <div class="rounded-xl border border-slate-800 bg-slate-900 overflow-hidden">
+          <div class="flex items-center gap-2 px-4 py-2.5 border-b border-slate-800 bg-slate-800/40">
+            <span class="w-2 h-2 rounded-full bg-purple-400 shrink-0"></span>
+            <span class="text-xs font-semibold text-gray-200">Konfiguračné parametre</span>
+            <span class="ml-auto text-[10px] bg-green-500/10 border border-green-500/25 text-green-400 px-2 py-0.5 rounded-full">6 nových</span>
+          </div>
+          <div class="p-4">
+            <div class="text-[10px] text-green-400 font-semibold uppercase tracking-wider mb-2">Nové parametre</div>
+            <div class="space-y-1.5">
+              <div class="flex items-center gap-3">
+                <span class="font-mono text-[11px] text-primary-300 w-52 shrink-0">TATRA_BANKA_API_URL</span>
+                <span class="text-[11px] text-gray-500">URL endpointu Tatra Banka API</span>
+              </div>
+              <div class="flex items-center gap-3">
+                <span class="font-mono text-[11px] text-primary-300 w-52 shrink-0">TATRA_BANKA_CLIENT_ID</span>
+                <span class="text-[11px] text-gray-500">Klientské ID pre OAuth autentifikáciu</span>
+              </div>
+              <div class="flex items-center gap-3">
+                <span class="font-mono text-[11px] text-primary-300 w-52 shrink-0">TATRA_BANKA_CLIENT_SECRET</span>
+                <span class="text-[11px] text-gray-500">Secret pre OAuth (ukladať v env, nie v kóde)</span>
+              </div>
+              <div class="flex items-center gap-3">
+                <span class="font-mono text-[11px] text-primary-300 w-52 shrink-0">INVOICE_DUE_DAYS</span>
+                <span class="text-[11px] text-gray-500">Predvolená splatnosť faktúry v dňoch (default: 14)</span>
+              </div>
+              <div class="flex items-center gap-3">
+                <span class="font-mono text-[11px] text-primary-300 w-52 shrink-0">REMINDER_DAYS_1</span>
+                <span class="text-[11px] text-gray-500">Počet dní po splatnosti pre 1. upomienku (default: 3)</span>
+              </div>
+              <div class="flex items-center gap-3">
+                <span class="font-mono text-[11px] text-primary-300 w-52 shrink-0">REMINDER_DAYS_2</span>
+                <span class="text-[11px] text-gray-500">Počet dní po splatnosti pre 2. upomienku (default: 14)</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tlačové masky -->
+        <div class="rounded-xl border border-slate-700/50 bg-slate-900/50 overflow-hidden opacity-60">
+          <div class="flex items-center gap-2 px-4 py-2.5 border-b border-slate-800 bg-slate-800/40">
+            <span class="w-2 h-2 rounded-full bg-gray-500 shrink-0"></span>
+            <span class="text-xs font-semibold text-gray-400">Tlačové masky (templates)</span>
+            <span class="ml-auto text-[10px] bg-slate-800 border border-slate-700 text-gray-600 px-2 py-0.5 rounded-full">Systém tlače — pripravuje sa</span>
+          </div>
+          <div class="p-4">
+            <div class="text-[11px] text-gray-600 italic">Sekcia bude doplnená po zavedení systému tlačových masiek.</div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Edit textarea (hidden by default) -->
+    <div id="sum-edit" class="hidden flex-1 p-5">
+      <textarea class="w-full h-full bg-slate-900 border border-slate-700 rounded-xl text-xs text-gray-300 p-4 font-mono focus:outline-none focus:border-primary-500/50 resize-none leading-relaxed"></textarea>
+    </div>
+  </div>
+
+</div><!-- /screen-summary -->
+
+<!-- ══════════════════════════════════════════════════════════
+     SCREEN: Architecture (BEHAVIOR.md + DESIGN.md)
+     States: empty | generating | done
+     ══════════════════════════════════════════════════════════ -->
+<div id="screen-architecture" class="screen flex flex-col h-full">
+
+  <!-- Topbar -->
+  <div class="flex-shrink-0 bg-slate-900/50 border-b border-slate-800 px-5 py-2.5 flex items-center gap-3">
+    <div class="flex items-center gap-2 text-xs text-gray-500">
+      <span class="ctx-project text-gray-400 font-medium">NEX Ledger</span>
+      <span>·</span>
+      <span class="ctx-version bg-slate-800 text-gray-300 font-mono px-2 py-0.5 rounded">v0.1</span>
+    </div>
+    <div class="flex-1"></div>
+    <div class="flex items-center gap-1.5 text-xs text-gray-600">
+      <span>krok</span>
+      <span class="text-primary-400 font-semibold">4</span>
+      <span>/ 6 · Architecture</span>
+    </div>
+  </div>
+
+  <!-- ── STATE: EMPTY ── -->
+  <div id="arch-state-empty" class="flex-1 flex flex-col items-center justify-center gap-5 p-8">
+    <div class="w-16 h-16 rounded-2xl bg-slate-800 border border-slate-700 flex items-center justify-center">
+      <svg class="w-8 h-8 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
+      </svg>
+    </div>
+    <div class="text-center">
+      <div class="text-base font-semibold text-gray-200 mb-1">Architecture dokumenty ešte neexistujú</div>
+      <div class="text-xs text-gray-500 max-w-sm">AI vygeneruje BEHAVIOR.md (business rules, workflow, edge cases) a DESIGN.md (DB schéma, API endpoints, komponenty) zo Súhrnnej dokumentácie.</div>
+    </div>
+    <button onclick="archGenerate()" class="flex items-center gap-2 bg-primary-600 hover:bg-primary-500 text-white text-sm font-medium px-5 py-2.5 rounded-lg transition-colors">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+      Generovať Architecture
+    </button>
+    <div class="text-xs text-gray-600">Zdroje: Súhrnná dokumentácia · UI Design mockup · Dev Docs</div>
+  </div>
+
+  <!-- ── STATE: GENERATING ── -->
+  <div id="arch-state-generating" class="flex-1 flex flex-col hidden">
+    <div class="flex-shrink-0 px-6 py-4 border-b border-slate-800 flex items-center gap-4">
+      <div class="w-6 h-6 rounded-full border-2 border-primary-500 border-t-transparent animate-spin shrink-0"></div>
+      <div class="flex-1">
+        <div class="text-sm font-medium text-gray-200" id="arch-gen-label">Analyzujem Súhrnnú dokumentáciu…</div>
+        <div class="h-1 bg-slate-700 rounded-full overflow-hidden mt-2">
+          <div class="h-full bg-primary-500 rounded-full transition-all duration-700" id="arch-gen-bar" style="width:0%"></div>
+        </div>
+      </div>
+      <span class="text-xs text-primary-400 font-mono" id="arch-gen-pct">0%</span>
+    </div>
+    <div class="flex-1 overflow-y-auto p-6">
+      <div class="max-w-3xl mx-auto space-y-2">
+        <div class="flex items-center gap-3 py-2 border-b border-slate-800">
+          <div class="w-2 h-2 rounded-full bg-primary-500 animate-pulse shrink-0"></div>
+          <span class="text-xs text-gray-500 font-medium" id="arch-gen-phase">Fáza 1/2 · BEHAVIOR.md</span>
+        </div>
+        <div class="text-[10px] text-gray-600 uppercase tracking-wider pt-2 font-semibold">Live preview</div>
+        <div id="arch-gen-preview" class="prose-mock text-sm leading-relaxed font-mono text-gray-400 space-y-0"></div>
+        <span class="inline-block w-2 h-4 bg-primary-400 animate-pulse ml-0.5 align-middle" id="arch-cursor"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── STATE: DONE ── -->
+  <div id="arch-state-done" class="flex-1 flex flex-col hidden">
+    <!-- Action bar -->
+    <div class="flex-shrink-0 px-6 py-3 border-b border-slate-800 flex items-center gap-3">
+      <span class="text-[10px] bg-green-500/10 border border-green-500/25 text-green-400 px-2.5 py-1 rounded-full flex items-center gap-1.5">
+        <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+        Vygenerované
+      </span>
+      <span class="text-xs text-gray-600">pred 3 minútami · 2 dokumenty</span>
+      <div class="flex-1"></div>
+      <button onclick="archGenerate()" class="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-200 border border-slate-700 hover:border-slate-600 px-3 py-1.5 rounded-lg transition-colors">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+        Regenerovať
+      </button>
+      <button onclick="archApprove()" class="flex items-center gap-2 bg-green-600 hover:bg-green-500 text-white text-xs font-medium px-4 py-1.5 rounded-lg transition-colors">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+        Schváliť Architecture →
+      </button>
+    </div>
+
+    <!-- Tab nav -->
+    <div class="flex-shrink-0 flex items-center gap-1 px-6 py-2 border-b border-slate-800">
+      <button id="arch-tab-behavior" onclick="archSwitchTab('behavior')"
+        class="text-xs font-medium px-3 py-1.5 rounded-lg bg-primary-600/20 text-primary-400 border border-primary-500/30 transition-colors">
+        BEHAVIOR.md
+      </button>
+      <button id="arch-tab-design" onclick="archSwitchTab('design')"
+        class="text-xs font-medium px-3 py-1.5 rounded-lg text-gray-500 hover:text-gray-300 transition-colors">
+        DESIGN.md
+      </button>
+    </div>
+
+    <!-- Document view -->
+    <div class="flex-1 overflow-y-auto p-6">
+      <div class="max-w-3xl mx-auto">
+
+        <!-- BEHAVIOR.md tab -->
+        <div id="arch-panel-behavior" class="prose-mock space-y-0">
+          <h1 style="font-size:1rem;font-weight:700;color:#f1f5f9;margin-bottom:.75rem"># BEHAVIOR.md — NEX Ledger v0.1</h1>
+          <h2>## 1. Business Rules</h2>
+          <ul>
+            <li>Faktúra môže byť vytvorená len pre existujúceho zákazníka z adresára</li>
+            <li>DPH sadzby: 23% (štandard), 10% (znížená), 0% (oslobodené) — konfigurovateľné</li>
+            <li>Číslovanie faktúr: <code style="color:#818cf8">YYYY-NNN</code> — automaticky, resetuje sa každý rok</li>
+            <li>Faktúra môže byť stornovaná len ak nie je uhradená (status ≠ paid)</li>
+            <li>Upomienka 1 sa odosiela po 3 dňoch po splatnosti, upomienka 2 po 14 dňoch</li>
+          </ul>
+          <h2>## 2. Workflow</h2>
+          <ul>
+            <li><strong style="color:#e2e8f0">draft</strong> → <code style="color:#818cf8">sent</code> — manuálne odoslanie PDF emailom</li>
+            <li><code style="color:#818cf8">sent</code> → <code style="color:#818cf8">paid</code> — automaticky po spárovaní s bankovou transakciou</li>
+            <li><code style="color:#818cf8">sent</code> → <code style="color:#818cf8">overdue</code> — automaticky po dni splatnosti</li>
+            <li><code style="color:#818cf8">overdue</code> → <code style="color:#818cf8">paid</code> — automaticky po spárovaní</li>
+            <li>Akýkoľvek stav → <code style="color:#818cf8">cancelled</code> — len pre nepaid faktúry</li>
+          </ul>
+          <h2>## 3. Edge Cases</h2>
+          <ul>
+            <li>Duplicitné IČO zákazníka — systém upozorní, ale umožní vytvorenie</li>
+            <li>Tatra Banka API nedostupná — sync sa preskočí, log error, retry nasledujúci deň</li>
+            <li>Nespárovaná transakcia — zostáva v zozname, manuálne párovanie</li>
+            <li>PDF generovanie zlyhá — faktúra zostáva v stave draft, error v UI</li>
+          </ul>
+        </div>
+
+        <!-- DESIGN.md tab (hidden by default) -->
+        <div id="arch-panel-design" class="prose-mock space-y-0 hidden">
+          <h1 style="font-size:1rem;font-weight:700;color:#f1f5f9;margin-bottom:.75rem"># DESIGN.md — NEX Ledger v0.1</h1>
+          <h2>## 1. Architektúra systému</h2>
+          <p>Trojvrstvová webová aplikácia nasadená na Ubuntu serveri cez Docker Compose.</p>
+          <ul>
+            <li><strong style="color:#e2e8f0">Backend:</strong> Python 3.12, FastAPI, SQLAlchemy, Alembic, pg8000</li>
+            <li><strong style="color:#e2e8f0">Frontend:</strong> React 18, TypeScript, Vite, Tailwind CSS</li>
+            <li><strong style="color:#e2e8f0">Databáza:</strong> PostgreSQL 16</li>
+            <li><strong style="color:#e2e8f0">Email:</strong> SMTP cez Resend API</li>
+            <li><strong style="color:#e2e8f0">Banka:</strong> Tatra Banka REST API (OAuth2)</li>
+          </ul>
+          <h2>## 2. Databázová schéma</h2>
+          <ul>
+            <li><code style="color:#818cf8">customers</code> — id, name, ico, dic, email, address, created_at</li>
+            <li><code style="color:#818cf8">invoices</code> — id, number, customer_id, amount, vat_amount, status, issue_date, due_date, sent_at</li>
+            <li><code style="color:#818cf8">invoice_items</code> — id, invoice_id, description, quantity, unit_price, vat_rate</li>
+            <li><code style="color:#818cf8">bank_transactions</code> — id, amount, date, description, matched_invoice_id, imported_at</li>
+            <li><code style="color:#818cf8">reminders</code> — id, invoice_id, sent_at, reminder_type (first/second)</li>
+          </ul>
+          <h2>## 3. API Endpoints</h2>
+          <ul>
+            <li><code style="color:#34d399">POST</code> <code style="color:#818cf8">/api/auth/login</code> — JWT autentifikácia</li>
+            <li><code style="color:#60a5fa">GET</code> &nbsp;<code style="color:#818cf8">/api/invoices</code> — zoznam s filtrom (status, date range, pagination)</li>
+            <li><code style="color:#34d399">POST</code> <code style="color:#818cf8">/api/invoices</code> — vytvorenie faktúry</li>
+            <li><code style="color:#fbbf24">PATCH</code> <code style="color:#818cf8">/api/invoices/{id}</code> — aktualizácia stavu</li>
+            <li><code style="color:#60a5fa">GET</code> &nbsp;<code style="color:#818cf8">/api/invoices/{id}/pdf</code> — export PDF</li>
+            <li><code style="color:#34d399">POST</code> <code style="color:#818cf8">/api/bank/sync</code> — synchronizácia Tatra Banka</li>
+            <li><code style="color:#60a5fa">GET</code> &nbsp;<code style="color:#818cf8">/api/reports/monthly</code> — mesačný výkaz</li>
+          </ul>
+          <h2>## 4. Frontend komponenty</h2>
+          <ul>
+            <li><code style="color:#818cf8">InvoiceList</code>, <code style="color:#818cf8">InvoiceDetail</code>, <code style="color:#818cf8">InvoiceForm</code></li>
+            <li><code style="color:#818cf8">CustomerSelect</code>, <code style="color:#818cf8">BankTransactionList</code>, <code style="color:#818cf8">Dashboard</code></li>
+          </ul>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+</div><!-- /screen-architecture -->
 
 <div id="screen-design" class="screen flex flex-col h-full">
 
@@ -3196,7 +3655,7 @@ Docker Compose — backend (8000), frontend (3000, Nginx), postgres (5432 intern
      JAVASCRIPT
 ════════════════════════════════════════════════════════════════════ -->
 <script>
-  const SCREENS = ['home','projects','project-detail','version','new-project','versions','new-version','spec','uidesign','design','taskplan','implementacia','kb','settings','login'];
+  const SCREENS = ['home','projects','project-detail','version','new-project','versions','new-version','spec','uidesign','summary','architecture','design','taskplan','implementacia','kb','settings','login'];
 
   // ---- Aktívny kontext (projekt + verzia) ----
   let activeCtx = { project: 'NEX Ledger', slug: 'NL', version: 'v0.1' };
@@ -3254,6 +3713,8 @@ Docker Compose — backend (8000), frontend (3000, Nginx), postgres (5432 intern
     'new-version':    'New Version',
     'spec':           'Specification',
     'uidesign':       'UI Design',
+    'summary':        'Summary',
+    'architecture':   'Architecture',
     'design':         'DESIGN.md',
     'taskplan':       'Task Plan',
     'implementacia':  'Implementation',
@@ -3645,6 +4106,16 @@ Docker Compose — backend (8000), frontend (3000, Nginx), postgres (5432 intern
     if (name === 'spec') document.querySelector('[onclick="showScreen(\'spec\')"]')?.classList.add('active');
     if (name === 'uidesign') document.querySelector('[onclick="showScreen(\'uidesign\')"]')?.classList.add('active');
     if (name === 'version' || name === 'design') document.querySelector('[onclick="showScreen(\'version\')"]')?.classList.add('active');
+    if (name === 'architecture') document.querySelector('[onclick="showScreen(\'architecture\')"]')?.classList.add('active');
+    if (name === 'summary') {
+      document.querySelector('[onclick="showScreen(\'summary\')"]')?.classList.add('active');
+      // Ak je UI Design schválený (step 4 done), zobraz stav "empty" (gate splnený), inak "gate"
+      if (_pipelineState.doneSteps.has(4)) {
+        if (_sumState === 'gate') sumSetState('empty');
+      } else {
+        sumSetState('gate');
+      }
+    }
     if (name === 'taskplan') document.querySelector('[onclick="showScreen(\'taskplan\')"]')?.classList.add('active');
     if (name === 'implementacia') document.querySelector('[onclick="showScreen(\'implementacia\')"]')?.classList.add('active');
     if (name === 'settings') document.querySelector('[onclick="showScreen(\'settings\')"]')?.classList.add('active');
@@ -3654,8 +4125,276 @@ Docker Compose — backend (8000), frontend (3000, Nginx), postgres (5432 intern
   function uidesignApprove() {
     _pipelineState.doneSteps.add(4);
     _saveState();
+
+    // Aktualizuj 2B kartu v parallenej fáze
+    const card2b = document.getElementById('version-step-2b');
+    if (card2b) {
+      card2b.className = 'rounded-lg border border-green-500/20 bg-slate-950/60 p-3 flex items-start gap-3';
+    }
+    const circle2b = document.getElementById('version-step-2b-circle');
+    if (circle2b) {
+      circle2b.className = 'w-7 h-7 rounded-full bg-green-500 flex items-center justify-center text-xs font-bold text-white shrink-0 mt-0.5';
+      circle2b.textContent = '✓';
+    }
+    const actions2b = document.getElementById('version-step-2b-actions');
+    if (actions2b) {
+      actions2b.innerHTML = '<span class="text-[10px] bg-green-500/10 border border-green-500/25 text-green-400 px-2 py-0.5 rounded-full">Schválené</span><button onclick="showScreen(\'uidesign\')" class="text-[10px] text-gray-500 hover:text-gray-300 transition-colors">Zobraziť →</button>';
+    }
+
+    // Aktualizuj gate indikátor
+    const gateUiDesign = document.getElementById('version-gate-uidesign');
+    if (gateUiDesign) { gateUiDesign.className = 'text-green-400'; gateUiDesign.textContent = 'UI Design ✓'; }
+
+    // Odomkni krok 3 — Súhrnná dokumentácia
+    const step3 = document.getElementById('version-step-3');
+    if (step3) {
+      step3.className = 'rounded-xl border border-primary-500/40 bg-primary-600/5 p-4 flex items-center gap-4 cursor-pointer card-hover transition-all duration-300';
+      step3.onclick = () => showScreen('summary');
+      // Zmeň badge a pridaj "Pokračovať →"
+      // Nahraď celý obsah kroku 3 (rovnaký štýl ako ostatné aktívne kroky)
+      step3.innerHTML = `
+        <div class="w-10 h-10 rounded-full bg-primary-600 ring-4 ring-primary-500/20 flex items-center justify-center text-sm font-bold text-white shrink-0">3</div>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2 mb-0.5">
+            <span class="text-xs text-primary-400 font-semibold uppercase tracking-wider">Krok 3 · Aktívny</span>
+          </div>
+          <div class="text-sm font-semibold text-gray-100">Súhrnná dokumentácia</div>
+          <div class="text-xs text-gray-500 mt-0.5">Prehľad zmien pre projektového manažéra — AI generuje z Dev Docs + UI Design</div>
+        </div>
+        <div class="flex items-center gap-2 shrink-0" id="version-step-3-actions">
+          <span class="text-[10px] bg-yellow-500/15 border border-yellow-500/30 text-yellow-400 px-2 py-0.5 rounded-full">In Progress</span>
+          <button onclick="event.stopPropagation();showScreen('summary')" class="flex items-center gap-1.5 bg-primary-600 hover:bg-primary-500 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors">Pokračovať →</button>
+        </div>`;
+    }
+
+    // Aktualizuj gate indikátor na Summary screene
+    const sumGate = document.getElementById('sum-gate-uidesign');
+    if (sumGate) { sumGate.className = 'text-[10px] text-green-400 font-medium'; sumGate.textContent = 'UI Design ✓'; }
+
     showScreen('version');
-    _showToast('UI Design schválený — krok 4/7 dokončený');
+    _showToast('UI Design schválený — Gate odomknutý, krok 3 pripravený');
+  }
+
+  // ── Summary Documentation screen ──
+  let _sumState = 'gate'; // 'gate' | 'empty' | 'generating' | 'done'
+
+  function sumSetState(state) {
+    ['gate','empty','generating','done'].forEach(s => {
+      const el = document.getElementById('sum-state-' + s);
+      if (el) el.classList.toggle('hidden', s !== state);
+    });
+    _sumState = state;
+  }
+
+  function sumShowGenerate() {
+    sumSetState('empty');
+  }
+
+  function sumGenerate() {
+    sumSetState('generating');
+    const bar = document.getElementById('sum-gen-bar');
+    const status = document.getElementById('sum-gen-status');
+    const steps = [
+      [15, 'Analyzujem Vývojovú dokumentáciu…'],
+      [35, 'Spracovávam UI Design podklady…'],
+      [55, 'Identifikujem zmeny funkcionality…'],
+      [75, 'Generujem DB delta…'],
+      [90, 'Finalizujem konfiguračné parametre…'],
+      [100, 'Hotovo.'],
+    ];
+    let i = 0;
+    const tick = setInterval(() => {
+      if (i >= steps.length) { clearInterval(tick); setTimeout(() => sumSetState('done'), 400); return; }
+      if (bar) bar.style.width = steps[i][0] + '%';
+      if (status) status.textContent = steps[i][1];
+      i++;
+    }, 600);
+  }
+
+  function sumApprove() {
+    _pipelineState.doneSteps.add(5);
+    _saveState();
+
+    // Krok 3 — nahraď celý obsah (rovnaký vzor ako krok 1/2)
+    const step3 = document.getElementById('version-step-3');
+    if (step3) {
+      step3.className = 'rounded-xl border border-green-500/20 bg-slate-900 p-4 flex items-center gap-4 cursor-pointer card-hover transition-all duration-300';
+      step3.onclick = () => showScreen('summary');
+      step3.innerHTML = `
+        <div class="w-10 h-10 rounded-full bg-green-500 flex items-center justify-center text-base font-bold text-white shrink-0">✓</div>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2 mb-0.5">
+            <span class="text-xs text-green-500 font-semibold uppercase tracking-wider">Krok 3</span>
+          </div>
+          <div class="text-sm font-semibold text-gray-100">Súhrnná dokumentácia</div>
+          <div class="text-xs text-gray-500 mt-0.5">Prehľad zmien pre projektového manažéra</div>
+        </div>
+        <div class="flex items-center gap-2 shrink-0">
+          <span class="text-[10px] bg-green-500/10 border border-green-500/25 text-green-400 px-2 py-0.5 rounded-full">Schválené</span>
+          <button onclick="event.stopPropagation();showScreen('summary')" class="text-xs text-gray-500 hover:text-gray-300 transition-colors">Zobraziť →</button>
+        </div>`;
+    }
+
+    // Krok 4 — odomkni Architecture (BEHAVIOR.md + DESIGN.md)
+    const hub = document.querySelector('#screen-version .space-y-3');
+    if (hub) {
+      const card4 = hub.children[3];
+      if (card4) {
+        card4.className = 'rounded-xl border border-primary-500/40 bg-primary-600/5 p-4 flex items-center gap-4 cursor-pointer card-hover transition-all duration-300';
+        card4.onclick = () => showScreen('architecture');
+        card4.innerHTML = `
+          <div class="w-10 h-10 rounded-full bg-primary-600 ring-4 ring-primary-500/20 flex items-center justify-center text-sm font-bold text-white shrink-0">4</div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 mb-0.5">
+              <span class="text-xs text-primary-400 font-semibold uppercase tracking-wider">Krok 4 · Aktívny</span>
+            </div>
+            <div class="text-sm font-semibold text-gray-100">Architecture</div>
+            <div class="text-xs text-gray-500 mt-0.5">BEHAVIOR.md + DESIGN.md — business rules, DB schéma, API endpoints</div>
+          </div>
+          <div class="flex items-center gap-2 shrink-0">
+            <span class="text-[10px] bg-yellow-500/15 border border-yellow-500/30 text-yellow-400 px-2 py-0.5 rounded-full">In Progress</span>
+            <button onclick="event.stopPropagation();showScreen('architecture')" class="flex items-center gap-1.5 bg-primary-600 hover:bg-primary-500 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors">Pokračovať →</button>
+          </div>`;
+      }
+    }
+
+    showScreen('version');
+    _showToast('Súhrnná dokumentácia schválená — krok 3/6 dokončený');
+  }
+
+  function sumToggleEdit() {
+    const view = document.getElementById('sum-view');
+    const edit = document.getElementById('sum-edit');
+    if (!view || !edit) return;
+    const editing = !edit.classList.contains('hidden');
+    view.classList.toggle('hidden', !editing);
+    edit.classList.toggle('hidden', editing);
+  }
+
+  function sumCopy() {
+    _showToast('Súhrnná dokumentácia skopírovaná do schránky');
+  }
+
+  // ── Architecture screen (BEHAVIOR.md + DESIGN.md) ──
+  let _archState = 'empty'; // 'empty' | 'generating' | 'done'
+  let _archTab   = 'behavior'; // 'behavior' | 'design'
+
+  function archSetState(state) {
+    ['empty','generating','done'].forEach(s => {
+      const el = document.getElementById('arch-state-' + s);
+      if (el) el.classList.toggle('hidden', s !== state);
+    });
+    _archState = state;
+  }
+
+  function archSwitchTab(tab) {
+    _archTab = tab;
+    ['behavior','design'].forEach(t => {
+      const btn   = document.getElementById('arch-tab-' + t);
+      const panel = document.getElementById('arch-panel-' + t);
+      const active = t === tab;
+      if (btn)   { btn.className = active
+        ? 'text-xs font-medium px-3 py-1.5 rounded-lg bg-primary-600/20 text-primary-400 border border-primary-500/30 transition-colors'
+        : 'text-xs font-medium px-3 py-1.5 rounded-lg text-gray-500 hover:text-gray-300 transition-colors'; }
+      if (panel) panel.classList.toggle('hidden', !active);
+    });
+  }
+
+  function archGenerate() {
+    archSetState('generating');
+    const bar     = document.getElementById('arch-gen-bar');
+    const label   = document.getElementById('arch-gen-label');
+    const pct     = document.getElementById('arch-gen-pct');
+    const phase   = document.getElementById('arch-gen-phase');
+    const preview = document.getElementById('arch-gen-preview');
+    if (preview) preview.innerHTML = '';
+    const steps = [
+      [10, 'Analyzujem Súhrnnú dokumentáciu…',         'Fáza 1/2 · BEHAVIOR.md'],
+      [25, 'Definujem business rules…',                 'Fáza 1/2 · BEHAVIOR.md'],
+      [40, 'Generujem workflow scenáre…',               'Fáza 1/2 · BEHAVIOR.md'],
+      [55, 'BEHAVIOR.md dokončený — spúšťam DESIGN.md…','Fáza 2/2 · DESIGN.md'],
+      [70, 'Navrhujem databázovú schému…',              'Fáza 2/2 · DESIGN.md'],
+      [85, 'Generujem API endpoints…',                  'Fáza 2/2 · DESIGN.md'],
+      [100,'Dokončujem…',                               'Fáza 2/2 · DESIGN.md'],
+    ];
+    const lines = [
+      '# BEHAVIOR.md — NEX Ledger v0.1', '',
+      '## 1. Business Rules', '- DPH sadzby: 23%, 10%, 0%', '- Číslovanie: YYYY-NNN', '',
+      '## 2. Workflow', '- draft → sent → paid / overdue', '',
+      '# DESIGN.md — NEX Ledger v0.1', '',
+      '## 1. Architektúra', '- FastAPI + React + PostgreSQL', '',
+      '## 2. Databázová schéma', '- customers, invoices, invoice_items, bank_transactions',
+    ];
+    let i = 0, li = 0;
+    const tick = setInterval(() => {
+      if (i >= steps.length) {
+        clearInterval(tick);
+        setTimeout(() => { archSetState('done'); archSwitchTab('behavior'); }, 400);
+        return;
+      }
+      if (bar)   bar.style.width  = steps[i][0] + '%';
+      if (label) label.textContent = steps[i][1];
+      if (pct)   pct.textContent   = steps[i][0] + '%';
+      if (phase) phase.textContent  = steps[i][2];
+      if (preview && li < lines.length) {
+        const row = document.createElement('div');
+        row.textContent = lines[li];
+        row.style.color = lines[li].startsWith('#') ? '#c084fc' : '#6b7280';
+        preview.appendChild(row);
+        li++;
+      }
+      i++;
+    }, 700);
+  }
+
+  function archApprove() {
+    _pipelineState.doneSteps.add(6);
+    _saveState();
+
+    // Krok 4 — označ ako Schválené
+    const hub = document.querySelector('#screen-version .space-y-3');
+    if (hub) {
+      const card4 = hub.children[3];
+      if (card4) {
+        card4.className = 'rounded-xl border border-green-500/20 bg-slate-900 p-4 flex items-center gap-4 cursor-pointer card-hover transition-all duration-300';
+        card4.onclick = () => showScreen('architecture');
+        card4.innerHTML = `
+          <div class="w-10 h-10 rounded-full bg-green-500 flex items-center justify-center text-base font-bold text-white shrink-0">✓</div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 mb-0.5">
+              <span class="text-xs text-green-500 font-semibold uppercase tracking-wider">Krok 4</span>
+            </div>
+            <div class="text-sm font-semibold text-gray-100">Architecture</div>
+            <div class="text-xs text-gray-500 mt-0.5">BEHAVIOR.md + DESIGN.md — schválené</div>
+          </div>
+          <div class="flex items-center gap-2 shrink-0">
+            <span class="text-[10px] bg-green-500/10 border border-green-500/25 text-green-400 px-2 py-0.5 rounded-full">Schválené</span>
+            <button onclick="event.stopPropagation();showScreen('architecture')" class="text-xs text-gray-500 hover:text-gray-300 transition-colors">Zobraziť →</button>
+          </div>`;
+      }
+      // Krok 5 — odomkni Task Plan
+      const card5 = hub.children[4];
+      if (card5) {
+        card5.className = 'rounded-xl border border-primary-500/40 bg-primary-600/5 p-4 flex items-center gap-4 cursor-pointer card-hover transition-all duration-300';
+        card5.onclick = () => taskplanOpen();
+        card5.innerHTML = `
+          <div class="w-10 h-10 rounded-full bg-primary-600 ring-4 ring-primary-500/20 flex items-center justify-center text-sm font-bold text-white shrink-0">5</div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 mb-0.5">
+              <span class="text-xs text-primary-400 font-semibold uppercase tracking-wider">Krok 5 · Aktívny</span>
+            </div>
+            <div class="text-sm font-semibold text-gray-100">Task Plan</div>
+            <div class="text-xs text-gray-500 mt-0.5">Epic → Feat → Task breakdown, CC delegácia pripravená</div>
+          </div>
+          <div class="flex items-center gap-2 shrink-0">
+            <span class="text-[10px] bg-yellow-500/15 border border-yellow-500/30 text-yellow-400 px-2 py-0.5 rounded-full">In Progress</span>
+            <button onclick="event.stopPropagation();taskplanOpen()" class="flex items-center gap-1.5 bg-primary-600 hover:bg-primary-500 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors">Pokračovať →</button>
+          </div>`;
+      }
+    }
+
+    showScreen('version');
+    _showToast('Architecture schválená — krok 4/6 dokončený');
   }
 
   // ── DESIGN.md screen ──
