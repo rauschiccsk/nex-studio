@@ -4038,6 +4038,7 @@ Docker Compose — backend (8000), frontend (3000, Nginx), postgres (5432 intern
     { name:'NEX Payroll', slug:'NP', repo:'nex-payroll', port:9171, versions:2, bugs:3, activeVersion:'v0.2', pct:83, step:'Task Plan',  type:'singlemodule' },
   ];
   const _slugColors = ['bg-primary-600/20 border-primary-600/30 text-primary-400','bg-amber-600/20 border-amber-600/30 text-amber-400','bg-green-600/20 border-green-600/30 text-green-400','bg-purple-600/20 border-purple-600/30 text-purple-400','bg-rose-600/20 border-rose-600/30 text-rose-400','bg-cyan-600/20 border-cyan-600/30 text-cyan-400'];
+  function _projColor(i) { return _slugColors[i % _slugColors.length]; }
 
   // ── Navigation stack ──
   const _screenLabels = {
