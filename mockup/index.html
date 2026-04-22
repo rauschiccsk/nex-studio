@@ -57,8 +57,12 @@
     #screen-summary.active        { display: flex !important; flex-direction: column; }
     #screen-architecture.active   { display: flex !important; flex-direction: column; }
     #screen-audit.active          { display: flex !important; flex-direction: column; }
-    #screen-mm-overview.active    { display: flex !important; flex-direction: column; }
-    #screen-mm-module.active      { display: flex !important; flex-direction: column; }
+    #screen-mm-overview.active       { display: flex !important; flex-direction: column; }
+    #screen-mm-module.active         { display: flex !important; flex-direction: column; }
+    #screen-mm-resources.active      { display: flex !important; flex-direction: column; }
+    #screen-mm-resource-detail.active{ display: flex !important; flex-direction: column; }
+    #screen-mm-depmap.active         { display: flex !important; flex-direction: column; }
+    #screen-mm-changereq.active      { display: flex !important; flex-direction: column; }
     .bug-row { cursor: pointer; transition: background 0.1s; border-left: 2px solid transparent; }
     .bug-row:hover { background: rgba(255,255,255,0.03); }
     .bug-row.active { background: rgba(99,102,241,0.1); border-left-color: #6366f1; }
@@ -2996,11 +3000,11 @@ Docker Compose — backend (8000), frontend (3000, Nginx), postgres (5432 intern
       <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
       Pridať modul
     </button>
-    <button onclick="_showToast('Shared Resources — pripravuje sa')" class="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-200 border border-slate-700 hover:border-slate-500 px-3 py-1.5 rounded-lg transition-colors">
+    <button onclick="showScreen('mm-resources')" class="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-200 border border-slate-700 hover:border-slate-500 px-3 py-1.5 rounded-lg transition-colors">
       <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/></svg>
       Shared Resources
     </button>
-    <button onclick="_showToast('Dependency Map — pripravuje sa')" class="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-200 border border-slate-700 hover:border-slate-500 px-3 py-1.5 rounded-lg transition-colors">
+    <button onclick="showScreen('mm-depmap')" class="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-200 border border-slate-700 hover:border-slate-500 px-3 py-1.5 rounded-lg transition-colors">
       <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
       Dependency Map
     </button>
@@ -3030,7 +3034,7 @@ Docker Compose — backend (8000), frontend (3000, Nginx), postgres (5432 intern
         <div class="rounded-xl border border-slate-800 bg-slate-900 p-4">
           <div class="flex items-center justify-between mb-3">
             <span class="text-xs font-semibold text-gray-300">Zdieľané zdroje</span>
-            <button onclick="_showToast('Shared Resources — pripravuje sa')" class="text-[10px] text-primary-400 hover:text-primary-300 transition-colors">Zobraziť všetky →</button>
+            <button onclick="showScreen('mm-resources')" class="text-[10px] text-primary-400 hover:text-primary-300 transition-colors">Zobraziť všetky →</button>
           </div>
           <div class="space-y-2">
             <div class="flex items-center justify-between text-xs">
@@ -3244,6 +3248,176 @@ Docker Compose — backend (8000), frontend (3000, Nginx), postgres (5432 intern
   </div>
 
 </div><!-- /screen-mm-module -->
+
+<!-- ═══════════════════════════════════════════════════ SCREEN: MM SHARED RESOURCES -->
+<div id="screen-mm-resources" class="screen flex flex-col h-full">
+  <div class="flex-shrink-0 bg-slate-900/50 border-b border-slate-800 px-5 py-2.5 flex items-center gap-3">
+    <button onclick="showScreen('mm-overview')" class="text-gray-500 hover:text-gray-300 transition-colors">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+    </button>
+    <span class="text-sm font-semibold text-gray-100">Zdieľané zdroje</span>
+    <span id="mm-res-count" class="text-[10px] bg-slate-700 text-gray-400 px-2 py-0.5 rounded-full font-medium">12</span>
+    <div class="flex-1"></div>
+    <button onclick="mmOpenChangeReq(null)" class="flex items-center gap-1.5 bg-primary-600 hover:bg-primary-500 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors">
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+      Change Request
+    </button>
+  </div>
+  <!-- Filter bar -->
+  <div class="flex-shrink-0 px-5 py-2 border-b border-slate-800 flex items-center gap-2 flex-wrap">
+    <div class="flex items-center gap-1" id="mm-res-type-btns">
+      <button onclick="mmResFilter('all')"          id="mm-res-f-all" class="text-xs px-2.5 py-1 rounded-lg bg-primary-600/20 text-primary-400 border border-primary-500/30 transition-colors">Všetky</button>
+      <button onclick="mmResFilter('db_table')"     id="mm-res-f-db"  class="text-xs px-2.5 py-1 rounded-lg text-gray-500 hover:text-gray-300 transition-colors">DB tabuľky</button>
+      <button onclick="mmResFilter('ui_component')" id="mm-res-f-ui"  class="text-xs px-2.5 py-1 rounded-lg text-gray-500 hover:text-gray-300 transition-colors">UI komponenty</button>
+      <button onclick="mmResFilter('api')"          id="mm-res-f-api" class="text-xs px-2.5 py-1 rounded-lg text-gray-500 hover:text-gray-300 transition-colors">API</button>
+    </div>
+    <div class="flex-1"></div>
+    <select id="mm-res-mod-filter" onchange="mmRenderResources()" class="text-xs bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-gray-400 focus:outline-none focus:border-primary-500">
+      <option value="">Všetky moduly</option>
+    </select>
+  </div>
+  <!-- List -->
+  <div class="flex-1 overflow-y-auto p-5">
+    <div class="max-w-4xl mx-auto">
+      <div id="mm-res-list" class="space-y-2"></div>
+    </div>
+  </div>
+</div><!-- /screen-mm-resources -->
+
+<!-- ═══════════════════════════════════════════════════ SCREEN: MM RESOURCE DETAIL -->
+<div id="screen-mm-resource-detail" class="screen flex flex-col h-full">
+  <div class="flex-shrink-0 bg-slate-900/50 border-b border-slate-800 px-5 py-2.5 flex items-center gap-3">
+    <button onclick="showScreen('mm-resources')" class="text-gray-500 hover:text-gray-300 transition-colors">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+    </button>
+    <span id="mm-rd-name" class="text-sm font-semibold text-gray-100 font-mono">partners</span>
+    <span id="mm-rd-type-badge" class="text-[10px] px-2 py-0.5 rounded border font-medium">DB Table</span>
+    <div class="flex-1"></div>
+    <button id="mm-rd-cr-btn" onclick="mmOpenChangeReq(_mmCurrentResource)" class="flex items-center gap-1.5 text-xs text-primary-400 hover:text-primary-300 border border-primary-500/30 hover:border-primary-500/60 px-3 py-1.5 rounded-lg transition-colors">
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+      Navrhnúť zmenu
+    </button>
+  </div>
+  <div class="flex-1 overflow-y-auto p-5">
+    <div class="max-w-2xl mx-auto space-y-5">
+      <!-- Meta -->
+      <div class="rounded-xl border border-slate-800 bg-slate-900 p-5">
+        <div class="text-[10px] text-gray-600 uppercase tracking-widest font-semibold mb-3">Info</div>
+        <div class="space-y-2 text-sm">
+          <div class="flex gap-3"><span class="text-gray-500 w-28 shrink-0">Popis</span><span id="mm-rd-desc" class="text-gray-300"></span></div>
+          <div class="flex gap-3"><span class="text-gray-500 w-28 shrink-0">Owner</span>
+            <span id="mm-rd-owner" class="text-primary-400 font-mono cursor-pointer hover:underline"></span>
+          </div>
+          <div class="flex gap-3"><span class="text-gray-500 w-28 shrink-0">Status</span><span id="mm-rd-status"></span></div>
+        </div>
+      </div>
+      <!-- Consumers -->
+      <div class="rounded-xl border border-slate-800 bg-slate-900 p-5">
+        <div class="text-[10px] text-gray-600 uppercase tracking-widest font-semibold mb-3">Consumers</div>
+        <div id="mm-rd-consumers" class="flex flex-wrap gap-2"></div>
+      </div>
+      <!-- Schema / Props -->
+      <div class="rounded-xl border border-slate-800 bg-slate-900 p-5">
+        <div class="text-[10px] text-gray-600 uppercase tracking-widest font-semibold mb-3" id="mm-rd-schema-label">Schéma</div>
+        <div id="mm-rd-schema" class="space-y-1.5 font-mono text-xs"></div>
+      </div>
+      <!-- Change requests -->
+      <div class="rounded-xl border border-slate-800 bg-slate-900 p-5">
+        <div class="flex items-center justify-between mb-3">
+          <div class="text-[10px] text-gray-600 uppercase tracking-widest font-semibold">Change Requests</div>
+          <button onclick="mmOpenChangeReq(_mmCurrentResource)" class="text-[10px] text-primary-400 hover:text-primary-300 transition-colors">+ Nový</button>
+        </div>
+        <div id="mm-rd-crs" class="space-y-2"></div>
+      </div>
+    </div>
+  </div>
+</div><!-- /screen-mm-resource-detail -->
+
+<!-- ═══════════════════════════════════════════════════ SCREEN: MM DEPENDENCY MAP -->
+<div id="screen-mm-depmap" class="screen flex flex-col h-full">
+  <div class="flex-shrink-0 bg-slate-900/50 border-b border-slate-800 px-5 py-2.5 flex items-center gap-3">
+    <button onclick="showScreen('mm-overview')" class="text-gray-500 hover:text-gray-300 transition-colors">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+    </button>
+    <span class="text-sm font-semibold text-gray-100">Dependency Map</span>
+    <div class="flex-1"></div>
+    <div class="flex items-center gap-3 text-[10px] text-gray-500">
+      <span class="flex items-center gap-1"><span class="w-3 h-0.5 bg-green-500 inline-block rounded"></span>Stabilná závislosť</span>
+      <span class="flex items-center gap-1"><span class="w-3 h-0.5 bg-yellow-500 inline-block rounded"></span>Change req. aktívny</span>
+    </div>
+  </div>
+  <div class="flex-1 overflow-y-auto flex items-start justify-center p-8">
+    <div class="w-full max-w-3xl">
+      <!-- SVG dependency graph -->
+      <svg id="mm-depmap-svg" viewBox="0 0 700 440" class="w-full" style="min-height:340px"></svg>
+    </div>
+  </div>
+</div><!-- /screen-mm-depmap -->
+
+<!-- ═══════════════════════════════════════════════════ SCREEN: MM CHANGE REQUEST -->
+<div id="screen-mm-changereq" class="screen flex flex-col h-full">
+  <div class="flex-shrink-0 bg-slate-900/50 border-b border-slate-800 px-5 py-2.5 flex items-center gap-3">
+    <button onclick="history.back() || showScreen('mm-resources')" class="text-gray-500 hover:text-gray-300 transition-colors">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+    </button>
+    <span class="text-sm font-semibold text-gray-100">Nový Change Request</span>
+  </div>
+  <div class="flex-1 overflow-y-auto p-5">
+    <div class="max-w-lg mx-auto space-y-5">
+      <!-- Resource selector -->
+      <div>
+        <label class="block text-xs font-medium text-gray-400 mb-1.5">Zdroj *</label>
+        <select id="mm-cr-resource" onchange="mmCrOnResourceChange()" class="w-full rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-gray-100 font-mono focus:outline-none focus:border-primary-500 transition-colors">
+          <option value="">— vyber zdroj —</option>
+        </select>
+      </div>
+      <!-- Type -->
+      <div>
+        <label class="block text-xs font-medium text-gray-400 mb-2">Typ zmeny *</label>
+        <div class="grid grid-cols-2 gap-2" id="mm-cr-type-grid">
+          <button type="button" onclick="mmCrSetType('schema_change')" id="mm-crt-schema" class="p-3 rounded-lg border text-left transition-colors border-primary-500 bg-primary-500/10 text-primary-400">
+            <div class="text-xs font-medium">Schema change</div>
+            <div class="text-[10px] opacity-60 mt-0.5">Pridanie/zmena stĺpca alebo poľa</div>
+          </button>
+          <button type="button" onclick="mmCrSetType('breaking_change')" id="mm-crt-breaking" class="p-3 rounded-lg border text-left transition-colors border-slate-600 text-gray-400 hover:border-slate-500">
+            <div class="text-xs font-medium">Breaking change</div>
+            <div class="text-[10px] opacity-60 mt-0.5">Spätne nekompatibilná zmena</div>
+          </button>
+          <button type="button" onclick="mmCrSetType('deprecation')" id="mm-crt-depr" class="p-3 rounded-lg border text-left transition-colors border-slate-600 text-gray-400 hover:border-slate-500">
+            <div class="text-xs font-medium">Deprecation</div>
+            <div class="text-[10px] opacity-60 mt-0.5">Označenie ako zastaralé</div>
+          </button>
+          <button type="button" onclick="mmCrSetType('new_version')" id="mm-crt-ver" class="p-3 rounded-lg border text-left transition-colors border-slate-600 text-gray-400 hover:border-slate-500">
+            <div class="text-xs font-medium">New version</div>
+            <div class="text-[10px] opacity-60 mt-0.5">Nová verzia s migrациou</div>
+          </button>
+        </div>
+      </div>
+      <!-- Title -->
+      <div>
+        <label class="block text-xs font-medium text-gray-400 mb-1.5">Názov zmeny *</label>
+        <input id="mm-cr-title" type="text" placeholder="napr. Pridať stĺpec eu_vat_code"
+          class="w-full rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-primary-500 transition-colors" />
+      </div>
+      <!-- Description -->
+      <div>
+        <label class="block text-xs font-medium text-gray-400 mb-1.5">Popis a motivácia</label>
+        <textarea id="mm-cr-desc" rows="3" placeholder="Prečo je táto zmena potrebná?"
+          class="w-full rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-primary-500 transition-colors"></textarea>
+      </div>
+      <!-- Affected modules (auto) -->
+      <div class="rounded-xl border border-slate-800 bg-slate-900 p-4">
+        <div class="text-[10px] text-gray-600 uppercase tracking-widest font-semibold mb-2">Dotknuté moduly (auto)</div>
+        <div id="mm-cr-affected" class="flex flex-wrap gap-2 text-xs text-gray-400 italic">Vyber zdroj pre zobrazenie</div>
+      </div>
+      <!-- Actions -->
+      <div class="flex gap-3 pt-2">
+        <button onclick="showScreen('mm-resources')" class="flex-1 px-4 py-2 text-sm text-gray-400 border border-slate-700 rounded-lg hover:bg-slate-800 transition-colors">Zrušiť</button>
+        <button onclick="mmSubmitChangeReq()" class="flex-1 px-4 py-2 text-sm font-medium text-white bg-primary-600 hover:bg-primary-500 rounded-lg transition-colors">Odoslať request</button>
+      </div>
+    </div>
+  </div>
+</div><!-- /screen-mm-changereq -->
 
 <div id="screen-settings" class="screen flex flex-col h-full">
 
@@ -3840,7 +4014,7 @@ Docker Compose — backend (8000), frontend (3000, Nginx), postgres (5432 intern
      JAVASCRIPT
 ════════════════════════════════════════════════════════════════════ -->
 <script>
-  const SCREENS = ['home','projects','project-detail','version','new-project','versions','new-version','spec','uidesign','summary','architecture','audit','design','taskplan','implementacia','kb','settings','login','mm-overview','mm-module'];
+  const SCREENS = ['home','projects','project-detail','version','new-project','versions','new-version','spec','uidesign','summary','architecture','audit','design','taskplan','implementacia','kb','settings','login','mm-overview','mm-module','mm-resources','mm-resource-detail','mm-depmap','mm-changereq'];
 
   // ---- Aktívny kontext (projekt + verzia) ----
   let activeCtx = { project: 'NEX Ledger', slug: 'NL', version: 'v0.1' };
@@ -3921,8 +4095,12 @@ Docker Compose — backend (8000), frontend (3000, Nginx), postgres (5432 intern
     'kb':             'Knowledge Base',
     'settings':       'Settings',
     'login':          'Sign in',
-    'mm-overview':    'Multi-Module Overview',
-    'mm-module':      'Module Detail',
+    'mm-overview':         'Multi-Module Overview',
+    'mm-module':           'Module Detail',
+    'mm-resources':        'Shared Resources',
+    'mm-resource-detail':  'Resource Detail',
+    'mm-depmap':           'Dependency Map',
+    'mm-changereq':        'Change Request',
   };
   let _navStack   = [];   // array of screen names (history)
   let _navCurrent = 'home';
@@ -4507,7 +4685,9 @@ Docker Compose — backend (8000), frontend (3000, Nginx), postgres (5432 intern
     if (name === 'home')        renderProjectsHome();
     if (name === 'projects')   renderProjectsList();
     if (name === 'versions')   renderVersionsList();
-    if (name === 'mm-overview') mmRenderModuleCards();
+    if (name === 'mm-overview')       mmRenderModuleCards();
+    if (name === 'mm-resources')      mmRenderResources();
+    if (name === 'mm-depmap')         mmRenderDepMap();
   }
 
   // ── UI Design approve ──
@@ -7486,6 +7666,284 @@ Docker Compose — backend (8000), frontend (3000, Nginx), postgres (5432 intern
     if (!_mmCurrentModule) return;
     showScreen('version');
     _showToast(`Workflow modulu ${_mmCurrentModule} — Single Module pipeline`);
+  }
+
+  // ── Shared Resources data ──────────────────────────────────────────────────
+  const _sharedResources = [
+    { id:'sr1',  name:'partners',        type:'db_table',     owner:'PAB',   consumers:['ESHOP','SKLAD','UCT'], status:'stable',     desc:'Tabuľka partnerov, dodávateľov a odberateľov',  schema:['id UUID PK','name VARCHAR','type ENUM','email VARCHAR','phone VARCHAR','tax_id VARCHAR','created_at TIMESTAMP'] },
+    { id:'sr2',  name:'products',        type:'db_table',     owner:'ESHOP', consumers:['SKLAD','POS'],         status:'stable',     desc:'Katalóg produktov a služieb',                   schema:['id UUID PK','code VARCHAR','name VARCHAR','price DECIMAL','unit VARCHAR','category_id UUID','active BOOL'] },
+    { id:'sr3',  name:'tax_rates',       type:'db_table',     owner:'UCT',   consumers:['PAB','ESHOP','SKLAD','POS'], status:'change_req', desc:'Sadzby DPH a daňové kategórie',       schema:['id UUID PK','code VARCHAR','rate DECIMAL','name VARCHAR','valid_from DATE'] },
+    { id:'sr4',  name:'orders',          type:'db_table',     owner:'ESHOP', consumers:['UCT'],                 status:'stable',     desc:'Objednávky zákazníkov',                         schema:['id UUID PK','partner_id UUID FK','status ENUM','total DECIMAL','created_at TIMESTAMP'] },
+    { id:'sr5',  name:'stock_items',     type:'db_table',     owner:'SKLAD', consumers:['POS'],                 status:'stable',     desc:'Skladové zásoby a pohyby tovaru',               schema:['id UUID PK','product_id UUID FK','quantity DECIMAL','location VARCHAR','updated_at TIMESTAMP'] },
+    { id:'sr6',  name:'ledger_entries',  type:'db_table',     owner:'UCT',   consumers:[],                      status:'stable',     desc:'Účtovné záznamy (double-entry)',                schema:['id UUID PK','debit_account VARCHAR','credit_account VARCHAR','amount DECIMAL','date DATE','reference VARCHAR'] },
+    { id:'sr7',  name:'PartnerSelector', type:'ui_component', owner:'PAB',   consumers:['ESHOP','SKLAD'],       status:'stable',     desc:'React komponent pre výber partnera z číselníka', schema:['value: UUID | null','onChange: (id) => void','placeholder?: string','disabled?: boolean'] },
+    { id:'sr8',  name:'PartnerForm',     type:'ui_component', owner:'PAB',   consumers:[],                      status:'stable',     desc:'Formulár pre vytvorenie a editáciu partnera',   schema:['initialData?: Partner','onSave: (p) => void','onCancel: () => void'] },
+    { id:'sr9',  name:'ProductCard',     type:'ui_component', owner:'ESHOP', consumers:['POS'],                 status:'stable',     desc:'Karta produktu pre zobrazenie v katalógu',      schema:['product: Product','onAdd?: () => void','showStock?: boolean'] },
+    { id:'sr10', name:'CartWidget',      type:'ui_component', owner:'ESHOP', consumers:[],                      status:'stable',     desc:'Košík — widget pre správu položiek objednávky',  schema:['items: CartItem[]','onCheckout: () => void','onClear: () => void'] },
+    { id:'sr11', name:'StockTable',      type:'ui_component', owner:'SKLAD', consumers:[],                      status:'stable',     desc:'Tabuľka skladových položiek s filtrovaním',     schema:['items: StockItem[]','onAdjust?: (id, qty) => void'] },
+    { id:'sr12', name:'JournalEntry',    type:'ui_component', owner:'UCT',   consumers:[],                      status:'stable',     desc:'Formulár pre manuálny účtovný záznam',          schema:['onSubmit: (entry) => void','readOnly?: boolean'] },
+  ];
+
+  const _changeRequests = [
+    { id:'cr1', resourceId:'sr3', resource:'tax_rates', proposedBy:'ESHOP', type:'schema_change', title:'Pridať stĺpec eu_vat_code', desc:'Potrebujeme EU VAT kód pre cross-border predaj do EÚ', status:'open', date:'20. 4. 2026' },
+  ];
+
+  let _mmCurrentResource = null;
+  let _mmResTypeFilter = 'all';
+  let _mmCrType = 'schema_change';
+
+  const _resTypeLabels = { db_table:'DB Tabuľka', ui_component:'UI Komponent', api:'API' };
+  const _resTypeBadge = {
+    db_table:     'bg-blue-500/15 text-blue-400 border-blue-500/30',
+    ui_component: 'bg-purple-500/15 text-purple-400 border-purple-500/30',
+    api:          'bg-green-500/15 text-green-400 border-green-500/30',
+  };
+  const _resStatusLabel  = { stable:'Stabilná', change_req:'Change req.', breaking:'Breaking!' };
+  const _resStatusBadge  = {
+    stable:     'bg-green-500/15 text-green-400 border-green-500/30',
+    change_req: 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30',
+    breaking:   'bg-red-500/15 text-red-400 border-red-500/30',
+  };
+
+  function mmResFilter(type) {
+    _mmResTypeFilter = type;
+    ['all','db','ui','api'].forEach(t => {
+      const btn = document.getElementById('mm-res-f-' + t);
+      if (btn) btn.className = 'text-xs px-2.5 py-1 rounded-lg transition-colors ' +
+        (t === (type === 'db_table' ? 'db' : type === 'ui_component' ? 'ui' : type === 'api' ? 'api' : 'all')
+          ? 'bg-primary-600/20 text-primary-400 border border-primary-500/30'
+          : 'text-gray-500 hover:text-gray-300');
+    });
+    mmRenderResources();
+  }
+
+  function mmRenderResources() {
+    const list  = document.getElementById('mm-res-list');
+    if (!list) return;
+    const modF  = document.getElementById('mm-res-mod-filter')?.value || '';
+    // Populate module filter select if empty
+    const sel = document.getElementById('mm-res-mod-filter');
+    if (sel && sel.options.length <= 1) {
+      _mmModules.forEach(m => { const o = document.createElement('option'); o.value = m.code; o.textContent = m.code + ' — ' + m.name; sel.appendChild(o); });
+    }
+    let res = _sharedResources;
+    if (_mmResTypeFilter !== 'all') res = res.filter(r => r.type === _mmResTypeFilter);
+    if (modF) res = res.filter(r => r.owner === modF || r.consumers.includes(modF));
+    const countEl = document.getElementById('mm-res-count');
+    if (countEl) countEl.textContent = res.length;
+    if (res.length === 0) { list.innerHTML = '<div class="text-sm text-gray-600 italic text-center py-8">Žiadne zdroje pre zvolený filter</div>'; return; }
+    list.innerHTML = res.map(r => {
+      const typeBadge   = `<span class="text-[9px] px-1.5 py-0.5 rounded border ${_resTypeBadge[r.type] || ''}">${_resTypeLabels[r.type] || r.type}</span>`;
+      const statusBadge = `<span class="text-[9px] px-1.5 py-0.5 rounded border ${_resStatusBadge[r.status] || ''}">${_resStatusLabel[r.status] || r.status}</span>`;
+      const ownerMod = _mmModules.find(m => m.code === r.owner);
+      const ownerC = ownerMod ? (_mmColors[ownerMod.color] || _mmColors.indigo) : _mmColors.indigo;
+      const crCount = _changeRequests.filter(c => c.resourceId === r.id && c.status === 'open').length;
+      return `
+        <div onclick="mmOpenResourceDetail('${r.id}')" class="card-hover cursor-pointer rounded-xl border border-slate-800 bg-slate-900 p-4 flex items-center gap-4">
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 mb-1">
+              <span class="text-sm font-semibold text-gray-200 font-mono">${r.name}</span>
+              ${typeBadge} ${statusBadge}
+              ${crCount > 0 ? `<span class="text-[9px] px-1.5 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400 border border-yellow-500/30">${crCount} CR</span>` : ''}
+            </div>
+            <div class="text-xs text-gray-500 truncate">${r.desc}</div>
+          </div>
+          <div class="flex items-center gap-3 shrink-0">
+            <div class="flex items-center gap-1.5 text-xs">
+              <span class="text-[10px] font-bold px-1.5 py-0.5 rounded font-mono ${ownerC.bg} ${ownerC.text} border ${ownerC.border}">${r.owner}</span>
+              ${r.consumers.length > 0 ? `<span class="text-gray-600">→</span><span class="text-[10px] text-gray-500">${r.consumers.join(', ')}</span>` : '<span class="text-[10px] text-gray-600">no consumers</span>'}
+            </div>
+            <svg class="w-3.5 h-3.5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  function mmOpenResourceDetail(id) {
+    const r = _sharedResources.find(x => x.id === id);
+    if (!r) return;
+    _mmCurrentResource = id;
+    // Populate topbar
+    const nameEl = document.getElementById('mm-rd-name');
+    const typeBEl = document.getElementById('mm-rd-type-badge');
+    if (nameEl) nameEl.textContent = r.name;
+    if (typeBEl) { typeBEl.textContent = _resTypeLabels[r.type] || r.type; typeBEl.className = `text-[10px] px-2 py-0.5 rounded border font-medium ${_resTypeBadge[r.type] || ''}`; }
+    // Meta
+    document.getElementById('mm-rd-desc').textContent = r.desc;
+    const ownerEl = document.getElementById('mm-rd-owner');
+    if (ownerEl) { ownerEl.textContent = r.owner; ownerEl.onclick = () => mmOpenModuleDetail(r.owner); }
+    const statusEl = document.getElementById('mm-rd-status');
+    if (statusEl) statusEl.innerHTML = `<span class="text-[10px] px-2 py-0.5 rounded border ${_resStatusBadge[r.status] || ''}">${_resStatusLabel[r.status] || r.status}</span>`;
+    // Consumers
+    const consEl = document.getElementById('mm-rd-consumers');
+    if (consEl) {
+      if (r.consumers.length === 0) { consEl.innerHTML = '<span class="text-xs text-gray-600 italic">Žiadne moduly nekonzumujú tento zdroj</span>'; }
+      else consEl.innerHTML = r.consumers.map(c => {
+        const m = _mmModules.find(x => x.code === c);
+        const col = m ? (_mmColors[m.color] || _mmColors.indigo) : _mmColors.indigo;
+        return `<button onclick="mmOpenModuleDetail('${c}')" class="text-xs font-mono font-bold px-2.5 py-1 rounded ${col.bg} ${col.text} border ${col.border} hover:opacity-80 transition-opacity">${c}</button>`;
+      }).join('');
+    }
+    // Schema
+    const schLabel = document.getElementById('mm-rd-schema-label');
+    const schEl    = document.getElementById('mm-rd-schema');
+    if (schLabel) schLabel.textContent = r.type === 'ui_component' ? 'Props / Interface' : 'Schéma';
+    if (schEl) schEl.innerHTML = r.schema.map(f => {
+      const [name, ...rest] = f.split(' ');
+      return `<div class="flex items-center gap-2 py-1 border-b border-slate-800 last:border-0">
+        <span class="text-primary-400 w-36 shrink-0">${name}</span>
+        <span class="text-gray-500">${rest.join(' ')}</span>
+      </div>`;
+    }).join('');
+    // Change requests
+    const crsEl = document.getElementById('mm-rd-crs');
+    const crs = _changeRequests.filter(c => c.resourceId === id);
+    if (crsEl) {
+      if (crs.length === 0) { crsEl.innerHTML = '<div class="text-xs text-gray-600 italic">Žiadne aktívne change requesty</div>'; }
+      else crsEl.innerHTML = crs.map(cr => `
+        <div class="flex items-start gap-3 p-3 rounded-lg border border-yellow-500/20 bg-yellow-500/5">
+          <div class="flex-1">
+            <div class="flex items-center gap-2 mb-1">
+              <span class="text-xs font-medium text-gray-200">${cr.title}</span>
+              <span class="text-[9px] px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-400 border border-yellow-500/30">${cr.type}</span>
+            </div>
+            <div class="text-[10px] text-gray-500">${cr.desc}</div>
+            <div class="text-[10px] text-gray-600 mt-1">Navrhol: ${cr.proposedBy} · ${cr.date}</div>
+          </div>
+          <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-slate-700 text-gray-400 shrink-0">${cr.status}</span>
+        </div>`).join('');
+    }
+    showScreen('mm-resource-detail');
+  }
+
+  // ── Dependency Map ─────────────────────────────────────────────────────────
+  function mmRenderDepMap() {
+    const svg = document.getElementById('mm-depmap-svg');
+    if (!svg) return;
+    // Fixed positions for 5 modules (cx, cy)
+    const pos = { PAB:[350,65], ESHOP:[170,200], UCT:[530,200], SKLAD:[90,335], POS:[270,335] };
+    const W = 130, H = 54;
+    // Edges: [from, to, resources label]
+    const edges = [
+      ['PAB','ESHOP','partners, PartnerSelector'],
+      ['PAB','UCT',  'partners'],
+      ['ESHOP','SKLAD','products, orders'],
+      ['ESHOP','POS',  'products'],
+    ];
+    const crRes = _changeRequests.filter(c => c.status === 'open').map(c => {
+      const r = _sharedResources.find(x => x.id === c.resourceId);
+      return r ? r.name : '';
+    });
+    // Draw edges first (behind nodes)
+    const edgeSvg = edges.map(([from, to, label]) => {
+      const [fx, fy] = pos[from], [tx, ty] = pos[to];
+      const x1 = fx, y1 = fy + H/2;
+      const x2 = tx, y2 = ty - H/2;
+      const mx = (x1+x2)/2, my = (y1+y2)/2;
+      const hasChange = label.split(',').map(s=>s.trim()).some(l => crRes.includes(l));
+      const color = hasChange ? '#eab308' : '#22c55e';
+      const d = `M ${x1} ${y1} C ${x1} ${my}, ${x2} ${my}, ${x2} ${y2}`;
+      return `<path d="${d}" stroke="${color}" stroke-width="1.5" fill="none" stroke-dasharray="${hasChange ? '5,3' : 'none'}" opacity="0.6"/>
+        <text x="${mx}" y="${my - 6}" text-anchor="middle" font-size="9" fill="${color}" opacity="0.8">${label}</text>`;
+    }).join('');
+    // Draw module nodes
+    const nodeSvg = _mmModules.map(m => {
+      const [cx, cy] = pos[m.code] || [0,0];
+      const x = cx - W/2, y = cy - H/2;
+      const col = _mmColors[m.color] || _mmColors.indigo;
+      // Extract hex-ish colors from tailwind classes — use hardcoded colors per module
+      const colors = { indigo:['#4f46e5','#818cf8'], green:['#16a34a','#4ade80'], blue:['#2563eb','#60a5fa'], purple:['#9333ea','#c084fc'], orange:['#ea580c','#fb923c'] };
+      const [bg, text] = colors[m.color] || colors.indigo;
+      const hasConflict = _changeRequests.some(cr => cr.status === 'open' && _sharedResources.find(r => r.id === cr.resourceId)?.owner === m.code);
+      const stepPct = Math.round((m.step / 7) * 100);
+      return `<g onclick="mmOpenModuleDetail('${m.code}')" style="cursor:pointer" class="dep-node-g">
+        <rect x="${x}" y="${y}" width="${W}" height="${H}" rx="10" fill="${bg}22" stroke="${bg}" stroke-width="1.5"/>
+        <text x="${cx}" y="${cy - 8}" text-anchor="middle" font-size="11" font-weight="700" fill="${text}" font-family="monospace">${m.code}</text>
+        <text x="${cx}" y="${cy + 6}" text-anchor="middle" font-size="9" fill="#94a3b8">${m.name}</text>
+        <text x="${cx}" y="${cy + 18}" text-anchor="middle" font-size="8" fill="${bg}cc">Krok ${m.step}/7 · ${stepPct}%</text>
+        ${hasConflict ? `<circle cx="${x+W-8}" cy="${y+8}" r="5" fill="#eab308"/><text x="${x+W-8}" y="${y+12}" text-anchor="middle" font-size="7" fill="#000">!</text>` : ''}
+      </g>`;
+    }).join('');
+    // Legend
+    const legend = `<g>
+      <rect x="10" y="400" width="8" height="2" rx="1" fill="#22c55e"/>
+      <text x="22" y="404" font-size="9" fill="#94a3b8">Stabilná závislosť</text>
+      <rect x="130" y="399" width="8" height="2" rx="1" fill="#eab308" stroke-dasharray="3,2"/>
+      <text x="142" y="404" font-size="9" fill="#94a3b8">Change request aktívny</text>
+      <circle cx="274" cy="401" r="4" fill="#eab30866"/>
+      <text x="282" y="405" font-size="9" fill="#94a3b8">Owner má otvorený CR</text>
+    </g>`;
+    svg.innerHTML = edgeSvg + nodeSvg + legend;
+  }
+
+  // ── Change Request ─────────────────────────────────────────────────────────
+  function mmOpenChangeReq(resourceId) {
+    _mmCrType = 'schema_change';
+    // Populate resource selector
+    const sel = document.getElementById('mm-cr-resource');
+    if (sel) {
+      sel.innerHTML = '<option value="">— vyber zdroj —</option>' +
+        _sharedResources.map(r => `<option value="${r.id}">${r.name} (${_resTypeLabels[r.type] || r.type})</option>`).join('');
+      if (resourceId) sel.value = resourceId;
+    }
+    mmCrSetType('schema_change');
+    if (resourceId) mmCrOnResourceChange();
+    // Reset fields
+    const titleEl = document.getElementById('mm-cr-title');
+    const descEl  = document.getElementById('mm-cr-desc');
+    if (titleEl) titleEl.value = '';
+    if (descEl)  descEl.value = '';
+    showScreen('mm-changereq');
+  }
+
+  function mmCrSetType(type) {
+    _mmCrType = type;
+    const map = { schema_change:'schema', breaking_change:'breaking', deprecation:'depr', new_version:'ver' };
+    Object.entries(map).forEach(([t, id]) => {
+      const btn = document.getElementById('mm-crt-' + id);
+      if (!btn) return;
+      const active = t === type;
+      btn.className = `p-3 rounded-lg border text-left transition-colors ${active ? 'border-primary-500 bg-primary-500/10 text-primary-400' : 'border-slate-600 text-gray-400 hover:border-slate-500'}`;
+    });
+  }
+
+  function mmCrOnResourceChange() {
+    const sel = document.getElementById('mm-cr-resource');
+    const id  = sel?.value;
+    const affEl = document.getElementById('mm-cr-affected');
+    if (!affEl) return;
+    if (!id) { affEl.innerHTML = '<span class="text-gray-600 italic">Vyber zdroj pre zobrazenie</span>'; return; }
+    const r = _sharedResources.find(x => x.id === id);
+    if (!r) return;
+    const affected = [r.owner, ...r.consumers];
+    affEl.innerHTML = affected.map(code => {
+      const m = _mmModules.find(x => x.code === code);
+      const col = m ? (_mmColors[m.color] || _mmColors.indigo) : _mmColors.indigo;
+      const role = code === r.owner ? 'Owner' : 'Consumer';
+      return `<span class="flex items-center gap-1 text-[10px] px-2 py-1 rounded border ${col.bg} ${col.text} ${col.border}">
+        <span class="font-mono font-bold">${code}</span>
+        <span class="opacity-60">${role}</span>
+      </span>`;
+    }).join('');
+  }
+
+  function mmSubmitChangeReq() {
+    const sel   = document.getElementById('mm-cr-resource');
+    const title = document.getElementById('mm-cr-title')?.value.trim();
+    const desc  = document.getElementById('mm-cr-desc')?.value.trim();
+    if (!sel?.value || !title) { _showToast('⛔ Vyplň zdroj a názov zmeny'); return; }
+    const r = _sharedResources.find(x => x.id === sel.value);
+    const btn = document.querySelector('#screen-mm-changereq button[onclick="mmSubmitChangeReq()"]');
+    if (btn) { btn.disabled = true; btn.textContent = 'Odosielam...'; }
+    setTimeout(() => {
+      const newCr = { id:'cr' + (_changeRequests.length+1), resourceId: sel.value, resource: r?.name || '', proposedBy: activeCtx.slug || 'SYS', type: _mmCrType, title, desc: desc || '', status:'open', date: new Date().toLocaleDateString('sk-SK') };
+      _changeRequests.push(newCr);
+      // Mark resource as change_req
+      if (r && r.status === 'stable') r.status = 'change_req';
+      if (btn) { btn.disabled = false; btn.textContent = 'Odoslať request'; }
+      showScreen('mm-resources');
+      _showToast(`Change Request odoslaný pre ${r?.name || ''}`);
+    }, 600);
   }
 </script>
 <!-- Toast notifikácia -->
