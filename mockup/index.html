@@ -54,9 +54,11 @@
     #screen-login.active         { display: flex !important; position: fixed; inset: 0; z-index: 100; background: #0f172a; }
     @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
     #screen-kb.active          { display: flex !important; flex-direction: column; }
-    #screen-summary.active      { display: flex !important; flex-direction: column; }
-    #screen-architecture.active { display: flex !important; flex-direction: column; }
-    #screen-audit.active        { display: flex !important; flex-direction: column; }
+    #screen-summary.active        { display: flex !important; flex-direction: column; }
+    #screen-architecture.active   { display: flex !important; flex-direction: column; }
+    #screen-audit.active          { display: flex !important; flex-direction: column; }
+    #screen-mm-overview.active    { display: flex !important; flex-direction: column; }
+    #screen-mm-module.active      { display: flex !important; flex-direction: column; }
     .bug-row { cursor: pointer; transition: background 0.1s; border-left: 2px solid transparent; }
     .bug-row:hover { background: rgba(255,255,255,0.03); }
     .bug-row.active { background: rgba(99,102,241,0.1); border-left-color: #6366f1; }
@@ -3236,6 +3238,287 @@ Docker Compose — backend (8000), frontend (3000, Nginx), postgres (5432 intern
   </div>
 </div><!-- /screen-new-project -->
 
+<!-- ═══════════════════════════════════════════════════ SCREEN: MM OVERVIEW -->
+<div id="screen-mm-overview" class="screen flex flex-col h-full">
+
+  <!-- Topbar -->
+  <div class="flex-shrink-0 bg-slate-900/50 border-b border-slate-800 px-5 py-2.5 flex items-center gap-3">
+    <button onclick="showScreen('projects')" class="text-gray-500 hover:text-gray-300 transition-colors">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+    </button>
+    <div class="flex items-center gap-2">
+      <span class="text-sm font-semibold text-gray-100" id="mm-project-name">NEX Automat</span>
+      <span class="text-[10px] bg-indigo-500/20 border border-indigo-500/30 text-indigo-400 px-2 py-0.5 rounded-full font-medium">Multi-Module</span>
+    </div>
+    <div class="flex-1"></div>
+    <!-- Stats -->
+    <div class="flex items-center gap-4 text-xs text-gray-500">
+      <span><span id="mm-stat-modules" class="text-gray-300 font-semibold">5</span> modulov</span>
+      <span><span id="mm-stat-resources" class="text-gray-300 font-semibold">12</span> zdieľaných zdrojov</span>
+      <div class="flex items-center gap-1.5">
+        <div class="w-20 h-1.5 bg-slate-700 rounded-full overflow-hidden">
+          <div class="h-full bg-primary-500 rounded-full transition-all" id="mm-stat-bar" style="width:38%"></div>
+        </div>
+        <span id="mm-stat-pct" class="text-primary-400 font-medium">38%</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Action bar -->
+  <div class="flex-shrink-0 px-5 py-2.5 border-b border-slate-800 flex items-center gap-2">
+    <button onclick="mmOpenNewModule()" class="flex items-center gap-1.5 bg-primary-600 hover:bg-primary-500 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors">
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+      Pridať modul
+    </button>
+    <button onclick="_showToast('Shared Resources — pripravuje sa')" class="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-200 border border-slate-700 hover:border-slate-500 px-3 py-1.5 rounded-lg transition-colors">
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/></svg>
+      Shared Resources
+    </button>
+    <button onclick="_showToast('Dependency Map — pripravuje sa')" class="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-200 border border-slate-700 hover:border-slate-500 px-3 py-1.5 rounded-lg transition-colors">
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
+      Dependency Map
+    </button>
+    <div class="flex-1"></div>
+    <div id="mm-conflict-badge" class="hidden flex items-center gap-1.5 text-xs text-red-400 bg-red-500/10 border border-red-500/20 px-2.5 py-1 rounded-full">
+      <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+      <span id="mm-conflict-count">1</span> konflikt
+    </div>
+  </div>
+
+  <!-- Main content -->
+  <div class="flex-1 overflow-y-auto p-5">
+    <div class="max-w-5xl mx-auto space-y-5">
+
+      <!-- Module grid -->
+      <div>
+        <div class="text-[10px] text-gray-600 uppercase tracking-widest font-semibold mb-3">Moduly</div>
+        <div id="mm-module-grid" class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <!-- Filled by mmRenderModuleCards() -->
+        </div>
+      </div>
+
+      <!-- Bottom row: Shared Resources summary + Activity -->
+      <div class="grid grid-cols-2 gap-4">
+
+        <!-- Shared Resources summary -->
+        <div class="rounded-xl border border-slate-800 bg-slate-900 p-4">
+          <div class="flex items-center justify-between mb-3">
+            <span class="text-xs font-semibold text-gray-300">Zdieľané zdroje</span>
+            <button onclick="_showToast('Shared Resources — pripravuje sa')" class="text-[10px] text-primary-400 hover:text-primary-300 transition-colors">Zobraziť všetky →</button>
+          </div>
+          <div class="space-y-2">
+            <div class="flex items-center justify-between text-xs">
+              <div class="flex items-center gap-2">
+                <div class="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0"></div>
+                <span class="font-mono text-gray-300">partners</span>
+                <span class="text-gray-600">PAB → ESHOP, SKLAD, UCT</span>
+              </div>
+              <span class="text-[10px] text-green-400">Stabilná</span>
+            </div>
+            <div class="flex items-center justify-between text-xs">
+              <div class="flex items-center gap-2">
+                <div class="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0"></div>
+                <span class="font-mono text-gray-300">products</span>
+                <span class="text-gray-600">ESHOP → SKLAD, POS</span>
+              </div>
+              <span class="text-[10px] text-green-400">Stabilná</span>
+            </div>
+            <div class="flex items-center justify-between text-xs">
+              <div class="flex items-center gap-2">
+                <div class="w-1.5 h-1.5 rounded-full bg-yellow-500 shrink-0"></div>
+                <span class="font-mono text-gray-300">tax_rates</span>
+                <span class="text-gray-600">systém → všetky</span>
+              </div>
+              <span class="text-[10px] text-yellow-400">Change req.</span>
+            </div>
+            <div class="flex items-center justify-between text-xs">
+              <div class="flex items-center gap-2">
+                <div class="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0"></div>
+                <span class="font-mono text-gray-300">PartnerSelector</span>
+                <span class="text-gray-600">PAB → ESHOP, SKLAD</span>
+              </div>
+              <span class="text-[10px] text-green-400">Stabilná</span>
+            </div>
+            <div class="pt-1 border-t border-slate-800 text-[10px] text-gray-600">
+              + 8 ďalších zdrojov
+            </div>
+          </div>
+        </div>
+
+        <!-- Activity -->
+        <div class="rounded-xl border border-slate-800 bg-slate-900 p-4">
+          <div class="text-xs font-semibold text-gray-300 mb-3">Posledná aktivita</div>
+          <div class="space-y-2.5">
+            <div class="flex items-start gap-2.5 text-xs">
+              <span class="shrink-0 w-6 h-6 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center text-[9px] font-bold mt-0.5">PAB</span>
+              <div>
+                <span class="text-gray-300">Architecture schválená</span>
+                <span class="text-gray-600 ml-1">· 2h ago</span>
+              </div>
+            </div>
+            <div class="flex items-start gap-2.5 text-xs">
+              <span class="shrink-0 w-6 h-6 rounded-full bg-green-500/20 text-green-400 flex items-center justify-center text-[9px] font-bold mt-0.5">ES</span>
+              <div>
+                <span class="text-gray-300">Summary vygenerované</span>
+                <span class="text-gray-600 ml-1">· 5h ago</span>
+              </div>
+            </div>
+            <div class="flex items-start gap-2.5 text-xs">
+              <span class="shrink-0 w-6 h-6 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center text-[9px] font-bold mt-0.5">SK</span>
+              <div>
+                <span class="text-gray-300">Spec zadaný</span>
+                <span class="text-gray-600 ml-1">· včera</span>
+              </div>
+            </div>
+            <div class="flex items-start gap-2.5 text-xs">
+              <span class="shrink-0 w-6 h-6 rounded-full bg-yellow-500/20 text-yellow-400 flex items-center justify-center text-[9px] font-bold mt-0.5">SYS</span>
+              <div>
+                <span class="text-gray-300">Change request: <span class="font-mono text-yellow-300">tax_rates</span></span>
+                <span class="text-gray-600 ml-1">· včera</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- New Module modal overlay -->
+  <div id="mm-new-module-overlay" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-6">
+    <div class="w-full max-w-md bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl">
+      <div class="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
+        <h2 class="text-sm font-semibold text-gray-100">Nový modul</h2>
+        <button onclick="mmCloseNewModule()" class="text-gray-500 hover:text-gray-300 transition-colors">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="p-6 space-y-4">
+        <div>
+          <label class="block text-xs font-medium text-gray-400 mb-1.5">Kód modulu *</label>
+          <input id="mm-nm-code" type="text" placeholder="napr. UCT" maxlength="6"
+            class="w-full rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-gray-100 font-mono uppercase focus:outline-none focus:border-primary-500 transition-colors" />
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-gray-400 mb-1.5">Názov modulu *</label>
+          <input id="mm-nm-name" type="text" placeholder="napr. Účtovníctvo"
+            class="w-full rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-primary-500 transition-colors" />
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-gray-400 mb-1.5">Závisí od modulov</label>
+          <div id="mm-nm-deps" class="flex flex-wrap gap-1.5 p-2 rounded-lg border border-slate-700 bg-slate-800 min-h-[36px]">
+            <!-- Dep chips rendered by mmRenderDepChips() -->
+          </div>
+          <div class="text-[10px] text-gray-600 mt-1">Klikni na modul aby si pridal závislosť</div>
+        </div>
+        <div class="flex gap-3 pt-2">
+          <button onclick="mmCloseNewModule()" class="flex-1 px-4 py-2 text-xs text-gray-400 border border-slate-700 rounded-lg hover:bg-slate-800 transition-colors">Zrušiť</button>
+          <button onclick="mmSubmitNewModule()" class="flex-1 px-4 py-2 text-xs font-medium text-white bg-primary-600 hover:bg-primary-500 rounded-lg transition-colors">Pridať modul</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /screen-mm-overview -->
+
+<!-- ═══════════════════════════════════════════════════ SCREEN: MM MODULE DETAIL -->
+<div id="screen-mm-module" class="screen flex flex-col h-full">
+
+  <!-- Topbar -->
+  <div class="flex-shrink-0 bg-slate-900/50 border-b border-slate-800 px-5 py-2.5 flex items-center gap-3">
+    <button onclick="showScreen('mm-overview')" class="text-gray-500 hover:text-gray-300 transition-colors">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+    </button>
+    <div class="flex items-center gap-2">
+      <span id="mm-mod-badge" class="text-[11px] font-bold px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-400 font-mono">PAB</span>
+      <span id="mm-mod-title" class="text-sm font-semibold text-gray-100">Partner Catalog</span>
+    </div>
+    <div class="flex-1"></div>
+    <span id="mm-mod-status-badge" class="text-[10px] px-2.5 py-1 rounded-full border font-medium">Aktívny</span>
+    <button id="mm-mod-enter-btn" onclick="mmEnterWorkflow()" class="flex items-center gap-1.5 bg-primary-600 hover:bg-primary-500 text-white text-xs font-medium px-4 py-1.5 rounded-lg transition-colors ml-2">
+      Vstúpiť do workflow →
+    </button>
+  </div>
+
+  <!-- Pipeline progress bar -->
+  <div class="flex-shrink-0 px-5 py-3 border-b border-slate-800 bg-slate-900/30">
+    <div class="flex items-center gap-3">
+      <span class="text-[10px] text-gray-500 shrink-0">Pipeline:</span>
+      <div class="flex items-center gap-1 flex-1" id="mm-mod-pipeline-dots"></div>
+      <span id="mm-mod-pipeline-label" class="text-xs text-primary-400 font-medium shrink-0"></span>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="flex-shrink-0 flex items-center gap-1 px-5 py-2 border-b border-slate-800">
+    <button id="mm-tab-workflow" onclick="mmModTab('workflow')"
+      class="text-xs font-medium px-3 py-1.5 rounded-lg bg-primary-600/20 text-primary-400 border border-primary-500/30 transition-colors">
+      Workflow
+    </button>
+    <button id="mm-tab-resources" onclick="mmModTab('resources')"
+      class="text-xs font-medium px-3 py-1.5 rounded-lg text-gray-500 hover:text-gray-300 transition-colors">
+      Zdieľané zdroje
+    </button>
+    <button id="mm-tab-deps" onclick="mmModTab('deps')"
+      class="text-xs font-medium px-3 py-1.5 rounded-lg text-gray-500 hover:text-gray-300 transition-colors">
+      Závislosti
+    </button>
+  </div>
+
+  <!-- Tab content -->
+  <div class="flex-1 overflow-y-auto p-5">
+    <div class="max-w-2xl mx-auto">
+
+      <!-- WORKFLOW TAB -->
+      <div id="mm-panel-workflow">
+        <div class="space-y-2" id="mm-mod-steps-list"></div>
+        <div class="mt-5 p-4 rounded-xl border border-primary-500/20 bg-primary-600/5 flex items-center gap-4">
+          <div class="w-10 h-10 rounded-full bg-primary-600/20 flex items-center justify-center shrink-0">
+            <svg class="w-5 h-5 text-primary-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+          </div>
+          <div class="flex-1">
+            <div class="text-sm font-semibold text-gray-200">Vstúpiť do workflow modulu</div>
+            <div class="text-xs text-gray-500 mt-0.5">Otvoriť 7-krokový pipeline pre tento modul</div>
+          </div>
+          <button onclick="mmEnterWorkflow()" class="flex items-center gap-1.5 bg-primary-600 hover:bg-primary-500 text-white text-xs font-medium px-4 py-2 rounded-lg transition-colors shrink-0">
+            Otvoriť →
+          </button>
+        </div>
+      </div>
+
+      <!-- RESOURCES TAB -->
+      <div id="mm-panel-resources" class="hidden">
+        <div class="space-y-4">
+          <div>
+            <div class="text-[10px] text-gray-600 uppercase tracking-widest font-semibold mb-2">Vlastní (Owner)</div>
+            <div id="mm-mod-owns" class="space-y-1.5"></div>
+          </div>
+          <div>
+            <div class="text-[10px] text-gray-600 uppercase tracking-widest font-semibold mb-2">Používa (Consumer)</div>
+            <div id="mm-mod-uses" class="space-y-1.5"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- DEPS TAB -->
+      <div id="mm-panel-deps" class="hidden">
+        <div class="space-y-4">
+          <div>
+            <div class="text-[10px] text-gray-600 uppercase tracking-widest font-semibold mb-2">Závisí od (musí existovať pred týmto)</div>
+            <div id="mm-mod-needs" class="space-y-1.5"></div>
+          </div>
+          <div>
+            <div class="text-[10px] text-gray-600 uppercase tracking-widest font-semibold mb-2">Na tomto závisí (tieto moduly potrebujú tento)</div>
+            <div id="mm-mod-needed-by" class="space-y-1.5"></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</div><!-- /screen-mm-module -->
+
 <div id="screen-settings" class="screen flex flex-col h-full">
 
   <!-- Header -->
@@ -3831,7 +4114,7 @@ Docker Compose — backend (8000), frontend (3000, Nginx), postgres (5432 intern
      JAVASCRIPT
 ════════════════════════════════════════════════════════════════════ -->
 <script>
-  const SCREENS = ['home','projects','project-detail','version','new-project','versions','new-version','spec','uidesign','summary','architecture','audit','design','taskplan','implementacia','kb','settings','login'];
+  const SCREENS = ['home','projects','project-detail','version','new-project','versions','new-version','spec','uidesign','summary','architecture','audit','design','taskplan','implementacia','kb','settings','login','mm-overview','mm-module'];
 
   // ---- Aktívny kontext (projekt + verzia) ----
   let activeCtx = { project: 'NEX Ledger', slug: 'NL', version: 'v0.1' };
@@ -3898,6 +4181,8 @@ Docker Compose — backend (8000), frontend (3000, Nginx), postgres (5432 intern
     'kb':             'Knowledge Base',
     'settings':       'Settings',
     'login':          'Sign in',
+    'mm-overview':    'Multi-Module Overview',
+    'mm-module':      'Module Detail',
   };
   let _navStack   = [];   // array of screen names (history)
   let _navCurrent = 'home';
@@ -4479,6 +4764,7 @@ Docker Compose — backend (8000), frontend (3000, Nginx), postgres (5432 intern
     if (name === 'taskplan') document.querySelector('[onclick="showScreen(\'taskplan\')"]')?.classList.add('active');
     if (name === 'implementacia') document.querySelector('[onclick="showScreen(\'implementacia\')"]')?.classList.add('active');
     if (name === 'settings') document.querySelector('[onclick="showScreen(\'settings\')"]')?.classList.add('active');
+    if (name === 'mm-overview') mmRenderModuleCards();
   }
 
   // ── UI Design approve ──
@@ -6137,8 +6423,14 @@ Docker Compose — backend (8000), frontend (3000, Nginx), postgres (5432 intern
       btn.disabled = false;
       btn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>Create project';
       npResetForm();
-      showScreen('project-detail');
-      _showToast(`Project "${name}" created`);
+      if (_npCategory === 'multimodule') {
+        document.getElementById('mm-project-name').textContent = name;
+        showScreen('mm-overview');
+        _showToast(`Multi-module project "${name}" created`);
+      } else {
+        showScreen('project-detail');
+        _showToast(`Project "${name}" created`);
+      }
     }, 800);
   }
 
@@ -7001,6 +7293,250 @@ Docker Compose — backend (8000), frontend (3000, Nginx), postgres (5432 intern
       _base2(name);
     };
   })();
+
+  // =========================================================================
+  // MULTI-MODULE
+  // =========================================================================
+
+  const _mmModules = [
+    { code:'PAB',   name:'Partner Catalog', color:'indigo', step:4, status:'active',   owns:['partners','PartnerSelector','PartnerForm'],        uses:['tax_rates'],                          deps:[],            neededBy:['ESHOP','SKLAD','UCT'] },
+    { code:'ESHOP', name:'E-Shop',          color:'green',  step:3, status:'active',   owns:['products','orders','ProductCard','CartWidget'],     uses:['partners','tax_rates','PartnerSelector'], deps:['PAB'],    neededBy:['SKLAD','POS'] },
+    { code:'SKLAD', name:'Sklad',           color:'blue',   step:2, status:'active',   owns:['stock_items','StockTable'],                        uses:['partners','products','tax_rates','PartnerSelector'], deps:['PAB','ESHOP'], neededBy:[] },
+    { code:'UCT',   name:'Účtovníctvo',     color:'purple', step:1, status:'planning', owns:['ledger_entries','tax_rates','JournalEntry'],        uses:['partners'],                           deps:['PAB'],       neededBy:[] },
+    { code:'POS',   name:'Point of Sale',   color:'orange', step:0, status:'planning', owns:['pos_sessions','POSTerminal'],                       uses:['products','tax_rates'],               deps:['ESHOP'],     neededBy:[] },
+  ];
+
+  let _mmCurrentModule = null;
+
+  const _mmColors = {
+    indigo: { bg:'bg-indigo-500/20', text:'text-indigo-400', border:'border-indigo-500/30' },
+    green:  { bg:'bg-green-500/20',  text:'text-green-400',  border:'border-green-500/30'  },
+    blue:   { bg:'bg-blue-500/20',   text:'text-blue-400',   border:'border-blue-500/30'   },
+    purple: { bg:'bg-purple-500/20', text:'text-purple-400', border:'border-purple-500/30' },
+    orange: { bg:'bg-orange-500/20', text:'text-orange-400', border:'border-orange-500/30' },
+    teal:   { bg:'bg-teal-500/20',   text:'text-teal-400',   border:'border-teal-500/30'   },
+    pink:   { bg:'bg-pink-500/20',   text:'text-pink-400',   border:'border-pink-500/30'   },
+  };
+  const _mmStepNames = ['Spec','Dev Docs','Summary','Architecture','Quality Audit','Task Plan','Implementácia'];
+
+  function mmRenderModuleCards() {
+    const grid = document.getElementById('mm-module-grid');
+    if (!grid) return;
+    grid.innerHTML = _mmModules.map(m => {
+      const c = _mmColors[m.color] || _mmColors.indigo;
+      const statusBadge = m.status === 'active'
+        ? '<span class="text-[9px] px-1.5 py-0.5 rounded-full bg-green-500/15 text-green-400 border border-green-500/25 font-medium">Aktívny</span>'
+        : '<span class="text-[9px] px-1.5 py-0.5 rounded-full bg-slate-700/50 text-slate-400 border border-slate-600/25 font-medium">Plánovanie</span>';
+      const dots = _mmStepNames.map((_, i) => {
+        const filled = i < m.step;
+        const current = i === m.step && m.step < 7;
+        const cls = filled ? 'bg-primary-500' : (current ? 'bg-primary-400 animate-pulse' : 'bg-slate-700');
+        return `<div class="w-2 h-2 rounded-full ${cls}" title="${_mmStepNames[i]}"></div>`;
+      }).join('');
+      const depStatus = m.deps.length > 0
+        ? `<div class="mt-2 pt-2 border-t border-slate-800 text-[10px] flex items-center gap-2">` +
+          m.deps.map(d => {
+            const dep = _mmModules.find(x => x.code === d);
+            const ok = dep && dep.step >= m.step;
+            return `<span class="${ok ? 'text-green-500' : 'text-yellow-500'}">${ok ? '✓' : '⚠'} ${d}</span>`;
+          }).join('') + `</div>`
+        : '';
+      return `
+        <div onclick="mmOpenModuleDetail('${m.code}')" class="card-hover cursor-pointer rounded-xl border border-slate-800 bg-slate-900 p-4">
+          <div class="flex items-start justify-between mb-3">
+            <div class="flex items-center gap-2">
+              <span class="text-xs font-bold px-2 py-0.5 rounded font-mono ${c.bg} ${c.text} border ${c.border}">${m.code}</span>
+              <span class="text-sm font-semibold text-gray-200">${m.name}</span>
+            </div>
+            ${statusBadge}
+          </div>
+          <div class="flex items-center gap-1.5 mb-2">
+            ${dots}
+            <span class="text-[10px] text-gray-500 ml-1">Krok ${m.step}/7</span>
+          </div>
+          <div class="flex items-center justify-between text-[10px] text-gray-600">
+            <span>Závisí od: ${m.deps.length > 0 ? m.deps.join(', ') : '—'}</span>
+            <span>${m.owns.length} zdrojov</span>
+          </div>
+          ${depStatus}
+        </div>`;
+    }).join('');
+    // Update stats
+    const avg = _mmModules.reduce((s, m) => s + m.step, 0) / _mmModules.length;
+    const pct = Math.round((avg / 7) * 100);
+    const bar = document.getElementById('mm-stat-bar');
+    const pctEl = document.getElementById('mm-stat-pct');
+    const modsEl = document.getElementById('mm-stat-modules');
+    if (bar) bar.style.width = pct + '%';
+    if (pctEl) pctEl.textContent = pct + '%';
+    if (modsEl) modsEl.textContent = _mmModules.length;
+  }
+
+  function mmOpenModuleDetail(code) {
+    const m = _mmModules.find(x => x.code === code);
+    if (!m) return;
+    _mmCurrentModule = code;
+    const c = _mmColors[m.color] || _mmColors.indigo;
+
+    // Topbar
+    const badge = document.getElementById('mm-mod-badge');
+    const title = document.getElementById('mm-mod-title');
+    const statusBadge = document.getElementById('mm-mod-status-badge');
+    if (badge) { badge.textContent = m.code; badge.className = `text-[11px] font-bold px-2 py-0.5 rounded font-mono ${c.bg} ${c.text} border ${c.border}`; }
+    if (title) title.textContent = m.name;
+    if (statusBadge) {
+      if (m.status === 'active') {
+        statusBadge.className = 'text-[10px] px-2.5 py-1 rounded-full border font-medium bg-green-500/15 text-green-400 border-green-500/25';
+        statusBadge.textContent = 'Aktívny';
+      } else {
+        statusBadge.className = 'text-[10px] px-2.5 py-1 rounded-full border font-medium bg-slate-700/50 text-slate-400 border-slate-600/25';
+        statusBadge.textContent = 'Plánovanie';
+      }
+    }
+
+    // Pipeline dots bar
+    const dotsEl = document.getElementById('mm-mod-pipeline-dots');
+    const labelEl = document.getElementById('mm-mod-pipeline-label');
+    if (dotsEl) {
+      dotsEl.innerHTML = _mmStepNames.map((n, i) => {
+        const filled = i < m.step;
+        const current = i === m.step && m.step < 7;
+        const cls = filled ? 'bg-primary-500' : (current ? 'bg-primary-400 animate-pulse' : 'bg-slate-700');
+        return `<div class="relative group">
+          <div class="w-3 h-3 rounded-full ${cls}"></div>
+          <div class="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 bg-slate-800 text-[9px] text-gray-300 px-1.5 py-0.5 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none border border-slate-700 z-10">${n}</div>
+        </div><div class="flex-1 h-px bg-slate-800" style="max-width:20px"></div>`;
+      }).join('').replace(/<div class="flex-1 h-px bg-slate-800" style="max-width:20px"><\/div>$/, '');
+    }
+    if (labelEl) labelEl.textContent = m.step < 7 ? `Krok ${m.step + 1}: ${_mmStepNames[m.step]}` : 'Dokončený ✓';
+
+    // Render tab contents
+    mmRenderModuleSteps(m);
+    mmRenderModuleResources(m);
+    mmRenderModuleDeps(m);
+    mmModTab('workflow');
+    showScreen('mm-module');
+  }
+
+  function mmRenderModuleSteps(m) {
+    const el = document.getElementById('mm-mod-steps-list');
+    if (!el) return;
+    el.innerHTML = _mmStepNames.map((name, i) => {
+      const done = i < m.step;
+      const current = i === m.step && m.step < 7;
+      let icon, cls, badge;
+      if (done) {
+        icon = `<svg class="w-4 h-4 text-green-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>`;
+        cls  = 'border-green-500/20 bg-green-500/5';
+        badge = '<span class="text-[10px] text-green-400">Dokončený</span>';
+      } else if (current) {
+        icon = `<div class="w-4 h-4 rounded-full border-2 border-primary-400 bg-primary-400/20 shrink-0"></div>`;
+        cls  = 'border-primary-500/30 bg-primary-600/5';
+        badge = '<span class="text-[10px] text-primary-400 font-medium">Aktívny</span>';
+      } else {
+        icon = `<div class="w-4 h-4 rounded-full border-2 border-slate-700 shrink-0"></div>`;
+        cls  = 'border-slate-800 bg-slate-950/30 opacity-40';
+        badge = '<span class="text-[10px] text-gray-600">Čaká</span>';
+      }
+      return `<div class="flex items-center gap-3 p-3 rounded-lg border ${cls}">${icon}<span class="text-xs font-medium text-gray-300 flex-1">Krok ${i+1}: ${name}</span>${badge}</div>`;
+    }).join('');
+  }
+
+  function mmRenderModuleResources(m) {
+    const ownsEl = document.getElementById('mm-mod-owns');
+    const usesEl = document.getElementById('mm-mod-uses');
+    const resRow = (r, role, extra) =>
+      `<div class="flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-800 bg-slate-950/40 text-xs">
+        <span class="font-mono text-gray-300">${r}</span>${extra || ''}
+        <span class="text-[9px] px-1.5 py-0.5 rounded ${role === 'Owner' ? 'bg-indigo-500/15 text-indigo-400 border border-indigo-500/25' : 'bg-slate-700/50 text-gray-500 border border-slate-600/25'}">${role}</span>
+      </div>`;
+    if (ownsEl) ownsEl.innerHTML = m.owns.length ? m.owns.map(r => resRow(r,'Owner','')).join('') : '<div class="text-xs text-gray-600 italic">Žiadne</div>';
+    if (usesEl) usesEl.innerHTML = m.uses.length ? m.uses.map(r => {
+      const owner = _mmModules.find(x => x.owns.includes(r));
+      return resRow(r, 'Consumer', owner ? `<span class="text-gray-600">od ${owner.code}</span>` : '');
+    }).join('') : '<div class="text-xs text-gray-600 italic">Žiadne</div>';
+  }
+
+  function mmRenderModuleDeps(m) {
+    const needsEl    = document.getElementById('mm-mod-needs');
+    const neededByEl = document.getElementById('mm-mod-needed-by');
+    const depRow = (code, dep, ok) =>
+      `<div onclick="mmOpenModuleDetail('${code}')" class="cursor-pointer flex items-center gap-3 px-3 py-2.5 rounded-lg border ${ok ? 'border-green-500/20 bg-green-500/5' : 'border-yellow-500/20 bg-yellow-500/5'} hover:border-slate-600 transition-colors">
+        <div class="w-2 h-2 rounded-full ${ok ? 'bg-green-500' : 'bg-yellow-500'} shrink-0"></div>
+        <span class="text-xs font-mono font-medium text-gray-300">${code}</span>
+        ${dep ? `<span class="text-xs text-gray-500">${dep.name}</span>` : ''}
+        <div class="flex-1"></div>
+        <span class="text-[10px] ${ok ? 'text-green-400' : 'text-yellow-400'}">${ok ? 'OK' : 'Pozor'}</span>
+        <svg class="w-3 h-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+      </div>`;
+    if (needsEl) {
+      if (!m.deps.length) { needsEl.innerHTML = '<div class="text-xs text-gray-600 italic">Nezávisí od žiadneho modulu</div>'; }
+      else {
+        const cur = _mmModules.find(x => x.code === _mmCurrentModule);
+        needsEl.innerHTML = m.deps.map(d => { const dep = _mmModules.find(x => x.code === d); return depRow(d, dep, dep && dep.step >= (cur ? cur.step : 0)); }).join('');
+      }
+    }
+    if (neededByEl) {
+      const dependents = _mmModules.filter(x => x.deps.includes(m.code));
+      if (!dependents.length) { neededByEl.innerHTML = '<div class="text-xs text-gray-600 italic">Žiadne moduly nezávisia od tohto</div>'; }
+      else neededByEl.innerHTML = dependents.map(dep =>
+        `<div onclick="mmOpenModuleDetail('${dep.code}')" class="cursor-pointer flex items-center gap-3 px-3 py-2.5 rounded-lg border border-slate-800 bg-slate-950/40 hover:border-slate-600 transition-colors">
+          <span class="text-xs font-mono font-medium text-gray-300">${dep.code}</span>
+          <span class="text-xs text-gray-500">${dep.name}</span>
+          <div class="flex-1"></div>
+          <svg class="w-3 h-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+        </div>`
+      ).join('');
+    }
+  }
+
+  function mmModTab(tab) {
+    ['workflow','resources','deps'].forEach(t => {
+      const btn   = document.getElementById('mm-tab-' + t);
+      const panel = document.getElementById('mm-panel-' + t);
+      const active = t === tab;
+      if (btn) btn.className = active
+        ? 'text-xs font-medium px-3 py-1.5 rounded-lg bg-primary-600/20 text-primary-400 border border-primary-500/30 transition-colors'
+        : 'text-xs font-medium px-3 py-1.5 rounded-lg text-gray-500 hover:text-gray-300 transition-colors';
+      if (panel) panel.classList.toggle('hidden', !active);
+    });
+  }
+
+  function mmOpenNewModule() {
+    const depsEl = document.getElementById('mm-nm-deps');
+    if (depsEl) {
+      depsEl.innerHTML = _mmModules.map(m =>
+        `<button type="button" onclick="this.dataset.sel=this.dataset.sel==='1'?'0':'1'; this.classList.toggle('bg-primary-600/20'); this.classList.toggle('text-primary-400'); this.classList.toggle('border-primary-500/40'); this.classList.toggle('bg-slate-800/40'); this.classList.toggle('text-gray-600'); this.classList.toggle('border-slate-700')" data-dep="${m.code}" data-sel="0"
+          class="text-[10px] px-2 py-0.5 rounded border font-mono bg-slate-800/40 text-gray-600 border-slate-700 transition-colors">${m.code}</button>`
+      ).join('');
+    }
+    document.getElementById('mm-nm-code').value = '';
+    document.getElementById('mm-nm-name').value = '';
+    document.getElementById('mm-new-module-overlay').classList.remove('hidden');
+  }
+
+  function mmCloseNewModule() {
+    document.getElementById('mm-new-module-overlay').classList.add('hidden');
+  }
+
+  function mmSubmitNewModule() {
+    const code = document.getElementById('mm-nm-code').value.trim().toUpperCase();
+    const name = document.getElementById('mm-nm-name').value.trim();
+    if (!code || !name) { _showToast('⛔ Vyplň kód a názov'); return; }
+    if (_mmModules.find(m => m.code === code)) { _showToast('⛔ Modul s týmto kódom už existuje'); return; }
+    const deps = Array.from(document.querySelectorAll('#mm-nm-deps button[data-sel="1"]')).map(el => el.dataset.dep);
+    const colors = ['indigo','green','blue','purple','orange','teal','pink'];
+    _mmModules.push({ code, name, color: colors[_mmModules.length % colors.length], step:0, status:'planning', owns:[], uses:[], deps, neededBy:[] });
+    mmCloseNewModule();
+    mmRenderModuleCards();
+    _showToast(`Modul ${code} pridaný`);
+  }
+
+  function mmEnterWorkflow() {
+    if (!_mmCurrentModule) return;
+    showScreen('version');
+    _showToast(`Workflow modulu ${_mmCurrentModule} — Single Module pipeline`);
+  }
 </script>
 <!-- Toast notifikácia -->
 <div id="ctx-toast" class="fixed bottom-5 left-1/2 -translate-x-1/2 bg-slate-800 border border-slate-700 text-gray-200 text-xs px-4 py-2 rounded-full shadow-xl opacity-0 transition-opacity duration-300 pointer-events-none z-50"></div>
