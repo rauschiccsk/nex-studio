@@ -204,6 +204,22 @@ export default function ProjectDetailPage() {
         </div>
       </div>
 
+      {/* Multi-Module shortcut */}
+      {isMulti && (
+        <div className="rounded-xl border border-indigo-500/30 bg-indigo-500/5 p-4 mb-6 flex items-center justify-between">
+          <div>
+            <div className="text-sm font-semibold text-slate-100 mb-0.5">Multi-Module projekt</div>
+            <div className="text-xs text-slate-500">Spravuj moduly, závislosti a pipeline pre každý modul.</div>
+          </div>
+          <button
+            onClick={() => navigate(`/projects/${slug}/mm`)}
+            className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors shrink-0"
+          >
+            Modul prehľad →
+          </button>
+        </div>
+      )}
+
       {/* Versions */}
       <div>
         <div className="flex items-center justify-between mb-4">
