@@ -6422,8 +6422,9 @@ Docker Compose — backend (8000), frontend (3000, Nginx), postgres (5432 intern
     setTimeout(() => {
       btn.disabled = false;
       btn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>Create project';
+      const _submittedCategory = _npCategory;
       npResetForm();
-      if (_npCategory === 'multimodule') {
+      if (_submittedCategory === 'multimodule') {
         document.getElementById('mm-project-name').textContent = name;
         showScreen('mm-overview');
         _showToast(`Multi-module project "${name}" created`);
