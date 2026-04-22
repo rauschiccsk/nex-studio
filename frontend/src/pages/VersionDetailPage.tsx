@@ -2,6 +2,9 @@ import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { listProjectsApi } from "@/services/api/projects";
 import { getVersion } from "@/services/api/versions";
+import { listProfessionalSpecs } from "@/services/api/professionalSpecifications";
+import { listDesignDocuments } from "@/services/api/designDocuments";
+import { fetchTaskPlan } from "@/services/api/taskPlan";
 import type { ProjectRead } from "@/types";
 import type { Version } from "@/types/version";
 
@@ -32,19 +35,47 @@ const PIPELINE_STEPS: PipelineStep[] = [
 
 type StepState = "done" | "active" | "pending";
 
-function computeStepStates(version: Version): StepState[] {
-  // Heuristic: epics_done / max(epic_count,1) → which steps are done
-  // For a brand new version (0 epics), only step 1 is "active"
-  const total = version.epic_count || 0;
-  const done = version.epics_done || 0;
-  const activePct = total === 0 ? 0 : done / total;
-  // Map 0..1 to 0..7 done steps
-  const doneSteps = total === 0 ? 0 : Math.min(Math.floor(activePct * 7), 7);
+interface PipelineData {
+  hasProfSpec: boolean;
+  profSpecApproved: boolean;
+  hasDesignDocs: boolean;
+  hasTasks: boolean;
+  allTasksDone: boolean;
+}
+
+/**
+ * Computes real pipeline step states from actual API data.
+ *
+ * Sequential logic — each step is prerequisite for the next:
+ *   1. Spec         done when profSpec exists (was generated from raw spec)
+ *   2. ProfSpec     done when profSpec.approved_at set
+ *   3. Summary      done with step 2 (derived view, no separate action needed)
+ *   4. Architecture done when both BEHAVIOR.md + DESIGN.md exist
+ *   5. Audit        done with step 4 (checklist auto-passes, no backend endpoint)
+ *   6. Task Plan    done when task plan epics exist
+ *   7. Implementácia done when all tasks are done
+ */
+function computeRealStepStates(data: PipelineData, version: Version): StepState[] {
+  let doneCount = 0;
+  if (data.hasProfSpec) {
+    doneCount = 1;
+    if (data.profSpecApproved) {
+      doneCount = 3; // steps 1–3 done (summary is auto-done with profspec approval)
+      if (data.hasDesignDocs) {
+        doneCount = 5; // steps 1–5 done (audit auto-passes)
+        if (data.hasTasks) {
+          doneCount = 6;
+          const allDone = data.allTasksDone && (version.epic_count ?? 0) > 0;
+          if (allDone) doneCount = 7;
+        }
+      }
+    }
+  }
 
   return PIPELINE_STEPS.map((_, i) => {
     const n = i + 1;
-    if (n <= doneSteps) return "done";
-    if (n === doneSteps + 1) return "active";
+    if (n <= doneCount) return "done";
+    if (n === doneCount + 1) return "active";
     return "pending";
   });
 }
@@ -162,6 +193,13 @@ export default function VersionDetailPage() {
 
   const [project, setProject] = useState<ProjectRead | null>(null);
   const [version, setVersion] = useState<Version | null>(null);
+  const [pipelineData, setPipelineData] = useState<PipelineData>({
+    hasProfSpec: false,
+    profSpecApproved: false,
+    hasDesignDocs: false,
+    hasTasks: false,
+    allTasksDone: false,
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -178,6 +216,27 @@ export default function VersionDetailPage() {
         if (!proj) { setError("Projekt nebol nájdený."); return; }
         setProject(proj);
         setVersion(ver);
+        // Load pipeline state from real API data
+        return Promise.all([
+          listProfessionalSpecs({ project_id: proj.id, limit: 1 }),
+          listDesignDocuments({ project_id: proj.id, doc_type: "behavior", limit: 1 }),
+          listDesignDocuments({ project_id: proj.id, doc_type: "design", limit: 1 }),
+          fetchTaskPlan(versionId!),
+        ]).then(([profRes, behRes, desRes, plan]) => {
+          if (cancelled) return;
+          const profSpec = profRes.items[0] ?? null;
+          const hasBehavior = !!behRes.items[0];
+          const hasDesign = !!desRes.items[0];
+          const epicCount = ver.epic_count ?? 0;
+          const epicsDone = ver.epics_done ?? 0;
+          setPipelineData({
+            hasProfSpec: !!profSpec,
+            profSpecApproved: !!profSpec?.approved_at,
+            hasDesignDocs: hasBehavior && hasDesign,
+            hasTasks: !!plan && plan.epic_count > 0,
+            allTasksDone: epicCount > 0 && epicsDone >= epicCount,
+          });
+        });
       })
       .catch(() => { if (!cancelled) setError("Nepodarilo sa načítať dáta."); })
       .finally(() => { if (!cancelled) setLoading(false); });
@@ -207,7 +266,7 @@ export default function VersionDetailPage() {
     );
   }
 
-  const stepStates = computeStepStates(version);
+  const stepStates = computeRealStepStates(pipelineData, version);
   const doneCount = stepStates.filter((s) => s === "done").length;
   const activeStep = PIPELINE_STEPS[stepStates.findIndex((s) => s === "active")];
   const pct = Math.round((doneCount / 7) * 100);
