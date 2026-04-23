@@ -26,7 +26,10 @@ services:
       - "9176:9176"
     volumes:
       - /home/andros/.claude:/home/andros/.claude
-      - /home/icc/knowledge:/home/icc/knowledge:ro
+      # rw — backend writes per-project live documents
+      # (STATUS.md / HISTORY.md / ARCHITECT.md) under projects/{slug}/.
+      # See docs/architect/live-docs-port.md §3.
+      - /home/icc/knowledge:/home/icc/knowledge:rw
       - uploads:/app/uploads
     environment:
       DATABASE_URL: "postgresql+pg8000://nexstudio:nexstudio@db:5432/nexstudio"
