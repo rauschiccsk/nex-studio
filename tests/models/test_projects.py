@@ -54,7 +54,7 @@ def _make_module(db_session, *, project: Project | None = None, **overrides) -> 
         "project_id": project.id,
         "code": f"M{uuid.uuid4().hex[:4].upper()}",
         "name": f"Module {uuid.uuid4().hex[:8]}",
-        "category": "business",
+        "category": "Katalógy",
     }
     defaults.update(overrides)
     module = ProjectModule(**defaults)
@@ -158,7 +158,7 @@ class TestProjectModuleModel:
             project_id=project.id,
             code="DUP1",
             name="Another module",
-            category="business",
+            category="Katalógy",
         )
         db_session.add(m2)
         with pytest.raises((IntegrityError, ProgrammingError)):

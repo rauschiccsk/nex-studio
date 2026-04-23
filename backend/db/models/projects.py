@@ -99,6 +99,11 @@ class ProjectModule(Base, UUIDMixin, TimestampMixin):
             "status IN ('planned', 'in_design', 'in_development', 'done')",
             name="ck_project_modules_status",
         ),
+        CheckConstraint(
+            "category IN ('Systém', 'Katalógy', 'Sklad', 'Predaj', "
+            "'Nákup', 'Účtovníctvo', 'Pokladňa')",
+            name="ck_project_modules_category",
+        ),
     )
 
 

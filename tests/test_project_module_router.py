@@ -120,7 +120,7 @@ def _payload(project_id, **overrides) -> dict:
         "project_id": str(project_id),
         "code": f"M{suffix}",
         "name": f"Module {suffix}",
-        "category": "General",
+        "category": "Systém",
     }
     data.update(overrides)
     return data
@@ -189,16 +189,32 @@ class TestProjectModuleRouter:
     def test_create_missing_project_id_returns_422(self, router_client):
         resp = router_client.post(
             "/api/v1/project-modules",
-            json={"code": "PAB", "name": "Module", "category": "General"},
+            json={"code": "PAB", "name": "Module", "category": "Systém"},
         )
         assert resp.status_code == 422
 
     def test_create_missing_code_returns_422(self, router_client, project):
         resp = router_client.post(
             "/api/v1/project-modules",
-            json={"project_id": str(project.id), "name": "Module", "category": "General"},
+            json={"project_id": str(project.id), "name": "Module", "category": "Systém"},
         )
         assert resp.status_code == 422
+
+    def test_create_unknown_category_returns_422(self, router_client, project):
+        """Category must be one of the seven allowed SK labels."""
+        payload = _payload(project.id, category="System")  # missing diacritic
+        resp = router_client.post("/api/v1/project-modules", json=payload)
+        assert resp.status_code == 422
+
+    @pytest.mark.parametrize(
+        "cat",
+        ["Systém", "Katalógy", "Sklad", "Predaj", "Nákup", "Účtovníctvo", "Pokladňa"],
+    )
+    def test_create_accepts_all_seven_categories(self, router_client, project, cat):
+        payload = _payload(project.id, category=cat)
+        resp = router_client.post("/api/v1/project-modules", json=payload)
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["category"] == cat
 
     def test_create_invalid_status_returns_422(self, router_client, project):
         payload = _payload(project.id, status="not-a-status")
@@ -212,7 +228,7 @@ class TestProjectModuleRouter:
                 "project_id": "not-a-uuid",
                 "code": "PAB",
                 "name": "Module",
-                "category": "General",
+                "category": "Systém",
             },
         )
         assert resp.status_code == 422

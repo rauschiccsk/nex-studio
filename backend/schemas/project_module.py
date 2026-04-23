@@ -27,6 +27,20 @@ from pydantic import BaseModel, ConfigDict, Field
 # on the ``project_modules`` table.
 ProjectModuleStatus = Literal["planned", "in_design", "in_development", "done"]
 
+# Allowed module categories, mirroring the NEX Automat module_registry.yaml
+# SK-localized labels. Enforced by the ``ck_project_modules_category``
+# DB CHECK (migration 031) so the new-project-module form can no longer
+# drift across typos like "System" vs "Systém".
+ProjectModuleCategory = Literal[
+    "Systém",
+    "Katalógy",
+    "Sklad",
+    "Predaj",
+    "Nákup",
+    "Účtovníctvo",
+    "Pokladňa",
+]
+
 
 class ProjectModuleCreate(BaseModel):
     """Payload for creating a new project module.
@@ -53,11 +67,13 @@ class ProjectModuleCreate(BaseModel):
         max_length=255,
         description="Full human-readable module name (e.g. 'Katalóg partnerov').",
     )
-    category: str = Field(
+    category: ProjectModuleCategory = Field(
         ...,
-        min_length=1,
-        max_length=50,
-        description="Module grouping (e.g. 'Katalógy', 'Sklad', 'Nákup').",
+        description=(
+            "Module grouping — one of the localized ICC labels "
+            "(Systém / Katalógy / Sklad / Predaj / Nákup / "
+            "Účtovníctvo / Pokladňa)."
+        ),
     )
     status: ProjectModuleStatus = Field(
         default="planned",
@@ -92,11 +108,9 @@ class ProjectModuleUpdate(BaseModel):
         max_length=255,
         description="Updated module name.",
     )
-    category: Optional[str] = Field(
+    category: Optional[ProjectModuleCategory] = Field(
         default=None,
-        min_length=1,
-        max_length=50,
-        description="Updated module grouping.",
+        description="Updated module grouping (must be one of the allowed localized labels).",
     )
     status: Optional[ProjectModuleStatus] = Field(
         default=None,
@@ -123,7 +137,7 @@ class ProjectModuleRead(BaseModel):
     project_id: UUID
     code: str = Field(..., min_length=1, max_length=10)
     name: str = Field(..., min_length=1, max_length=255)
-    category: str = Field(..., min_length=1, max_length=50)
+    category: ProjectModuleCategory
     status: ProjectModuleStatus
     design_doc_path: Optional[str] = None
     created_at: datetime

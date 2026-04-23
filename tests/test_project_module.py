@@ -51,7 +51,7 @@ def _make_module(db_session, *, project: Project | None = None, **overrides) -> 
         "project_id": project.id,
         "code": f"M{uuid.uuid4().hex[:4].upper()}",
         "name": f"Module {uuid.uuid4().hex[:8]}",
-        "category": "General",
+        "category": "Systém",
     }
     defaults.update(overrides)
     module = ProjectModule(**defaults)
@@ -106,7 +106,7 @@ class TestProjectModuleModel:
 
         _make_module(db_session, project=project, code="PAB")
 
-        dup = ProjectModule(project_id=project.id, code="PAB", name="Duplicate", category="General")
+        dup = ProjectModule(project_id=project.id, code="PAB", name="Duplicate", category="Systém")
         db_session.add(dup)
         with pytest.raises((IntegrityError, ProgrammingError)):
             db_session.flush()
@@ -124,7 +124,7 @@ class TestProjectModuleModel:
 
     def test_project_id_not_nullable(self, db_session):
         """project_id=NULL must be rejected."""
-        module = ProjectModule(project_id=None, code="TST", name="Test", category="General")
+        module = ProjectModule(project_id=None, code="TST", name="Test", category="Systém")
         db_session.add(module)
         with pytest.raises((IntegrityError, ProgrammingError)):
             db_session.flush()
@@ -133,7 +133,7 @@ class TestProjectModuleModel:
     def test_code_not_nullable(self, db_session):
         """code=NULL must be rejected."""
         project = _make_project(db_session)
-        module = ProjectModule(project_id=project.id, code=None, name="Test", category="General")
+        module = ProjectModule(project_id=project.id, code=None, name="Test", category="Systém")
         db_session.add(module)
         with pytest.raises((IntegrityError, ProgrammingError)):
             db_session.flush()
@@ -142,7 +142,7 @@ class TestProjectModuleModel:
     def test_name_not_nullable(self, db_session):
         """name=NULL must be rejected."""
         project = _make_project(db_session)
-        module = ProjectModule(project_id=project.id, code="TST", name=None, category="General")
+        module = ProjectModule(project_id=project.id, code="TST", name=None, category="Systém")
         db_session.add(module)
         with pytest.raises((IntegrityError, ProgrammingError)):
             db_session.flush()
@@ -159,7 +159,7 @@ class TestProjectModuleModel:
 
     def test_project_id_fk_valid(self, db_session):
         """project_id must reference an existing project."""
-        module = ProjectModule(project_id=uuid.uuid4(), code="TST", name="Test", category="General")
+        module = ProjectModule(project_id=uuid.uuid4(), code="TST", name="Test", category="Systém")
         db_session.add(module)
         with pytest.raises((IntegrityError, ProgrammingError)):
             db_session.flush()
@@ -172,7 +172,7 @@ class TestProjectModuleModel:
             project_id=project.id,
             code="TST",
             name="Test",
-            category="General",
+            category="Systém",
             status="invalid_status",
         )
         db_session.add(module)
@@ -188,7 +188,7 @@ class TestProjectModuleModel:
                 project_id=project.id,
                 code=f"S{i:02d}",
                 name=f"Module {status}",
-                category="General",
+                category="Systém",
                 status=status,
             )
             db_session.add(module)

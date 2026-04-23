@@ -56,7 +56,7 @@ def _make_module(
     project: Project,
     code: str = "MOD",
     name: str = "Test Module",
-    category: str = "business",
+    category: str = "Katalógy",
     status: str = "planned",
 ) -> ProjectModule:
     module = ProjectModule(
@@ -117,17 +117,17 @@ class TestFormatModuleRegistry:
         module = ProjectModule(
             code="MGR",
             name="Manager",
-            category="management",
+            category="Systém",
             status="in_design",
         )
         result = _format_module_registry([module])
-        assert "| MGR | Manager | management | in_design |" in result
+        assert "| MGR | Manager | Systém | in_design |" in result
         assert "| Code |" in result
 
     def test_multiple_modules(self) -> None:
         modules = [
-            ProjectModule(code="AAA", name="Alpha", category="core", status="done"),
-            ProjectModule(code="BBB", name="Beta", category="ext", status="planned"),
+            ProjectModule(code="AAA", name="Alpha", category="Systém", status="done"),
+            ProjectModule(code="BBB", name="Beta", category="Katalógy", status="planned"),
         ]
         result = _format_module_registry(modules)
         assert "| AAA |" in result

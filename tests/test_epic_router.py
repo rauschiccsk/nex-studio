@@ -96,7 +96,7 @@ def module(db_session, project) -> ProjectModule:
         project_id=project.id,
         code=f"M{suffix}",
         name=f"Module {suffix}",
-        category="General",
+        category="Systém",
     )
     db_session.add(mod)
     db_session.flush()

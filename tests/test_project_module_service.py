@@ -77,7 +77,7 @@ def _payload(project_id, **overrides) -> ProjectModuleCreate:
         "project_id": project_id,
         "code": f"M{suffix}",
         "name": f"Module {suffix}",
-        "category": "General",
+        "category": "Systém",
     }
     defaults.update(overrides)
     return ProjectModuleCreate(**defaults)
@@ -188,7 +188,7 @@ class TestProjectModuleService:
             ProjectModuleUpdate(
                 code="PAB2",
                 name="Updated Name",
-                category="Administrácia",
+                category="Účtovníctvo",
                 status="in_development",
                 design_doc_path="/home/icc/kb/pab/DESIGN.md",
             ),
@@ -197,7 +197,7 @@ class TestProjectModuleService:
         assert updated.id == created.id
         assert updated.code == "PAB2"
         assert updated.name == "Updated Name"
-        assert updated.category == "Administrácia"
+        assert updated.category == "Účtovníctvo"
         assert updated.status == "in_development"
         assert updated.design_doc_path == "/home/icc/kb/pab/DESIGN.md"
 

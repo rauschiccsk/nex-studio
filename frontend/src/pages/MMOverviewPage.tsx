@@ -8,6 +8,7 @@ import {
 } from "@/services/api/projectModules";
 import type { ProjectRead } from "@/types";
 import type { ProjectModuleRead } from "@/types/projectModule";
+import { PROJECT_MODULE_CATEGORIES } from "@/types/projectModule";
 import type { ModuleDependencyRead } from "@/types/moduleDependency";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -195,13 +196,16 @@ function NewModuleModal({ projectId, existingModules, onClose, onCreated }: NewM
           </div>
           <div>
             <label className="block text-xs font-medium text-slate-400 mb-1.5">Kategória *</label>
-            <input
-              type="text"
-              placeholder="napr. Katalógy, Sklad, Financie"
+            <select
               value={category}
               onChange={(e) => { setCategory(e.target.value); if (errors.category) setErrors((er) => ({ ...er, category: "" })); }}
               className={`${inputCls} ${errors.category ? "border-red-500/50" : ""}`}
-            />
+            >
+              <option value="" disabled>— vyber kategóriu —</option>
+              {PROJECT_MODULE_CATEGORIES.map((cat) => (
+                <option key={cat} value={cat}>{cat}</option>
+              ))}
+            </select>
             {errors.category && <p className="mt-1 text-xs text-red-400">{errors.category}</p>}
           </div>
 

@@ -69,7 +69,7 @@ def _make_module(db_session, *, project: Project | None = None, **overrides) -> 
         "project_id": project.id,
         "code": f"M{suffix}",
         "name": f"Module {suffix}",
-        "category": "General",
+        "category": "Systém",
     }
     defaults.update(overrides)
     module = ProjectModule(**defaults)

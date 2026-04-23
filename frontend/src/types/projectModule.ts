@@ -15,6 +15,31 @@ export type ProjectModuleStatus =
   | "in_development"
   | "done";
 
+/**
+ * Allowed SK-localized category labels for a project module.
+ * Mirrors ``ck_project_modules_category`` (migration 031) and the
+ * Pydantic ``ProjectModuleCategory`` literal on the backend.
+ */
+export type ProjectModuleCategory =
+  | "Systém"
+  | "Katalógy"
+  | "Sklad"
+  | "Predaj"
+  | "Nákup"
+  | "Účtovníctvo"
+  | "Pokladňa";
+
+/** Ordered list of category labels — used to populate the new-module dropdown. */
+export const PROJECT_MODULE_CATEGORIES: ProjectModuleCategory[] = [
+  "Systém",
+  "Katalógy",
+  "Sklad",
+  "Predaj",
+  "Nákup",
+  "Účtovníctvo",
+  "Pokladňa",
+];
+
 /** Payload for creating a new project module. */
 export interface ProjectModuleCreate {
   project_id: string;

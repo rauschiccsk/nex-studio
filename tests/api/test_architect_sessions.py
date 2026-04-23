@@ -61,7 +61,7 @@ def _make_module(db_session, *, project: Project) -> ProjectModule:
         project_id=project.id,
         code=f"M{uuid.uuid4().hex[:4].upper()}",
         name=f"Module {uuid.uuid4().hex[:8]}",
-        category="General",
+        category="Systém",
     )
     db_session.add(module)
     db_session.flush()

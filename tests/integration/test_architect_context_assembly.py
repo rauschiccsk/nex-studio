@@ -104,7 +104,7 @@ def module_gsc(db_session, project) -> ProjectModule:
         project_id=project.id,
         code="GSC",
         name="General System Config",
-        category="infrastructure",
+        category="Systém",
         status="done",
     )
     db_session.add(mod)
@@ -119,7 +119,7 @@ def module_stk(db_session, project) -> ProjectModule:
         project_id=project.id,
         code="STK",
         name="Stakeholder Management",
-        category="business",
+        category="Katalógy",
         status="in_design",
     )
     db_session.add(mod)
