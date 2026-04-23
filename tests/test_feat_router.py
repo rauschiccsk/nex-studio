@@ -32,19 +32,25 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from backend.api.dependencies import get_knowledge_base_writer
 from backend.api.routes.feats import router as feats_router
 from backend.db.models.foundation import User
 from backend.db.models.projects import Project
 from backend.db.models.tasks import Epic
 from backend.db.session import get_db
+from backend.services.knowledge_base_writer import KnowledgeBaseWriter
 
 
 @pytest.fixture()
-def router_client(db_session):
-    """Mount the feats router on a fresh app with the DB override.
+def router_client(db_session, tmp_path):
+    """Mount the feats router on a fresh app with DB + KB overrides.
 
     Keeping this fixture local to the router tests avoids coupling to
     the global ``main.app``, which does not yet include this router.
+    The :class:`KnowledgeBaseWriter` is redirected to the test's
+    ``tmp_path`` so the live-document hook on ``PATCH`` (feat
+    completion) writes into an isolated KB tree instead of the real
+    ``/home/icc/knowledge``.
     """
     app = FastAPI()
     app.include_router(feats_router, prefix="/api/v1/feats")
@@ -52,7 +58,11 @@ def router_client(db_session):
     def _override_get_db():
         yield db_session
 
+    def _override_kb_writer() -> KnowledgeBaseWriter:
+        return KnowledgeBaseWriter(tmp_path)
+
     app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_knowledge_base_writer] = _override_kb_writer
 
     with TestClient(app) as client:
         yield client
@@ -395,3 +405,193 @@ class TestFeatRouter:
     def test_delete_missing_returns_404(self, router_client):
         resp = router_client.delete(f"/api/v1/feats/{uuid.uuid4()}")
         assert resp.status_code == 404
+
+    # ------------------------------------------------------------- live docs
+
+    def test_patch_to_done_appends_phase_summary_and_status(
+        self, router_client, epic, project, tmp_path
+    ):
+        """Transition to done writes HISTORY phase summary and refreshes STATUS."""
+        created = router_client.post(
+            "/api/v1/feats",
+            json=_payload(epic_id=epic.id, title="Foundation"),
+        ).json()
+
+        # actual_minutes is only accepted via PATCH (backfill / correction
+        # path per FeatUpdate); bundle it with the status flip.
+        resp = router_client.patch(
+            f"/api/v1/feats/{created['id']}",
+            json={"status": "done", "actual_minutes": 15},
+        )
+        assert resp.status_code == 200, resp.text
+
+        project_dir = tmp_path / "projects" / project.slug
+        history = (project_dir / "HISTORY.md").read_text(encoding="utf-8")
+        status_md = (project_dir / "STATUS.md").read_text(encoding="utf-8")
+
+        # Phase summary shape: "Feat N COMPLETE — title\n  Tasks: X | Duration: ... | Audit: NA | CI: N/A"
+        # feat.number is always 1 (first feat under the fixture epic).
+        assert "Feat 1 COMPLETE" in history
+        assert "Foundation" in history
+        assert "Tasks: 0" in history  # no tasks attached in this test
+        assert "Duration: 15m0s" in history  # 15 actual minutes
+        assert "Audit: NA" in history
+        assert "CI: N/A" in history
+        assert "=" * 50 in history  # the 50-equals divider
+
+        # STATUS reflects the done feat — epic number is random (the test
+        # fixture derives it from uuid4) so match on the feat segment only.
+        assert f"### Feat {epic.number}.1: Foundation — DONE" in status_md
+
+    def test_patch_to_done_counts_tasks_in_summary(
+        self, db_session, router_client, epic, project, tmp_path
+    ):
+        """Phase summary's Tasks count comes from COUNT(tasks WHERE feat_id=...)."""
+        created = router_client.post(
+            "/api/v1/feats",
+            json=_payload(epic_id=epic.id, title="F"),
+        ).json()
+        feat_id = uuid.UUID(created["id"])
+
+        # Seed two tasks against the feat.
+        from backend.db.models.tasks import Task
+
+        for i in (1, 2):
+            db_session.add(
+                Task(feat_id=feat_id, number=i, title=f"T{i}", task_type="backend")
+            )
+        db_session.flush()
+
+        router_client.patch(
+            f"/api/v1/feats/{feat_id}",
+            json={"status": "done", "actual_minutes": 30},
+        )
+
+        history = (tmp_path / "projects" / project.slug / "HISTORY.md").read_text(
+            encoding="utf-8"
+        )
+        assert "Tasks: 2" in history
+
+    def test_patch_to_done_with_estimated_only_uses_estimate(
+        self, router_client, epic, project, tmp_path
+    ):
+        """When actual_minutes is NULL, duration falls back to estimated_minutes."""
+        created = router_client.post(
+            "/api/v1/feats",
+            json=_payload(
+                epic_id=epic.id,
+                title="Planned",
+                estimated_minutes=120,
+            ),
+        ).json()
+
+        router_client.patch(
+            f"/api/v1/feats/{created['id']}",
+            json={"status": "done"},
+        )
+
+        history = (tmp_path / "projects" / project.slug / "HISTORY.md").read_text(
+            encoding="utf-8"
+        )
+        # 120 minutes → 2h0m
+        assert "Duration: 2h0m" in history
+
+    def test_patch_status_to_in_progress_does_not_fire_hook(
+        self, router_client, epic, project, tmp_path
+    ):
+        created = router_client.post(
+            "/api/v1/feats",
+            json=_payload(epic_id=epic.id),
+        ).json()
+
+        router_client.patch(
+            f"/api/v1/feats/{created['id']}",
+            json={"status": "in_progress"},
+        )
+
+        assert not (tmp_path / "projects" / project.slug).exists()
+
+    def test_patch_title_only_does_not_fire_hook(
+        self, router_client, epic, project, tmp_path
+    ):
+        created = router_client.post(
+            "/api/v1/feats",
+            json=_payload(epic_id=epic.id, title="Old"),
+        ).json()
+
+        router_client.patch(
+            f"/api/v1/feats/{created['id']}",
+            json={"title": "New"},
+        )
+
+        assert not (tmp_path / "projects" / project.slug).exists()
+
+    def test_patch_to_done_replayed_is_idempotent(
+        self, router_client, epic, project, tmp_path
+    ):
+        """Second PATCH to done skips the hook (previous_status already done)."""
+        created = router_client.post(
+            "/api/v1/feats",
+            json=_payload(epic_id=epic.id, title="Once done"),
+        ).json()
+
+        router_client.patch(
+            f"/api/v1/feats/{created['id']}",
+            json={"status": "done"},
+        )
+        router_client.patch(
+            f"/api/v1/feats/{created['id']}",
+            json={"status": "done"},
+        )
+
+        history = (tmp_path / "projects" / project.slug / "HISTORY.md").read_text(
+            encoding="utf-8"
+        )
+        assert history.count("Feat 1 COMPLETE — Once done") == 1
+
+    def test_patch_rolls_back_when_kb_write_fails(
+        self, db_session, project, epic
+    ):
+        """OSError on KB write → 500 + feat.status unchanged in DB."""
+        from backend.api.dependencies import get_knowledge_base_writer
+        from backend.db.models.tasks import Feat as _Feat
+        from backend.services.knowledge_base_writer import KnowledgeBaseWriter
+
+        class _FailingWriter(KnowledgeBaseWriter):
+            def append(self, *args, **kwargs):  # type: ignore[override]
+                raise OSError("disk full simulation")
+
+        app = FastAPI()
+        app.include_router(feats_router, prefix="/api/v1/feats")
+
+        def _override_get_db():
+            yield db_session
+
+        def _override_kb_writer() -> KnowledgeBaseWriter:
+            return _FailingWriter("/tmp/unused")
+
+        app.dependency_overrides[get_db] = _override_get_db
+        app.dependency_overrides[get_knowledge_base_writer] = _override_kb_writer
+
+        with TestClient(app) as client:
+            created = client.post(
+                "/api/v1/feats",
+                json=_payload(epic_id=epic.id, title="Will fail"),
+            ).json()
+            resp = client.patch(
+                f"/api/v1/feats/{created['id']}",
+                json={"status": "done"},
+            )
+
+        app.dependency_overrides.clear()
+
+        assert resp.status_code == 500
+        assert "Failed to update live documents" in resp.json()["detail"]
+
+        # The feat must remain in its pre-PATCH status.
+        from sqlalchemy import select as _select
+
+        reloaded = db_session.execute(
+            _select(_Feat).where(_Feat.id == uuid.UUID(created["id"]))
+        ).scalar_one()
+        assert reloaded.status == "todo"
