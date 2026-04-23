@@ -38,3 +38,4 @@ frontend/dist/
 
 # Alembic
 migrations/versions/__pycache__/
+.nex-session-state.md
