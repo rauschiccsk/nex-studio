@@ -175,7 +175,7 @@ class TestCreateGithubRepo:
         body = mock_post.call_args[1]["json"]
         assert body["name"] == "nex-test"
         assert body["private"] is True
-        assert body["auto_init"] is False
+        assert body["auto_init"] is True
         headers = mock_post.call_args[1]["headers"]
         assert headers["Authorization"] == "Bearer ghp_test"
 

@@ -205,11 +205,17 @@ def create_github_repo(
         )
 
     url = _resolve_repo_endpoint(owner)
+    # auto_init=True asks GitHub to create an initial README and materialise
+    # the default branch on the first commit. Without it the repo is
+    # technically created but has no refs, which surprises the first
+    # ``git clone`` (empty result) and a subsequent push would have to
+    # invent the default branch locally. Initial README is trivial to
+    # overwrite and is the common default across GitHub tooling.
     body = {
         "name": name,
         "description": description,
         "private": private,
-        "auto_init": False,
+        "auto_init": True,
     }
 
     response = httpx.post(
