@@ -91,10 +91,10 @@ def project(db_session, owner) -> Project:
 @pytest.fixture()
 def module(db_session, project) -> ProjectModule:
     """Persist a module that epics may be scoped to."""
-    suffix = uuid.uuid4().hex[:4].upper()
+    suffix = uuid.uuid4().hex[:4]
     mod = ProjectModule(
         project_id=project.id,
-        code=f"M{suffix}",
+        code=f"m{suffix}",
         name=f"Module {suffix}",
         category="Systém",
     )

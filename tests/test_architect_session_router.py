@@ -102,7 +102,7 @@ def _make_module(db_session, *, project: Project, **overrides) -> ProjectModule:
     """Persist a project module to satisfy the FK on ArchitectSession.module_id."""
     defaults = {
         "project_id": project.id,
-        "code": f"M{uuid.uuid4().hex[:4].upper()}",
+        "code": f"m{uuid.uuid4().hex[:4]}",
         "name": f"Module {uuid.uuid4().hex[:8]}",
         "category": "Systém",
     }

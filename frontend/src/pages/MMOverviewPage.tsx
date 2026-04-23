@@ -129,7 +129,9 @@ function NewModuleModal({ projectId, existingModules, onClose, onCreated }: NewM
   function validate() {
     const next: Record<string, string> = {};
     if (!code.trim()) next.code = "Kód modulu je povinný.";
-    else if (!/^[A-Z0-9]{2,6}$/.test(code.trim())) next.code = "Kód: 2–6 veľkých písmen/číslic (napr. PAB).";
+    else if (!/^[a-z][a-z0-9-]*[a-z0-9]$/.test(code.trim()))
+      next.code =
+        "Kód: kebab-case, malé písmená/číslice/spojovníky (napr. partner-catalog), max 50 znakov.";
     if (!name.trim()) next.name = "Názov modulu je povinný.";
     if (!category.trim()) next.category = "Kategória je povinná.";
     setErrors(next);
@@ -144,7 +146,7 @@ function NewModuleModal({ projectId, existingModules, onClose, onCreated }: NewM
     try {
       const mod = await createProjectModule({
         project_id: projectId,
-        code: code.trim().toUpperCase(),
+        code: code.trim().toLowerCase(),
         name: name.trim(),
         category: category.trim(),
       });
@@ -175,11 +177,11 @@ function NewModuleModal({ projectId, existingModules, onClose, onCreated }: NewM
             <input
               ref={codeRef}
               type="text"
-              placeholder="napr. UCT"
-              maxLength={6}
+              placeholder="napr. partner-catalog"
+              maxLength={50}
               value={code}
-              onChange={(e) => { setCode(e.target.value.toUpperCase()); if (errors.code) setErrors((er) => ({ ...er, code: "" })); }}
-              className={`${inputCls} font-mono uppercase ${errors.code ? "border-red-500/50" : ""}`}
+              onChange={(e) => { setCode(e.target.value.toLowerCase()); if (errors.code) setErrors((er) => ({ ...er, code: "" })); }}
+              className={`${inputCls} font-mono lowercase ${errors.code ? "border-red-500/50" : ""}`}
             />
             {errors.code && <p className="mt-1 text-xs text-red-400">{errors.code}</p>}
           </div>

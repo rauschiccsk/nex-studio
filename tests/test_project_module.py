@@ -49,7 +49,7 @@ def _make_module(db_session, *, project: Project | None = None, **overrides) -> 
         project = _make_project(db_session)
     defaults = {
         "project_id": project.id,
-        "code": f"M{uuid.uuid4().hex[:4].upper()}",
+        "code": f"m{uuid.uuid4().hex[:4]}",
         "name": f"Module {uuid.uuid4().hex[:8]}",
         "category": "Systém",
     }
@@ -104,9 +104,9 @@ class TestProjectModuleModel:
         """Duplicate (project_id, code) pair must be rejected."""
         project = _make_project(db_session)
 
-        _make_module(db_session, project=project, code="PAB")
+        _make_module(db_session, project=project, code="pab")
 
-        dup = ProjectModule(project_id=project.id, code="PAB", name="Duplicate", category="Systém")
+        dup = ProjectModule(project_id=project.id, code="pab", name="Duplicate", category="Systém")
         db_session.add(dup)
         with pytest.raises((IntegrityError, ProgrammingError)):
             db_session.flush()
@@ -117,14 +117,14 @@ class TestProjectModuleModel:
         p1 = _make_project(db_session)
         p2 = _make_project(db_session)
 
-        m1 = _make_module(db_session, project=p1, code="PAB")
-        m2 = _make_module(db_session, project=p2, code="PAB")
+        m1 = _make_module(db_session, project=p1, code="pab")
+        m2 = _make_module(db_session, project=p2, code="pab")
 
         assert m1.id != m2.id
 
     def test_project_id_not_nullable(self, db_session):
         """project_id=NULL must be rejected."""
-        module = ProjectModule(project_id=None, code="TST", name="Test", category="Systém")
+        module = ProjectModule(project_id=None, code="tst", name="Test", category="Systém")
         db_session.add(module)
         with pytest.raises((IntegrityError, ProgrammingError)):
             db_session.flush()
@@ -142,7 +142,7 @@ class TestProjectModuleModel:
     def test_name_not_nullable(self, db_session):
         """name=NULL must be rejected."""
         project = _make_project(db_session)
-        module = ProjectModule(project_id=project.id, code="TST", name=None, category="Systém")
+        module = ProjectModule(project_id=project.id, code="tst", name=None, category="Systém")
         db_session.add(module)
         with pytest.raises((IntegrityError, ProgrammingError)):
             db_session.flush()
@@ -151,7 +151,7 @@ class TestProjectModuleModel:
     def test_category_not_nullable(self, db_session):
         """category=NULL must be rejected."""
         project = _make_project(db_session)
-        module = ProjectModule(project_id=project.id, code="TST", name="Test", category=None)
+        module = ProjectModule(project_id=project.id, code="tst", name="Test", category=None)
         db_session.add(module)
         with pytest.raises((IntegrityError, ProgrammingError)):
             db_session.flush()
@@ -159,7 +159,7 @@ class TestProjectModuleModel:
 
     def test_project_id_fk_valid(self, db_session):
         """project_id must reference an existing project."""
-        module = ProjectModule(project_id=uuid.uuid4(), code="TST", name="Test", category="Systém")
+        module = ProjectModule(project_id=uuid.uuid4(), code="tst", name="Test", category="Systém")
         db_session.add(module)
         with pytest.raises((IntegrityError, ProgrammingError)):
             db_session.flush()
@@ -170,7 +170,7 @@ class TestProjectModuleModel:
         project = _make_project(db_session)
         module = ProjectModule(
             project_id=project.id,
-            code="TST",
+            code="tst",
             name="Test",
             category="Systém",
             status="invalid_status",
@@ -186,7 +186,7 @@ class TestProjectModuleModel:
         for i, status in enumerate(["planned", "in_design", "in_development", "done"]):
             module = ProjectModule(
                 project_id=project.id,
-                code=f"S{i:02d}",
+                code=f"s{i:02d}",
                 name=f"Module {status}",
                 category="Systém",
                 status=status,

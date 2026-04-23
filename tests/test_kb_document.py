@@ -46,7 +46,7 @@ def _make_module(db_session, *, project=None, **overrides) -> ProjectModule:
         project = _make_project(db_session)
     defaults = {
         "project_id": project.id,
-        "code": f"M{uuid.uuid4().hex[:4].upper()}",
+        "code": f"m{uuid.uuid4().hex[:4]}",
         "name": f"Module {uuid.uuid4().hex[:8]}",
         "category": "Systém",
     }

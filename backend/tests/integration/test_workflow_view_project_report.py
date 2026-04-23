@@ -241,8 +241,8 @@ STK_FEATS_TOTAL = 5
 STK_FEATS_DONE = 0
 EXPECTED_MODULE_PROGRESS = {
     "PAB": (PAB_FEATS_DONE, PAB_FEATS_TOTAL, 100),
-    "GSC": (GSC_FEATS_DONE, GSC_FEATS_TOTAL, 60),
-    "STK": (STK_FEATS_DONE, STK_FEATS_TOTAL, 0),
+    "gsc": (GSC_FEATS_DONE, GSC_FEATS_TOTAL, 60),
+    "stk": (STK_FEATS_DONE, STK_FEATS_TOTAL, 0),
 }
 # Sanity — the percentages line up with §3.19 step 4 narrative.
 for _code, (_done, _total, _pct) in EXPECTED_MODULE_PROGRESS.items():
@@ -345,8 +345,8 @@ def modules(db_session, nex_horizont) -> dict[str, ProjectModule]:
     rows: dict[str, ProjectModule] = {}
     for code, name, category, status in (
         ("PAB", "Katalóg partnerov", "Katalógy", "done"),
-        ("GSC", "Globálne skladové karty", "Sklad", "in_development"),
-        ("STK", "Skladové karty zásob", "Sklad", "planned"),
+        ("gsc", "Globálne skladové karty", "Sklad", "in_development"),
+        ("stk", "Skladové karty zásob", "Sklad", "planned"),
     ):
         module = ProjectModule(
             project_id=nex_horizont.id,
@@ -372,7 +372,7 @@ def epics_with_feats(db_session, nex_horizont, modules) -> dict[str, Epic]:
     GSC gets epic 2, STK gets epic 3.
     """
     epics: dict[str, Epic] = {}
-    for idx, code in enumerate(("PAB", "GSC", "STK"), start=1):
+    for idx, code in enumerate(("PAB", "gsc", "stk"), start=1):
         done_count = EXPECTED_MODULE_PROGRESS[code][0]
         total_count = EXPECTED_MODULE_PROGRESS[code][1]
         epic = Epic(
@@ -428,7 +428,7 @@ def completed_delegations(
         db_session.query(Feat).filter(Feat.epic_id == epics_with_feats["PAB"].id).order_by(Feat.number.asc()).all()
     )
     gsc_feats = (
-        db_session.query(Feat).filter(Feat.epic_id == epics_with_feats["GSC"].id).order_by(Feat.number.asc()).all()
+        db_session.query(Feat).filter(Feat.epic_id == epics_with_feats["gsc"].id).order_by(Feat.number.asc()).all()
     )
 
     # 5 PAB delegations (one per PAB feat — PAB is 100% done).
@@ -696,12 +696,12 @@ class TestViewProjectReportHappyPath:
         # one of the report's sources — it surfaces PAB / GSC / STK.
         assert modules_body["total"] == 3
         module_rows_by_code = {row["code"]: row for row in modules_body["items"]}
-        assert set(module_rows_by_code) == {"PAB", "GSC", "STK"}
+        assert set(module_rows_by_code) == {"PAB", "gsc", "stk"}
         # Module status is the top-level signal the ``ModuleProgressGrid``
         # colour-codes against.
         assert module_rows_by_code["PAB"]["status"] == "done"
-        assert module_rows_by_code["GSC"]["status"] == "in_development"
-        assert module_rows_by_code["STK"]["status"] == "planned"
+        assert module_rows_by_code["gsc"]["status"] == "in_development"
+        assert module_rows_by_code["stk"]["status"] == "planned"
 
         epics_resp = client.get(
             "/api/v1/epics",
@@ -830,8 +830,8 @@ class TestViewProjectReportHappyPath:
         # §3.19 step 4: "PAB: 100% | GSC: 60% | STK: 0%".
         assert progress_by_code == EXPECTED_MODULE_PROGRESS
         assert progress_by_code["PAB"][2] == 100
-        assert progress_by_code["GSC"][2] == 60
-        assert progress_by_code["STK"][2] == 0
+        assert progress_by_code["gsc"][2] == 60
+        assert progress_by_code["stk"][2] == 0
 
         # ====================================================================
         # Postcondition — §3.19 line 759: "Žiadna zmena dát — read-

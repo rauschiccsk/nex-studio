@@ -28,7 +28,7 @@ Horizont with a single dependency on the pre-existing ``GSC``
            2 the list returns only the pre-seeded ``GSC`` row.
         2. Zoltán clicks "Pridať modul" — the form opens. Client-side
            only; no HTTP round-trip.
-        3. Zoltán fills in ``Kód="STK"``, ``Názov="Skladové karty
+        3. Zoltán fills in ``Kód="stk"``, ``Názov="Skladové karty
            zásob"``, ``Kategória="Sklad"``, ``Závislosti=[GSC]`` —
            client-side form state only.
         4. Zoltán clicks "Pridať" — the orchestrator drives two
@@ -48,7 +48,7 @@ Horizont with a single dependency on the pre-existing ``GSC``
            server-generated ``id`` / ``created_at`` / ``updated_at``.
 
     Postcondition (per BEHAVIOR.md §3.7):
-        * ``project_modules`` row exists with ``code='STK'`` and
+        * ``project_modules`` row exists with ``code = 'stk'`` and
           ``status='planned'``.
         * ``module_dependencies`` contains the edge ``STK → GSC``.
         * The UI shows ``blocked_by=['GSC']`` as long as ``GSC`` is
@@ -183,7 +183,7 @@ def gsc_module(db_session, nex_horizont) -> ProjectModule:
     """
     module = ProjectModule(
         project_id=nex_horizont.id,
-        code="GSC",
+        code = "gsc",
         name="Globálne skladové karty",
         category="Sklad",
         status="in_design",  # Not ``done`` → blocks STK.
@@ -198,9 +198,9 @@ def gsc_module(db_session, nex_horizont) -> ProjectModule:
 # ---------------------------------------------------------------------------
 
 
-# BEHAVIOR.md §3.7 step 3: Kód="STK", Názov="Skladové karty zásob",
+# BEHAVIOR.md §3.7 step 3: Kód="stk", Názov="Skladové karty zásob",
 # Kategória="Sklad", Závislosti=[GSC].
-STK_CODE = "STK"
+STK_CODE = "stk"
 STK_NAME = "Skladové karty zásob"
 STK_CATEGORY = "Sklad"
 
@@ -257,7 +257,7 @@ class TestAddModuleHappyPath:
         )
         assert initial_list.status_code == 200, initial_list.text
         assert initial_list.json()["total"] == 1
-        assert [row["code"] for row in initial_list.json()["items"]] == ["GSC"]
+        assert [row["code"] for row in initial_list.json()["items"]] == ["gsc"]
 
         # --- Step 2: Zoltán clicks "Pridať modul". Client-side only
         # — the form opens with empty fields. No HTTP round-trip.
@@ -318,7 +318,7 @@ class TestAddModuleHappyPath:
         assert after_list.status_code == 200
         assert after_list.json()["total"] == 2
         codes = {row["code"] for row in after_list.json()["items"]}
-        assert codes == {"GSC", "STK"}
+        assert codes == {"gsc", "stk"}
 
         # 2. ``STK`` can be looked up directly — the UI hits this
         #    endpoint when the user drills into the row.
@@ -360,7 +360,7 @@ class TestAddModuleHappyPath:
             assert prereq.status_code == 200
             if prereq.json()["status"] != "done":
                 blocker_module_ids.append(prereq.json()["code"])
-        assert blocker_module_ids == ["GSC"]
+        assert blocker_module_ids == ["gsc"]
 
         # --- Postcondition verification (DB state) ---------------------
         db_session.expire_all()
@@ -423,19 +423,19 @@ class TestAddModuleHappyPath:
             "/api/v1/project-modules",
             json=_module_payload(
                 nex_horizont.id,
-                code="PAB",
+                code = "pab",
                 name="Katalóg partnerov",
                 category="Katalógy",
             ),
         )
         assert resp.status_code == 201, resp.text
-        assert resp.json()["code"] == "PAB"
+        assert resp.json()["code"] == "pab"
         assert resp.json()["status"] == "planned"
 
         db_session.expire_all()
         persisted = db_session.get(ProjectModule, uuid.UUID(resp.json()["id"]))
         assert persisted is not None
-        assert persisted.code == "PAB"
+        assert persisted.code == "pab"
         assert persisted.project_id == nex_horizont.id
 
 

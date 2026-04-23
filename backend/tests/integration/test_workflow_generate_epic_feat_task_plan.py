@@ -271,7 +271,7 @@ def prior_modules_with_epics(
     modules: list[ProjectModule] = []
     for number, (code, name, category) in enumerate(
         [
-            ("GSC", "Globálne skladové karty", "Sklad"),
+            ("gsc", "Globálne skladové karty", "Sklad"),
             ("DOB", "Dodávateľské objednávky", "Nákup"),
             ("PAB", "Katalóg partnerov", "Katalógy"),
         ],
@@ -306,7 +306,7 @@ def prior_modules_with_epics(
 def gsc_done(prior_modules_with_epics) -> ProjectModule:
     """Return the GSC module — the prerequisite for STK per §3.9 example."""
     for module in prior_modules_with_epics:
-        if module.code == "GSC":
+        if module.code == "gsc":
             return module
     raise AssertionError("GSC module missing from prior_modules_with_epics fixture")
 
@@ -324,7 +324,7 @@ def stk_in_design(db_session, nex_horizont, gsc_done) -> ProjectModule:
     """
     module = ProjectModule(
         project_id=nex_horizont.id,
-        code="STK",
+        code = "stk",
         name="Skladové karty zásob",
         category="Sklad",
         status="in_design",

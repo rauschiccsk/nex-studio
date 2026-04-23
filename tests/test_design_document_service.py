@@ -82,10 +82,10 @@ def _make_module(db_session, *, project: Project | None = None, **overrides) -> 
     """Create a ProjectModule for FK references."""
     if project is None:
         project = _make_project(db_session)
-    suffix = uuid.uuid4().hex[:4].upper()
+    suffix = uuid.uuid4().hex[:4]
     defaults = {
         "project_id": project.id,
-        "code": f"M{suffix}",
+        "code": f"m{suffix}",
         "name": f"Module {suffix}",
         "category": "Systém",
     }

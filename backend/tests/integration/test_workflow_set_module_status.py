@@ -175,7 +175,7 @@ def gsc_done(db_session, nex_horizont) -> ProjectModule:
     """
     module = ProjectModule(
         project_id=nex_horizont.id,
-        code="GSC",
+        code = "gsc",
         name="Globálne skladové karty",
         category="Sklad",
         status="done",
@@ -195,7 +195,7 @@ def stk_planned(db_session, nex_horizont, gsc_done) -> ProjectModule:
     """
     module = ProjectModule(
         project_id=nex_horizont.id,
-        code="STK",
+        code = "stk",
         name="Skladové karty zásob",
         category="Sklad",
         status="planned",
@@ -285,7 +285,7 @@ class TestSetModuleStatusHappyPath:
         # §3.8 step 3 / postcondition line 1: "status='in_development'".
         assert body["status"] == "in_development"
         # Unchanged fields stay put — the PATCH only touched ``status``.
-        assert body["code"] == before_body["code"] == "STK"
+        assert body["code"] == before_body["code"] == "stk"
         assert body["name"] == before_body["name"] == "Skladové karty zásob"
         assert body["category"] == before_body["category"] == "Sklad"
         assert body["design_doc_path"] == before_body["design_doc_path"]
@@ -315,7 +315,7 @@ class TestSetModuleStatusHappyPath:
         )
         assert in_dev_list.status_code == 200
         codes = {row["code"] for row in in_dev_list.json()["items"]}
-        assert "STK" in codes
+        assert "stk" in codes
 
         # 3. The ``status=planned`` filter no longer surfaces STK.
         planned_list = client.get(
@@ -327,7 +327,7 @@ class TestSetModuleStatusHappyPath:
         )
         assert planned_list.status_code == 200
         planned_codes = {row["code"] for row in planned_list.json()["items"]}
-        assert "STK" not in planned_codes
+        assert "stk" not in planned_codes
 
         # 4. §3.8 postcondition line 2: "Architect session pre STK je
         #    teraz možné otvoriť". Creating the session through the
@@ -361,7 +361,7 @@ class TestSetModuleStatusHappyPath:
         persisted_module = db_session.get(ProjectModule, stk_planned.id)
         assert persisted_module is not None
         assert persisted_module.status == "in_development"
-        assert persisted_module.code == "STK"
+        assert persisted_module.code == "stk"
 
         # 2. The Architect session is persisted and wired to STK.
         persisted_session = db_session.get(ArchitectSession, uuid.UUID(session_body["id"]))
@@ -549,6 +549,6 @@ class TestSetModuleStatusEdgeCases:
         assert persisted is not None
         assert persisted.status == "in_design"
         assert persisted.design_doc_path == "/kb/nex-horizont/modules/stk/DESIGN.md"
-        assert persisted.code == "STK"
+        assert persisted.code == "stk"
         assert persisted.name == "Skladové karty zásob"
         assert persisted.category == "Sklad"

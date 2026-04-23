@@ -87,7 +87,7 @@ class ProjectModule(Base, UUIDMixin, TimestampMixin):
         nullable=False,
         index=True,
     )
-    code = Column(String(10), nullable=False)
+    code = Column(String(50), nullable=False)
     name = Column(String(255), nullable=False)
     category = Column(String(50), nullable=False)
     status = Column(String(20), nullable=False, server_default="planned")
@@ -103,6 +103,12 @@ class ProjectModule(Base, UUIDMixin, TimestampMixin):
             "category IN ('Systém', 'Katalógy', 'Sklad', 'Predaj', "
             "'Nákup', 'Účtovníctvo', 'Pokladňa')",
             name="ck_project_modules_category",
+        ),
+        # Kebab-case, matches backend.schemas.project_module.MODULE_CODE_PATTERN
+        # and the CHECK added by migration 032.
+        CheckConstraint(
+            r"code ~ '^[a-z][a-z0-9-]*[a-z0-9]$'",
+            name="ck_project_modules_code_format",
         ),
     )
 

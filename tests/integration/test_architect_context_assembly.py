@@ -102,7 +102,7 @@ def module_gsc(db_session, project) -> ProjectModule:
     """GSC module — status done."""
     mod = ProjectModule(
         project_id=project.id,
-        code="GSC",
+        code="gsc",
         name="General System Config",
         category="Systém",
         status="done",
@@ -117,7 +117,7 @@ def module_stk(db_session, project) -> ProjectModule:
     """STK module — status in_design."""
     mod = ProjectModule(
         project_id=project.id,
-        code="STK",
+        code="stk",
         name="Stakeholder Management",
         category="Katalógy",
         status="in_design",
@@ -266,8 +266,8 @@ class TestArchitectContextAssemblyFoundation:
 
         # Module registry must be present
         assert "Module Registry" in full_context
-        assert "GSC" in full_context
-        assert "STK" in full_context
+        assert "gsc" in full_context
+        assert "stk" in full_context
         assert "done" in full_context
         assert "in_design" in full_context
 
@@ -402,7 +402,7 @@ class TestArchitectContextAssemblyModule:
 
         # Module registry must be present
         assert "Module Registry" in full_context
-        assert "GSC" in full_context
+        assert "gsc" in full_context
         assert "done" in full_context
 
     def test_module_context_includes_conversation_history(

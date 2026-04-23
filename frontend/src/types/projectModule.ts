@@ -43,7 +43,12 @@ export const PROJECT_MODULE_CATEGORIES: ProjectModuleCategory[] = [
 /** Payload for creating a new project module. */
 export interface ProjectModuleCreate {
   project_id: string;
-  /** Short module code, unique within the project (e.g. ``PAB``). */
+  /**
+   * Kebab-case module code, unique within the project
+   * (e.g. ``partner-catalog``). Must match
+   * ``^[a-z][a-z0-9-]*[a-z0-9]$`` — enforced by backend regex +
+   * ``ck_project_modules_code_format`` (migration 032).
+   */
   code: string;
   /** Full human-readable module name. */
   name: string;

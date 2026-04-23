@@ -27,6 +27,21 @@ from pydantic import BaseModel, ConfigDict, Field
 # on the ``project_modules`` table.
 ProjectModuleStatus = Literal["planned", "in_design", "in_development", "done"]
 
+# Kebab-case identifier for module codes. Replaces the NEX Genesis 8.3
+# legacy of 2–6 uppercase alnum codes (``PAB``, ``MM``) with Clean-Code
+# intention-revealing names (``partner-catalog``, ``module-manager``).
+# Mirrors ``ck_project_modules_code_format`` (migration 032):
+#
+#   * starts with a lowercase letter
+#   * ends with lowercase letter or digit (so ``foo-`` is rejected)
+#   * interior may contain lowercase letters, digits and hyphens
+#
+# The CHECK regex requires both start + end char, so ``min_length`` is
+# 2 at the schema layer as well.
+MODULE_CODE_PATTERN = r"^[a-z][a-z0-9-]*[a-z0-9]$"
+MODULE_CODE_MIN_LENGTH = 2
+MODULE_CODE_MAX_LENGTH = 50
+
 # Allowed module categories, mirroring the NEX Automat module_registry.yaml
 # SK-localized labels. Enforced by the ``ck_project_modules_category``
 # DB CHECK (migration 031) so the new-project-module form can no longer
@@ -57,9 +72,13 @@ class ProjectModuleCreate(BaseModel):
     )
     code: str = Field(
         ...,
-        min_length=1,
-        max_length=10,
-        description="Short module code, unique within the project (e.g. 'PAB', 'GSC', 'MIG').",
+        min_length=MODULE_CODE_MIN_LENGTH,
+        max_length=MODULE_CODE_MAX_LENGTH,
+        pattern=MODULE_CODE_PATTERN,
+        description=(
+            "Kebab-case module code, unique within the project "
+            "(e.g. 'partner-catalog', 'module-manager')."
+        ),
     )
     name: str = Field(
         ...,
@@ -98,9 +117,10 @@ class ProjectModuleUpdate(BaseModel):
 
     code: Optional[str] = Field(
         default=None,
-        min_length=1,
-        max_length=10,
-        description="Updated short module code.",
+        min_length=MODULE_CODE_MIN_LENGTH,
+        max_length=MODULE_CODE_MAX_LENGTH,
+        pattern=MODULE_CODE_PATTERN,
+        description="Updated kebab-case module code.",
     )
     name: Optional[str] = Field(
         default=None,
@@ -135,7 +155,11 @@ class ProjectModuleRead(BaseModel):
 
     id: UUID
     project_id: UUID
-    code: str = Field(..., min_length=1, max_length=10)
+    code: str = Field(
+        ...,
+        min_length=MODULE_CODE_MIN_LENGTH,
+        max_length=MODULE_CODE_MAX_LENGTH,
+    )
     name: str = Field(..., min_length=1, max_length=255)
     category: ProjectModuleCategory
     status: ProjectModuleStatus

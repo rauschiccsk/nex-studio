@@ -27,8 +27,9 @@ table, D-04 per-module DESIGN.md and D-10 NEX Horizont module seeding):
   reassigned. :class:`ProjectModuleUpdate` deliberately omits it and
   the service's allow-list formalises that contract defensively.
 * ``code`` is unique *per project* — ``UNIQUE(project_id, code)``
-  (``uq_project_modules_project_id_code``). The same short code
-  (e.g. ``'PAB'``) may therefore exist in several projects.
+  (``uq_project_modules_project_id_code``). The same kebab-case code
+  (e.g. ``'partner-catalog'``) may therefore exist in several
+  projects.
 * ``status`` is constrained by the ``ck_project_modules_status`` DB
   CHECK (``planned | in_design | in_development | done``). Invalid
   values surface at schema-validation time (HTTP 422) via the

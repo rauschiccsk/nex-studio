@@ -318,7 +318,7 @@ def test_architect_entry_multiple_commits_joined() -> None:
 def _module_event(**overrides: Any) -> ModuleEventData:
     defaults: dict[str, Any] = {
         "event_type": "created",
-        "module_code": "MM",
+        "module_code": "mm",
         "module_name": "Manažér modulov",
         "category": "Systém",
         "timestamp": datetime(2026, 4, 23, 19, 20, 0, tzinfo=timezone.utc),
@@ -331,14 +331,14 @@ def test_module_event_created_format() -> None:
     svc = LiveDocumentService("nex-test")
     entry = svc.generate_module_event_entry(_module_event())
 
-    assert entry == "19:20 Module MM created — Manažér modulov (Systém)\n"
+    assert entry == "19:20 Module mm created — Manažér modulov (Systém)\n"
 
 
 def test_module_event_deleted_format() -> None:
     svc = LiveDocumentService("nex-test")
     entry = svc.generate_module_event_entry(_module_event(event_type="deleted"))
 
-    assert entry == "19:20 Module MM deleted — Manažér modulov\n"
+    assert entry == "19:20 Module mm deleted — Manažér modulov\n"
 
 
 def test_module_event_status_changed_format() -> None:
@@ -351,7 +351,7 @@ def test_module_event_status_changed_format() -> None:
         )
     )
 
-    assert entry == "19:20 Module MM status planned → in_development\n"
+    assert entry == "19:20 Module mm status planned → in_development\n"
 
 
 def test_append_module_event_persists_to_history(tmp_path: Path) -> None:
@@ -362,7 +362,7 @@ def test_append_module_event_persists_to_history(tmp_path: Path) -> None:
 
     content = writer.read("nex-test", "HISTORY.md")
     assert "# nex-test — History" in content
-    assert "Module MM created — Manažér modulov (Systém)" in content
+    assert "Module mm created — Manažér modulov (Systém)" in content
 
 
 def test_append_module_event_dedup_on_replay(tmp_path: Path) -> None:
@@ -375,7 +375,7 @@ def test_append_module_event_dedup_on_replay(tmp_path: Path) -> None:
     svc.append_module_event(event)
 
     content = writer.read("nex-test", "HISTORY.md")
-    assert content.count("Module MM created") == 1
+    assert content.count("Module mm created") == 1
 
 
 def test_append_module_event_no_writer_is_noop() -> None:
@@ -933,28 +933,28 @@ def _make_module(
 
 def test_status_md_multimodule_lists_modules(db_session: Any) -> None:
     project = _make_project(db_session, name="NEX Test", slug="nex-test")
-    _make_module(db_session, project=project, code="MM", name="Manažér modulov", category="Systém")
-    _make_module(db_session, project=project, code="PAB", name="Katalóg partnerov", category="Katalógy")
+    _make_module(db_session, project=project, code="mm", name="Manažér modulov", category="Systém")
+    _make_module(db_session, project=project, code="pab", name="Katalóg partnerov", category="Katalógy")
 
     svc = LiveDocumentService(project.slug)
     md = svc.generate_status_md(db_session, project.id)
 
     assert "## Modules (2)" in md
-    assert "- [planned] MM · Manažér modulov · Systém" in md
-    assert "- [planned] PAB · Katalóg partnerov · Katalógy" in md
+    assert "- [planned] mm · Manažér modulov · Systém" in md
+    assert "- [planned] pab · Katalóg partnerov · Katalógy" in md
     assert "Modules: 0/2 done" in md
 
 
 def test_status_md_modules_sorted_by_code(db_session: Any) -> None:
     """Module rows come out in alphabetical code order for stable diffs."""
     project = _make_project(db_session)
-    _make_module(db_session, project=project, code="PAB", name="B")
-    _make_module(db_session, project=project, code="MM", name="A")
+    _make_module(db_session, project=project, code="pab", name="B")
+    _make_module(db_session, project=project, code="mm", name="A")
 
     svc = LiveDocumentService(project.slug)
     md = svc.generate_status_md(db_session, project.id)
-    mm_idx = md.index("MM ·")
-    pab_idx = md.index("PAB ·")
+    mm_idx = md.index("mm ·")
+    pab_idx = md.index("pab ·")
     assert mm_idx < pab_idx
 
 
@@ -970,13 +970,13 @@ def test_status_md_multimodule_empty_shows_no_modules_placeholder(db_session: An
 
 def test_status_md_multimodule_with_modules_but_no_epics(db_session: Any) -> None:
     project = _make_project(db_session)
-    _make_module(db_session, project=project, code="MM", name="Manažér modulov")
+    _make_module(db_session, project=project, code="mm", name="Manažér modulov")
 
     svc = LiveDocumentService(project.slug)
     md = svc.generate_status_md(db_session, project.id)
 
     assert "## Modules (1)" in md
-    assert "MM ·" in md
+    assert "mm ·" in md
     assert "Modules: 0/1 done" in md
 
 
@@ -1002,9 +1002,9 @@ def test_status_md_singlemodule_has_no_modules_section(db_session: Any) -> None:
 
 def test_status_md_modules_done_count_in_summary(db_session: Any) -> None:
     project = _make_project(db_session)
-    _make_module(db_session, project=project, code="MM", name="A", status="done")
-    _make_module(db_session, project=project, code="PAB", name="B", status="done")
-    _make_module(db_session, project=project, code="GSC", name="C", status="planned")
+    _make_module(db_session, project=project, code="mm", name="A", status="done")
+    _make_module(db_session, project=project, code="pab", name="B", status="done")
+    _make_module(db_session, project=project, code="gsc", name="C", status="planned")
 
     svc = LiveDocumentService(project.slug)
     md = svc.generate_status_md(db_session, project.id)

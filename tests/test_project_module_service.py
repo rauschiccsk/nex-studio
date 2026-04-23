@@ -72,10 +72,10 @@ def _make_project(db_session, *, user: User | None = None, **overrides) -> Proje
 
 def _payload(project_id, **overrides) -> ProjectModuleCreate:
     """Return a :class:`ProjectModuleCreate` payload with sensible defaults."""
-    suffix = uuid.uuid4().hex[:4].upper()
+    suffix = uuid.uuid4().hex[:4]
     defaults = {
         "project_id": project_id,
-        "code": f"M{suffix}",
+        "code": f"m{suffix}",
         "name": f"Module {suffix}",
         "category": "Systém",
     }
@@ -93,7 +93,7 @@ class TestProjectModuleService:
 
         created = service.create(
             db_session,
-            _payload(project.id, code="PAB", name="Katalóg partnerov", category="Katalógy"),
+            _payload(project.id, code="pab", name="Katalóg partnerov", category="Katalógy"),
         )
 
         assert isinstance(created, ProjectModule)
@@ -101,7 +101,7 @@ class TestProjectModuleService:
         assert created.created_at is not None
         assert created.updated_at is not None
         assert created.project_id == project.id
-        assert created.code == "PAB"
+        assert created.code == "pab"
         assert created.name == "Katalóg partnerov"
         assert created.category == "Katalógy"
         # server_default 'planned'
@@ -116,7 +116,7 @@ class TestProjectModuleService:
             db_session,
             _payload(
                 project.id,
-                code="GSC",
+                code="gsc",
                 name="General Stock Control",
                 category="Sklad",
                 status="in_design",
@@ -130,29 +130,29 @@ class TestProjectModuleService:
     def test_create_duplicate_natural_key_raises(self, db_session):
         """``UNIQUE(project_id, code)`` — duplicate pair rejected pre-flush."""
         project = _make_project(db_session)
-        service.create(db_session, _payload(project.id, code="PAB"))
+        service.create(db_session, _payload(project.id, code="pab"))
 
         with pytest.raises(ValueError, match="already exists"):
-            service.create(db_session, _payload(project.id, code="PAB"))
+            service.create(db_session, _payload(project.id, code="pab"))
 
     def test_create_same_code_different_projects_allowed(self, db_session):
         """The same code may exist across multiple projects."""
         p1 = _make_project(db_session)
         p2 = _make_project(db_session)
 
-        a = service.create(db_session, _payload(p1.id, code="PAB"))
-        b = service.create(db_session, _payload(p2.id, code="PAB"))
+        a = service.create(db_session, _payload(p1.id, code="pab"))
+        b = service.create(db_session, _payload(p2.id, code="pab"))
 
         assert a.id != b.id
-        assert a.code == b.code == "PAB"
+        assert a.code == b.code == "pab"
         assert a.project_id != b.project_id
 
     def test_create_same_project_different_codes_allowed(self, db_session):
         """A single project may host many modules with distinct codes."""
         project = _make_project(db_session)
 
-        a = service.create(db_session, _payload(project.id, code="PAB"))
-        b = service.create(db_session, _payload(project.id, code="GSC"))
+        a = service.create(db_session, _payload(project.id, code="pab"))
+        b = service.create(db_session, _payload(project.id, code="gsc"))
 
         assert a.id != b.id
         assert a.project_id == b.project_id == project.id
@@ -179,14 +179,14 @@ class TestProjectModuleService:
         project = _make_project(db_session)
         created = service.create(
             db_session,
-            _payload(project.id, code="PAB", name="Original", category="Katalógy"),
+            _payload(project.id, code="pab", name="Original", category="Katalógy"),
         )
 
         updated = service.update(
             db_session,
             created.id,
             ProjectModuleUpdate(
-                code="PAB2",
+                code="pab2",
                 name="Updated Name",
                 category="Účtovníctvo",
                 status="in_development",
@@ -195,7 +195,7 @@ class TestProjectModuleService:
         )
 
         assert updated.id == created.id
-        assert updated.code == "PAB2"
+        assert updated.code == "pab2"
         assert updated.name == "Updated Name"
         assert updated.category == "Účtovníctvo"
         assert updated.status == "in_development"
@@ -206,7 +206,7 @@ class TestProjectModuleService:
         project = _make_project(db_session)
         created = service.create(
             db_session,
-            _payload(project.id, code="PAB", name="Original", category="Katalógy"),
+            _payload(project.id, code="pab", name="Original", category="Katalógy"),
         )
 
         updated = service.update(
@@ -216,7 +216,7 @@ class TestProjectModuleService:
         )
 
         assert updated.status == "done"
-        assert updated.code == "PAB"
+        assert updated.code == "pab"
         assert updated.name == "Original"
         assert updated.category == "Katalógy"
 
@@ -242,37 +242,37 @@ class TestProjectModuleService:
     def test_update_code_collision_raises(self, db_session):
         """Renaming ``code`` to one already in use within the same project raises."""
         project = _make_project(db_session)
-        service.create(db_session, _payload(project.id, code="PAB"))
-        m2 = service.create(db_session, _payload(project.id, code="GSC"))
+        service.create(db_session, _payload(project.id, code="pab"))
+        m2 = service.create(db_session, _payload(project.id, code="gsc"))
 
         with pytest.raises(ValueError, match="already exists"):
-            service.update(db_session, m2.id, ProjectModuleUpdate(code="PAB"))
+            service.update(db_session, m2.id, ProjectModuleUpdate(code="pab"))
 
     def test_update_code_same_value_noop(self, db_session):
         """Setting ``code`` to its current value does not trip the uniqueness check."""
         project = _make_project(db_session)
-        created = service.create(db_session, _payload(project.id, code="PAB"))
+        created = service.create(db_session, _payload(project.id, code="pab"))
 
         updated = service.update(
             db_session,
             created.id,
-            ProjectModuleUpdate(code="PAB"),
+            ProjectModuleUpdate(code="pab"),
         )
-        assert updated.code == "PAB"
+        assert updated.code == "pab"
 
     def test_update_code_same_across_projects(self, db_session):
         """Renaming to a code used in *another* project is allowed."""
         p1 = _make_project(db_session)
         p2 = _make_project(db_session)
-        service.create(db_session, _payload(p1.id, code="PAB"))
-        m2 = service.create(db_session, _payload(p2.id, code="GSC"))
+        service.create(db_session, _payload(p1.id, code="pab"))
+        m2 = service.create(db_session, _payload(p2.id, code="gsc"))
 
         updated = service.update(
             db_session,
             m2.id,
-            ProjectModuleUpdate(code="PAB"),
+            ProjectModuleUpdate(code="pab"),
         )
-        assert updated.code == "PAB"
+        assert updated.code == "pab"
         assert updated.project_id == p2.id
 
     def test_update_missing_raises(self, db_session):
@@ -303,8 +303,8 @@ class TestProjectModuleService:
     def test_delete_one_module_leaves_others_intact(self, db_session):
         """Deleting one module does not affect siblings in the same project."""
         project = _make_project(db_session)
-        a = service.create(db_session, _payload(project.id, code="PAB"))
-        b = service.create(db_session, _payload(project.id, code="GSC"))
+        a = service.create(db_session, _payload(project.id, code="pab"))
+        b = service.create(db_session, _payload(project.id, code="gsc"))
 
         service.delete(db_session, a.id)
 
@@ -316,7 +316,7 @@ class TestProjectModuleService:
         project = _make_project(db_session)
         created_ids: set = set()
         for i in range(3):
-            created_ids.add(service.create(db_session, _payload(project.id, code=f"M{i:02d}")).id)
+            created_ids.add(service.create(db_session, _payload(project.id, code=f"m{i:02d}")).id)
 
         rows = service.list_project_modules(db_session)
         assert created_ids.issubset({r.id for r in rows})
@@ -335,8 +335,8 @@ class TestProjectModuleService:
     def test_list_filter_by_status(self, db_session):
         """``status`` filter returns only rows with the given status."""
         project = _make_project(db_session)
-        planned = service.create(db_session, _payload(project.id, code="PL", status="planned"))
-        in_dev = service.create(db_session, _payload(project.id, code="DV", status="in_development"))
+        planned = service.create(db_session, _payload(project.id, code="pl", status="planned"))
+        in_dev = service.create(db_session, _payload(project.id, code="dv", status="in_development"))
 
         planned_rows = service.list_project_modules(db_session, status="planned")
         planned_ids = {r.id for r in planned_rows}
@@ -351,8 +351,8 @@ class TestProjectModuleService:
     def test_list_filter_by_category(self, db_session):
         """``category`` filter returns only rows in that category."""
         project = _make_project(db_session)
-        a = service.create(db_session, _payload(project.id, code="PAB", category="Katalógy"))
-        b = service.create(db_session, _payload(project.id, code="GSC", category="Sklad"))
+        a = service.create(db_session, _payload(project.id, code="pab", category="Katalógy"))
+        b = service.create(db_session, _payload(project.id, code="gsc", category="Sklad"))
 
         rows = service.list_project_modules(db_session, category="Katalógy")
         ids = {r.id for r in rows}
@@ -364,17 +364,17 @@ class TestProjectModuleService:
         project = _make_project(db_session)
         match = service.create(
             db_session,
-            _payload(project.id, code="M1", category="Katalógy", status="in_development"),
+            _payload(project.id, code="m1", category="Katalógy", status="in_development"),
         )
         # Different category
         service.create(
             db_session,
-            _payload(project.id, code="M2", category="Sklad", status="in_development"),
+            _payload(project.id, code="m2", category="Sklad", status="in_development"),
         )
         # Different status
         service.create(
             db_session,
-            _payload(project.id, code="M3", category="Katalógy", status="planned"),
+            _payload(project.id, code="m3", category="Katalógy", status="planned"),
         )
 
         rows = service.list_project_modules(
@@ -400,9 +400,9 @@ class TestProjectModuleService:
 
         project = _make_project(db_session)
         base_time = datetime(2026, 4, 15, 10, 0, tzinfo=timezone.utc)
-        m1 = service.create(db_session, _payload(project.id, code="M01"))
-        m2 = service.create(db_session, _payload(project.id, code="M02"))
-        m3 = service.create(db_session, _payload(project.id, code="M03"))
+        m1 = service.create(db_session, _payload(project.id, code="m01"))
+        m2 = service.create(db_session, _payload(project.id, code="m02"))
+        m3 = service.create(db_session, _payload(project.id, code="m03"))
         m1.created_at = base_time
         m2.created_at = base_time + timedelta(minutes=1)
         m3.created_at = base_time + timedelta(minutes=2)
@@ -416,7 +416,7 @@ class TestProjectModuleService:
         """``limit`` / ``offset`` restrict the result window."""
         project = _make_project(db_session)
         for i in range(5):
-            service.create(db_session, _payload(project.id, code=f"M{i:02d}"))
+            service.create(db_session, _payload(project.id, code=f"m{i:02d}"))
 
         first_page = service.list_project_modules(
             db_session,

@@ -61,7 +61,7 @@ def _make_project(db_session, *, owner: User) -> Project:
 def _make_module(db_session, *, project: Project) -> ProjectModule:
     module = ProjectModule(
         project_id=project.id,
-        code=f"M{uuid.uuid4().hex[:4].upper()}",
+        code=f"m{uuid.uuid4().hex[:4]}",
         name=f"Module {uuid.uuid4().hex[:8]}",
         category="Systém",
     )

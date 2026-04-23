@@ -49,7 +49,7 @@ def _make_module(db_session, *, project: Project | None = None, **overrides) -> 
         project = _make_project(db_session)
     defaults = {
         "project_id": project.id,
-        "code": f"M{uuid.uuid4().hex[:4].upper()}",
+        "code": f"m{uuid.uuid4().hex[:4]}",
         "name": f"Module {uuid.uuid4().hex[:8]}",
         "category": "Systém",
     }
@@ -71,9 +71,9 @@ def _make_dependency(
     if module is None or depends_on is None:
         project = _make_project(db_session)
         if module is None:
-            module = _make_module(db_session, project=project, code="SRC1")
+            module = _make_module(db_session, project=project, code="src1")
         if depends_on is None:
-            depends_on = _make_module(db_session, project=project, code="DEP1")
+            depends_on = _make_module(db_session, project=project, code="dep1")
     defaults = {
         "module_id": module.id,
         "depends_on_module_id": depends_on.id,
@@ -99,8 +99,8 @@ class TestModuleDependencyModel:
     def test_module_id_stored_correctly(self, db_session):
         """module_id and depends_on_module_id are stored correctly."""
         project = _make_project(db_session)
-        m1 = _make_module(db_session, project=project, code="AAA")
-        m2 = _make_module(db_session, project=project, code="BBB")
+        m1 = _make_module(db_session, project=project, code="aaa")
+        m2 = _make_module(db_session, project=project, code="bbb")
 
         dep = _make_dependency(db_session, module=m1, depends_on=m2)
 
@@ -111,8 +111,8 @@ class TestModuleDependencyModel:
     def test_unique_module_depends_on(self, db_session):
         """Duplicate (module_id, depends_on_module_id) pair must be rejected."""
         project = _make_project(db_session)
-        m1 = _make_module(db_session, project=project, code="U01")
-        m2 = _make_module(db_session, project=project, code="U02")
+        m1 = _make_module(db_session, project=project, code="u01")
+        m2 = _make_module(db_session, project=project, code="u02")
 
         _make_dependency(db_session, module=m1, depends_on=m2)
 
@@ -125,8 +125,8 @@ class TestModuleDependencyModel:
     def test_reverse_dependency_allowed(self, db_session):
         """Reverse direction (m2 -> m1) is allowed even if m1 -> m2 exists."""
         project = _make_project(db_session)
-        m1 = _make_module(db_session, project=project, code="R01")
-        m2 = _make_module(db_session, project=project, code="R02")
+        m1 = _make_module(db_session, project=project, code="r01")
+        m2 = _make_module(db_session, project=project, code="r02")
 
         d1 = _make_dependency(db_session, module=m1, depends_on=m2)
         d2 = _make_dependency(db_session, module=m2, depends_on=m1)
@@ -180,8 +180,8 @@ class TestModuleDependencyModel:
     def test_cascade_delete_module(self, db_session):
         """Deleting a module must cascade-delete its dependencies."""
         project = _make_project(db_session)
-        m1 = _make_module(db_session, project=project, code="CD1")
-        m2 = _make_module(db_session, project=project, code="CD2")
+        m1 = _make_module(db_session, project=project, code="cd1")
+        m2 = _make_module(db_session, project=project, code="cd2")
 
         dep = _make_dependency(db_session, module=m1, depends_on=m2)
         dep_id = dep.id
@@ -201,8 +201,8 @@ class TestModuleDependencyModel:
     def test_cascade_delete_depends_on(self, db_session):
         """Deleting the depends_on module must cascade-delete the dependency."""
         project = _make_project(db_session)
-        m1 = _make_module(db_session, project=project, code="CE1")
-        m2 = _make_module(db_session, project=project, code="CE2")
+        m1 = _make_module(db_session, project=project, code="ce1")
+        m2 = _make_module(db_session, project=project, code="ce2")
 
         dep = _make_dependency(db_session, module=m1, depends_on=m2)
         dep_id = dep.id

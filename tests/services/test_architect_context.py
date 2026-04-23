@@ -54,7 +54,7 @@ def _make_module(
     db: Session,
     *,
     project: Project,
-    code: str = "MOD",
+    code: str = "mod",
     name: str = "Test Module",
     category: str = "Katalógy",
     status: str = "planned",
@@ -115,23 +115,23 @@ class TestFormatModuleRegistry:
 
     def test_single_module(self) -> None:
         module = ProjectModule(
-            code="MGR",
+            code="mgr",
             name="Manager",
             category="Systém",
             status="in_design",
         )
         result = _format_module_registry([module])
-        assert "| MGR | Manager | Systém | in_design |" in result
+        assert "| mgr | Manager | Systém | in_design |" in result
         assert "| Code |" in result
 
     def test_multiple_modules(self) -> None:
         modules = [
-            ProjectModule(code="AAA", name="Alpha", category="Systém", status="done"),
-            ProjectModule(code="BBB", name="Beta", category="Katalógy", status="planned"),
+            ProjectModule(code="aaa", name="Alpha", category="Systém", status="done"),
+            ProjectModule(code="bbb", name="Beta", category="Katalógy", status="planned"),
         ]
         result = _format_module_registry(modules)
-        assert "| AAA |" in result
-        assert "| BBB |" in result
+        assert "| aaa |" in result
+        assert "| bbb |" in result
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +195,7 @@ class TestBuildArchitectContext:
         """Module-level DESIGN.md and BEHAVIOR.md included when module_id given."""
         user = _make_user(db_session)
         project = _make_project(db_session, user=user)
-        module = _make_module(db_session, project=project, code="SPC")
+        module = _make_module(db_session, project=project, code="spc")
         _make_design_doc(
             db_session,
             project=project,
@@ -229,7 +229,7 @@ class TestBuildArchitectContext:
         """Module docs NOT included when module_id is None."""
         user = _make_user(db_session)
         project = _make_project(db_session, user=user)
-        module = _make_module(db_session, project=project, code="SPC")
+        module = _make_module(db_session, project=project, code="spc")
         _make_design_doc(
             db_session,
             project=project,
@@ -290,14 +290,14 @@ class TestBuildArchitectContext:
             doc_type="design",
             content="Foundation",
         )
-        _make_module(db_session, project=project, code="AAA", name="Alpha", status="done")
-        _make_module(db_session, project=project, code="BBB", name="Beta", status="planned")
+        _make_module(db_session, project=project, code="aaa", name="Alpha", status="done")
+        _make_module(db_session, project=project, code="bbb", name="Beta", status="planned")
 
         result = build_architect_context(db_session, project.id)
 
         assert "Module Registry" in result
-        assert "| AAA | Alpha |" in result
-        assert "| BBB | Beta |" in result
+        assert "| aaa | Alpha |" in result
+        assert "| bbb | Beta |" in result
 
     def test_modules_sorted_by_code(self, db_session: Session) -> None:
         """Module registry entries are ordered by code alphabetically."""
@@ -309,13 +309,13 @@ class TestBuildArchitectContext:
             doc_type="design",
             content="Foundation",
         )
-        _make_module(db_session, project=project, code="ZZZ", name="Zeta")
-        _make_module(db_session, project=project, code="AAA", name="Alpha")
+        _make_module(db_session, project=project, code="zzz", name="Zeta")
+        _make_module(db_session, project=project, code="aaa", name="Alpha")
 
         result = build_architect_context(db_session, project.id)
 
-        pos_aaa = result.index("AAA")
-        pos_zzz = result.index("ZZZ")
+        pos_aaa = result.index("aaa")
+        pos_zzz = result.index("zzz")
         assert pos_aaa < pos_zzz
 
     def test_sections_separated_by_divider(self, db_session: Session) -> None:
@@ -367,7 +367,7 @@ class TestBuildArchitectContext:
         """module_id provided but no module-level docs — still succeeds with foundation + registry."""
         user = _make_user(db_session)
         project = _make_project(db_session, user=user, slug="no-mod-docs")
-        module = _make_module(db_session, project=project, code="EMP")
+        module = _make_module(db_session, project=project, code="emp")
         _make_design_doc(
             db_session,
             project=project,
@@ -381,7 +381,7 @@ class TestBuildArchitectContext:
         assert "Foundation only here" in result
         assert "Module DESIGN.md" not in result
         assert "Module BEHAVIOR.md" not in result
-        assert "| EMP |" in result
+        assert "| emp |" in result
 
     def test_module_id_nonexistent_uuid(self, db_session: Session) -> None:
         """module_id is a valid UUID but doesn't match any module — no module docs, no error."""

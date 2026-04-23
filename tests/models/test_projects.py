@@ -52,7 +52,7 @@ def _make_module(db_session, *, project: Project | None = None, **overrides) -> 
         project = _make_project(db_session)
     defaults = {
         "project_id": project.id,
-        "code": f"M{uuid.uuid4().hex[:4].upper()}",
+        "code": f"m{uuid.uuid4().hex[:4]}",
         "name": f"Module {uuid.uuid4().hex[:8]}",
         "category": "Katalógy",
     }
@@ -153,10 +153,10 @@ class TestProjectModuleModel:
     def test_unique_project_code(self, db_session):
         """Duplicate (project_id, code) pair must be rejected."""
         project = _make_project(db_session)
-        _make_module(db_session, project=project, code="DUP1")
+        _make_module(db_session, project=project, code="dup1")
         m2 = ProjectModule(
             project_id=project.id,
-            code="DUP1",
+            code="dup1",
             name="Another module",
             category="Katalógy",
         )
@@ -190,8 +190,8 @@ class TestModuleDependencyModel:
     def test_create_dependency(self, db_session):
         """Can insert a valid module dependency."""
         project = _make_project(db_session)
-        m1 = _make_module(db_session, project=project, code="MOD1")
-        m2 = _make_module(db_session, project=project, code="MOD2")
+        m1 = _make_module(db_session, project=project, code="mod1")
+        m2 = _make_module(db_session, project=project, code="mod2")
 
         dep = ModuleDependency(module_id=m1.id, depends_on_module_id=m2.id)
         db_session.add(dep)
@@ -201,8 +201,8 @@ class TestModuleDependencyModel:
     def test_unique_dependency(self, db_session):
         """Duplicate (module_id, depends_on_module_id) pair must be rejected."""
         project = _make_project(db_session)
-        m1 = _make_module(db_session, project=project, code="MOD1")
-        m2 = _make_module(db_session, project=project, code="MOD2")
+        m1 = _make_module(db_session, project=project, code="mod1")
+        m2 = _make_module(db_session, project=project, code="mod2")
 
         dep1 = ModuleDependency(module_id=m1.id, depends_on_module_id=m2.id)
         db_session.add(dep1)
@@ -217,8 +217,8 @@ class TestModuleDependencyModel:
     def test_cascade_delete_module(self, db_session):
         """Deleting a module must cascade-delete its dependencies."""
         project = _make_project(db_session)
-        m1 = _make_module(db_session, project=project, code="MOD1")
-        m2 = _make_module(db_session, project=project, code="MOD2")
+        m1 = _make_module(db_session, project=project, code="mod1")
+        m2 = _make_module(db_session, project=project, code="mod2")
         dep = ModuleDependency(module_id=m1.id, depends_on_module_id=m2.id)
         db_session.add(dep)
         db_session.flush()

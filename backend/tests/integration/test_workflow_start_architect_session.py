@@ -237,7 +237,7 @@ def gsc_done(db_session, nex_horizont) -> ProjectModule:
     """
     module = ProjectModule(
         project_id=nex_horizont.id,
-        code="GSC",
+        code = "gsc",
         name="Globálne skladové karty",
         category="Sklad",
         status="done",
@@ -259,7 +259,7 @@ def stk_in_design(db_session, nex_horizont, gsc_done) -> ProjectModule:
     """
     module = ProjectModule(
         project_id=nex_horizont.id,
-        code="STK",
+        code = "stk",
         name="Skladové karty zásob",
         category="Sklad",
         status="in_design",
@@ -441,8 +441,8 @@ class TestStartArchitectSessionHappyPath:
         )
         assert registry_resp.status_code == 200
         registry_by_code = {row["code"]: row for row in registry_resp.json()["items"]}
-        assert registry_by_code["GSC"]["status"] == "done"
-        assert registry_by_code["STK"]["status"] == "in_design"
+        assert registry_by_code["gsc"]["status"] == "done"
+        assert registry_by_code["stk"]["status"] == "in_design"
 
         # --- Step 3 (system): the session is created with
         # ``status='active'``. ``created_by`` is Tibor (the
@@ -633,7 +633,7 @@ class TestStartArchitectSessionHappyPath:
         # cross-test interference with STK.
         pab = ProjectModule(
             project_id=nex_horizont.id,
-            code="PAB",
+            code = "pab",
             name="Katalóg partnerov",
             category="Katalógy",
             status="in_design",
@@ -678,7 +678,7 @@ class TestStartArchitectSessionHappyPath:
         """
         nak = ProjectModule(
             project_id=nex_horizont.id,
-            code="NAK",
+            code = "nak",
             name="Nákupné objednávky",
             category="Nákup",
             status="in_design",
