@@ -115,6 +115,36 @@ class TestProjectService:
         assert created.guardian_enabled is False
         assert created.category == "multimodule"
 
+    def test_create_source_and_kb_path_default_to_convention(self, db_session):
+        """NULL source_path / kb_path in payload → filled from slug convention."""
+        user = _make_user(db_session)
+        payload = ProjectCreate(
+            name="Conv Name",
+            slug="conv-name",
+            category="singlemodule",
+            description="x",
+            created_by=user.id,
+        )
+        created = service.create(db_session, payload)
+        assert created.source_path == "/opt/conv-name-src"
+        assert created.kb_path == "/home/icc/knowledge/projects/conv-name"
+
+    def test_create_preserves_explicit_source_and_kb_path(self, db_session):
+        """A caller-supplied source_path / kb_path is left unchanged."""
+        user = _make_user(db_session)
+        payload = ProjectCreate(
+            name="Explicit Paths",
+            slug="explicit-paths",
+            category="singlemodule",
+            description="x",
+            source_path="/custom/checkout",
+            kb_path="/custom/kb/home",
+            created_by=user.id,
+        )
+        created = service.create(db_session, payload)
+        assert created.source_path == "/custom/checkout"
+        assert created.kb_path == "/custom/kb/home"
+
     # ------------------------------------------------------------------- get
     def test_get_by_id(self, db_session):
         """``get_by_id`` returns the project when it exists."""

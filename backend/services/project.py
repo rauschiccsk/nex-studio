@@ -182,6 +182,16 @@ def create(db: Session, data: ProjectCreate) -> Project:
     if _get_by_slug(db, data.slug) is not None:
         raise ValueError(f"Project with slug {data.slug!r} already exists")
 
+    # Convention-based defaults for filesystem paths — only applied when the
+    # caller did not supply an explicit value. ``source_path`` is where the
+    # project's git checkout lives on ANDROS (matches /opt/<repo>-src
+    # pattern used by every ICC project) and ``kb_path`` is the KB root for
+    # the per-project live documents managed by LiveDocumentService. A
+    # caller that wants something else (external checkout, shared KB) can
+    # still pass an explicit value and these lines leave it alone.
+    source_path = data.source_path or f"/opt/{data.slug}-src"
+    kb_path = data.kb_path or f"/home/icc/knowledge/projects/{data.slug}"
+
     project = Project(
         name=data.name,
         slug=data.slug,
@@ -193,8 +203,8 @@ def create(db: Session, data: ProjectCreate) -> Project:
         db_port=data.db_port,
         ui_design_port=data.ui_design_port,
         repo_url=data.repo_url,
-        source_path=data.source_path,
-        kb_path=data.kb_path,
+        source_path=source_path,
+        kb_path=kb_path,
         guardian_enabled=data.guardian_enabled,
         created_by=data.created_by,
     )
