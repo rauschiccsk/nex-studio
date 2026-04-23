@@ -73,22 +73,97 @@ def validate_github_repo(repo: str) -> bool:
     )
 
 
+def _github_headers() -> dict[str, str]:
+    """Standard GitHub API headers including the bearer token."""
+    return {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "Authorization": f"Bearer {settings.github_token}",
+    }
+
+
+def _resolve_repo_endpoint(owner: str) -> str:
+    """Return the correct ``POST .../repos`` URL for the owner.
+
+    GitHub splits repo creation across two endpoints — ``/orgs/{org}/
+    repos`` for organisations and ``/user/repos`` for the token-owning
+    user account. We probe ``GET /users/{owner}`` to read the
+    ``type`` field and choose the right one; for a User owner we
+    additionally verify the token's own ``login`` matches, since
+    ``/user/repos`` will otherwise silently create the repo under the
+    token owner instead of the requested user.
+
+    Raises
+    ------
+    ValueError
+        If the account does not exist, or if the owner is a User but
+        does not match the token owner.
+    RuntimeError
+        On unexpected GitHub API response codes.
+    """
+    probe_url = f"{GITHUB_API_BASE}/users/{owner}"
+    probe = httpx.get(
+        probe_url, headers=_github_headers(), timeout=settings.github_api_timeout
+    )
+    if probe.status_code == 404:
+        raise ValueError(f"GitHub account '{owner}' not found. Check the github_org setting.")
+    if probe.status_code != 200:
+        raise RuntimeError(
+            f"GitHub API returned unexpected status {probe.status_code} "
+            f"while probing account '{owner}': {probe.text}"
+        )
+    account_type = probe.json().get("type")
+
+    if account_type == "Organization":
+        return f"{GITHUB_API_BASE}/orgs/{owner}/repos"
+
+    if account_type == "User":
+        # /user/repos implicitly uses the token owner; refuse to run
+        # when the requested user does not match, rather than silently
+        # creating the repo under the wrong account.
+        who_resp = httpx.get(
+            f"{GITHUB_API_BASE}/user",
+            headers=_github_headers(),
+            timeout=settings.github_api_timeout,
+        )
+        if who_resp.status_code != 200:
+            raise RuntimeError(
+                f"GitHub API returned {who_resp.status_code} while identifying "
+                f"the token owner: {who_resp.text}"
+            )
+        token_login = who_resp.json().get("login")
+        if token_login != owner:
+            raise ValueError(
+                f"Cannot create repository under user '{owner}' — the configured "
+                f"github_token belongs to '{token_login}'. Use a token owned by "
+                f"'{owner}' or host the repo under an organisation."
+            )
+        return f"{GITHUB_API_BASE}/user/repos"
+
+    raise RuntimeError(
+        f"GitHub account '{owner}' has unexpected type {account_type!r}; "
+        "cannot decide create endpoint."
+    )
+
+
 def create_github_repo(
     repo: str,
     *,
     description: str = "",
     private: bool = True,
 ) -> bool:
-    """Create a new GitHub repository under the given owner/org.
+    """Create a new GitHub repository under the given owner.
+
+    The owner may be either a **GitHub organisation** or the **token-
+    owning user account**. The function probes ``GET /users/{owner}``
+    to tell them apart, then picks ``POST /orgs/{owner}/repos`` or
+    ``POST /user/repos`` accordingly.
 
     Parameters
     ----------
     repo:
-        Repository to create in ``owner/repo`` format (e.g.
-        ``"rauschiccsk/nex-test"``). The ``owner`` segment is treated
-        as an **organisation** — ``POST /orgs/{org}/repos``. The ICC
-        GitHub account ``rauschiccsk`` is an organisation, so this is
-        the right endpoint for every project we create.
+        Repository to create in ``owner/repo`` format, e.g.
+        ``"rauschiccsk/nex-test"``.
     description:
         Free-text repo description stored on GitHub. Defaults to empty.
     private:
@@ -100,16 +175,17 @@ def create_github_repo(
     bool
         ``True`` when the repo was freshly created (HTTP 201).
         ``False`` when the repo already existed (HTTP 422 with
-        GitHub's ``name already exists`` error) — this is treated
-        as success on purpose: re-running a POST that previously
-        persisted the DB row but failed before commit, or a user
-        deliberately reusing an existing repo, should not error.
+        GitHub's ``name already exists`` error) — re-running a POST
+        that previously persisted the DB row but failed before
+        commit, or a user deliberately reusing an existing repo,
+        should not error.
 
     Raises
     ------
     ValueError
-        If ``repo`` is not in ``owner/repo`` format, or if the owner
-        organisation does not exist (HTTP 404 on the create call).
+        If ``repo`` is not in ``owner/repo`` format, if the owner
+        account does not exist, or if the owner is a User account
+        that does not match the configured token owner.
     RuntimeError
         If no ``github_token`` is configured, if the token lacks
         sufficient scope (HTTP 401/403), or if the API returns an
@@ -128,12 +204,7 @@ def create_github_repo(
             "Set GITHUB_TOKEN in the backend environment."
         )
 
-    url = f"{GITHUB_API_BASE}/orgs/{owner}/repos"
-    headers: dict[str, str] = {
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "Authorization": f"Bearer {settings.github_token}",
-    }
+    url = _resolve_repo_endpoint(owner)
     body = {
         "name": name,
         "description": description,
@@ -142,7 +213,7 @@ def create_github_repo(
     }
 
     response = httpx.post(
-        url, headers=headers, json=body, timeout=settings.github_api_timeout
+        url, headers=_github_headers(), json=body, timeout=settings.github_api_timeout
     )
 
     if response.status_code == 201:
@@ -150,8 +221,8 @@ def create_github_repo(
         return True
 
     # GitHub returns 422 with an ``errors[].message`` of "name already exists"
-    # when a repo with this name is already present under the org. We treat
-    # that as non-fatal — the caller wanted a repo, there is one.
+    # when a repo with this name is already present. We treat that as
+    # non-fatal — the caller wanted a repo, there is one.
     if response.status_code == 422:
         try:
             payload = response.json()
@@ -174,11 +245,6 @@ def create_github_repo(
         raise RuntimeError(
             f"GitHub API refused repository creation for '{repo}' ({response.status_code}): "
             "token missing or insufficient scope (needs 'repo' / 'admin:org')."
-        )
-
-    if response.status_code == 404:
-        raise ValueError(
-            f"GitHub organisation '{owner}' not found. Check the github_org setting."
         )
 
     raise RuntimeError(
