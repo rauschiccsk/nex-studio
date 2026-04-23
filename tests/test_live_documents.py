@@ -34,7 +34,7 @@ from sqlalchemy import select as sa_select
 
 from backend.db.models.delegations import Delegation, ExecutionLog
 from backend.db.models.foundation import User
-from backend.db.models.projects import Project
+from backend.db.models.projects import Project, ProjectModule
 from backend.db.models.tasks import Epic, Feat, Task
 from backend.db.models.versions import Version
 from backend.schemas.live_documents import (
@@ -905,6 +905,112 @@ def test_status_md_feat_without_tasks_still_renders(db_session: Any) -> None:
 
     assert "### Feat 1.1: Planned feat — TODO" in md
     assert "Tasks: 0/0" in md
+
+
+# ── N4: Modules section in STATUS.md ──────────────────────────────────
+
+
+def _make_module(
+    db_session: Any,
+    *,
+    project: Project,
+    code: str,
+    name: str,
+    category: str = "Systém",
+    status: str = "planned",
+) -> ProjectModule:
+    mod = ProjectModule(
+        project_id=project.id,
+        code=code,
+        name=name,
+        category=category,
+        status=status,
+    )
+    db_session.add(mod)
+    db_session.flush()
+    return mod
+
+
+def test_status_md_multimodule_lists_modules(db_session: Any) -> None:
+    project = _make_project(db_session, name="NEX Test", slug="nex-test")
+    _make_module(db_session, project=project, code="MM", name="Manažér modulov", category="Systém")
+    _make_module(db_session, project=project, code="PAB", name="Katalóg partnerov", category="Katalógy")
+
+    svc = LiveDocumentService(project.slug)
+    md = svc.generate_status_md(db_session, project.id)
+
+    assert "## Modules (2)" in md
+    assert "- [planned] MM · Manažér modulov · Systém" in md
+    assert "- [planned] PAB · Katalóg partnerov · Katalógy" in md
+    assert "Modules: 0/2 done" in md
+
+
+def test_status_md_modules_sorted_by_code(db_session: Any) -> None:
+    """Module rows come out in alphabetical code order for stable diffs."""
+    project = _make_project(db_session)
+    _make_module(db_session, project=project, code="PAB", name="B")
+    _make_module(db_session, project=project, code="MM", name="A")
+
+    svc = LiveDocumentService(project.slug)
+    md = svc.generate_status_md(db_session, project.id)
+    mm_idx = md.index("MM ·")
+    pab_idx = md.index("PAB ·")
+    assert mm_idx < pab_idx
+
+
+def test_status_md_multimodule_empty_shows_no_modules_placeholder(db_session: Any) -> None:
+    project = _make_project(db_session)
+    svc = LiveDocumentService(project.slug)
+    md = svc.generate_status_md(db_session, project.id)
+
+    # Empty multimodule project short-circuits to "no epics planned yet" —
+    # no modules heading either. This matches the original empty-render.
+    assert "No epics planned yet." in md
+
+
+def test_status_md_multimodule_with_modules_but_no_epics(db_session: Any) -> None:
+    project = _make_project(db_session)
+    _make_module(db_session, project=project, code="MM", name="Manažér modulov")
+
+    svc = LiveDocumentService(project.slug)
+    md = svc.generate_status_md(db_session, project.id)
+
+    assert "## Modules (1)" in md
+    assert "MM ·" in md
+    assert "Modules: 0/1 done" in md
+
+
+def test_status_md_singlemodule_has_no_modules_section(db_session: Any) -> None:
+    user = _make_user(db_session)
+    project = Project(
+        name="Single App",
+        slug="single-app",
+        category="singlemodule",
+        description="x",
+        created_by=user.id,
+    )
+    db_session.add(project)
+    db_session.flush()
+    _make_epic(db_session, project=project, number=1, title="E")
+
+    svc = LiveDocumentService(project.slug)
+    md = svc.generate_status_md(db_session, project.id)
+
+    assert "Modules" not in md
+    assert "Modules:" not in md.split("## Summary")[-1]
+
+
+def test_status_md_modules_done_count_in_summary(db_session: Any) -> None:
+    project = _make_project(db_session)
+    _make_module(db_session, project=project, code="MM", name="A", status="done")
+    _make_module(db_session, project=project, code="PAB", name="B", status="done")
+    _make_module(db_session, project=project, code="GSC", name="C", status="planned")
+
+    svc = LiveDocumentService(project.slug)
+    md = svc.generate_status_md(db_session, project.id)
+
+    assert "## Modules (3)" in md
+    assert "Modules: 2/3 done" in md
 
 
 # ── regenerate_status — persistence ──────────────────────────────────

@@ -30,7 +30,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.db.models.delegations import ExecutionLog
-from backend.db.models.projects import Project
+from backend.db.models.projects import Project, ProjectModule
 from backend.db.models.tasks import Epic, Feat, Task
 from backend.db.models.versions import Version
 from backend.schemas.live_documents import (
@@ -181,6 +181,19 @@ class LiveDocumentService:
 
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
+        # Modules section — only rendered for multi-module projects.
+        # A single-module project has at most one module and does not
+        # benefit from a dedicated list.
+        modules: list[ProjectModule] = []
+        if project.category == "multimodule":
+            modules = list(
+                db.execute(
+                    select(ProjectModule)
+                    .where(ProjectModule.project_id == project_id)
+                    .order_by(ProjectModule.code)
+                ).scalars()
+            )
+
         epics_rows = list(
             db.execute(
                 select(Epic, Version)
@@ -190,7 +203,10 @@ class LiveDocumentService:
             ).all()
         )
 
-        if not epics_rows:
+        # Short-circuit "empty project" render — but only when there are
+        # also no modules. Multi-module projects with modules but no
+        # epics yet still deserve the modules section.
+        if not epics_rows and not modules:
             return (
                 f"# {project.name} — Status\n"
                 f"Updated: {now}\n\n"
@@ -210,6 +226,22 @@ class LiveDocumentService:
         commit_by_task = _latest_commit_per_task(db, done_task_ids)
 
         lines: list[str] = [f"# {project.name} — Status", f"Updated: {now}", ""]
+
+        # Modules (multi-module projects only).
+        modules_done = sum(1 for m in modules if m.status == "done")
+        if modules:
+            lines.append(f"## Modules ({len(modules)})")
+            for m in modules:
+                lines.append(
+                    f"- [{m.status}] {m.code} · {m.name} · {m.category}"
+                )
+            lines.append("")
+        elif project.category == "multimodule":
+            # Multi-module project with no modules yet — leave an explicit
+            # heading so the STATUS isn't misleadingly "empty".
+            lines.append("## Modules (0)")
+            lines.append("No modules planned yet.")
+            lines.append("")
 
         epics_done = 0
         feats_total = 0
@@ -256,11 +288,13 @@ class LiveDocumentService:
                 lines.append("")
 
         lines.append("## Summary")
-        lines.append(
-            f"Epics: {epics_done}/{len(epics_rows)} | "
-            f"Feats: {feats_done}/{feats_total} | "
-            f"Tasks: {tasks_done}/{tasks_total}"
-        )
+        summary_parts = []
+        if project.category == "multimodule":
+            summary_parts.append(f"Modules: {modules_done}/{len(modules)} done")
+        summary_parts.append(f"Epics: {epics_done}/{len(epics_rows)}")
+        summary_parts.append(f"Feats: {feats_done}/{feats_total}")
+        summary_parts.append(f"Tasks: {tasks_done}/{tasks_total}")
+        lines.append(" | ".join(summary_parts))
         lines.append("")
 
         return "\n".join(lines)
