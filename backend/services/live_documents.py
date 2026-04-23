@@ -330,6 +330,32 @@ class LiveDocumentService:
         content = self.generate_status_md(db, project_id)
         self._writer.save(self._slug, "STATUS.md", content)
 
+    def init_live_documents(self, db: Session, project_id: UUID) -> None:
+        """Seed the three live documents for a freshly created project.
+
+        Writes ``STATUS.md`` (generated from the then-current DB state —
+        typically "no epics planned yet" right after creation),
+        ``HISTORY.md`` (header only) and ``ARCHITECT.md`` (header only)
+        under ``projects/{slug}/``. Uses
+        :meth:`KnowledgeBaseWriter.save` (overwrite) for all three so
+        the operation is idempotent across crash-restart scenarios.
+
+        Unlike the other persistence wrappers this method **requires**
+        a writer — the caller explicitly asked to persist. Raises
+        :class:`RuntimeError` if the service was constructed without
+        one, rather than silently no-op'ing; the router catches I/O
+        failures as ``OSError`` and translates them into a 500.
+        """
+        if self._writer is None:
+            raise RuntimeError(
+                "init_live_documents requires a KnowledgeBaseWriter; "
+                "none was configured on the service."
+            )
+        status_md = self.generate_status_md(db, project_id)
+        self._writer.save(self._slug, "STATUS.md", status_md)
+        self._writer.save(self._slug, "HISTORY.md", self._history_header())
+        self._writer.save(self._slug, "ARCHITECT.md", self._architect_header())
+
     def append_phase_summary(self, data: FeatCompletionData) -> None:
         """Append the feat-completion summary entry to ``HISTORY.md``.
 

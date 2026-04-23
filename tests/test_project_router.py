@@ -28,17 +28,22 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from backend.api.dependencies import get_knowledge_base_writer
 from backend.api.routes.projects import router as projects_router
 from backend.db.models.foundation import User
 from backend.db.session import get_db
+from backend.services.knowledge_base_writer import KnowledgeBaseWriter
 
 
 @pytest.fixture()
-def router_client(db_session):
-    """Mount the projects router on a fresh app with the DB override.
+def router_client(db_session, tmp_path):
+    """Mount the projects router on a fresh app with DB + KB overrides.
 
     Keeping this fixture local to the router tests avoids coupling to the
-    global ``main.app``, which does not yet include this router.
+    global ``main.app``, which does not yet include this router. The
+    :class:`KnowledgeBaseWriter` is redirected to the test's ``tmp_path``
+    so project creation can seed live documents without touching the
+    real ``/home/icc/knowledge`` tree.
     """
     app = FastAPI()
     app.include_router(projects_router, prefix="/api/v1/projects")
@@ -46,7 +51,11 @@ def router_client(db_session):
     def _override_get_db():
         yield db_session
 
+    def _override_kb_writer() -> KnowledgeBaseWriter:
+        return KnowledgeBaseWriter(tmp_path)
+
     app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_knowledge_base_writer] = _override_kb_writer
 
     with TestClient(app) as client:
         yield client
@@ -299,3 +308,77 @@ class TestProjectRouter:
     def test_delete_missing_returns_404(self, router_client):
         resp = router_client.delete(f"/api/v1/projects/{uuid.uuid4()}")
         assert resp.status_code == 404
+
+    # ---------------------------------------------------------------- live docs
+
+    def test_create_seeds_three_live_documents(self, router_client, creator, tmp_path):
+        """POST creates STATUS.md, HISTORY.md and ARCHITECT.md in the KB."""
+        payload = _payload(creator.id, name="Live Docs App", slug="live-docs-app")
+        resp = router_client.post("/api/v1/projects", json=payload)
+        assert resp.status_code == 201, resp.text
+
+        project_dir = tmp_path / "projects" / "live-docs-app"
+        assert (project_dir / "STATUS.md").is_file()
+        assert (project_dir / "HISTORY.md").is_file()
+        assert (project_dir / "ARCHITECT.md").is_file()
+
+        # STATUS.md reflects the fresh state — no epics yet but header present.
+        status_md = (project_dir / "STATUS.md").read_text(encoding="utf-8")
+        assert "# Live Docs App — Status" in status_md
+        assert "No epics planned yet." in status_md
+
+        # HISTORY / ARCHITECT start as bare headers.
+        assert (project_dir / "HISTORY.md").read_text(encoding="utf-8") == (
+            "# live-docs-app — History\n\n"
+        )
+        assert (project_dir / "ARCHITECT.md").read_text(encoding="utf-8") == (
+            "# live-docs-app — Architecture Log\n\n"
+        )
+
+    def test_create_rolls_back_when_kb_write_fails(self, db_session, creator, tmp_path):
+        """If KB write raises OSError, the project must not end up in the DB."""
+        from backend.api.dependencies import get_knowledge_base_writer
+        from backend.services.knowledge_base_writer import KnowledgeBaseWriter
+
+        class _FailingWriter(KnowledgeBaseWriter):
+            def save(self, *args, **kwargs):  # type: ignore[override]
+                raise OSError("disk full simulation")
+
+        app = FastAPI()
+        app.include_router(projects_router, prefix="/api/v1/projects")
+
+        def _override_get_db():
+            yield db_session
+
+        def _override_kb_writer() -> KnowledgeBaseWriter:
+            return _FailingWriter(tmp_path)
+
+        app.dependency_overrides[get_db] = _override_get_db
+        app.dependency_overrides[get_knowledge_base_writer] = _override_kb_writer
+
+        with TestClient(app) as client:
+            resp = client.post(
+                "/api/v1/projects",
+                json=_payload(creator.id, slug="rollback-test"),
+            )
+
+        app.dependency_overrides.clear()
+
+        assert resp.status_code == 500
+        assert "Failed to initialise live documents" in resp.json()["detail"]
+
+        # And verify nothing landed in the DB.
+
+        remaining = db_session.execute(
+            sa_select_project_by_slug("rollback-test")
+        ).scalar_one_or_none()
+        assert remaining is None, "Project row must have been rolled back on KB failure"
+
+
+def sa_select_project_by_slug(slug: str):
+    """Local helper — build a ``SELECT Project WHERE slug=...`` statement."""
+    from sqlalchemy import select as _select
+
+    from backend.db.models.projects import Project as _Project
+
+    return _select(_Project).where(_Project.slug == slug)

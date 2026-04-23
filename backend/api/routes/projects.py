@@ -30,6 +30,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
+from backend.api.dependencies import get_knowledge_base_writer
 from backend.db.models.foundation import User
 from backend.db.session import get_db
 from backend.schemas.pagination import PaginatedResponse
@@ -47,6 +48,8 @@ from backend.schemas.project import (
 from backend.services import github_validation as github_validation_service
 from backend.services import port_registry as port_registry_service
 from backend.services import project as project_service
+from backend.services.knowledge_base_writer import KnowledgeBaseWriter
+from backend.services.live_documents import LiveDocumentService
 
 logger = logging.getLogger(__name__)
 
@@ -283,6 +286,7 @@ def get_project(
 def create_project(
     payload: ProjectCreate,
     db: Session = Depends(get_db),
+    kb_writer: KnowledgeBaseWriter = Depends(get_knowledge_base_writer),
 ) -> ProjectRead:
     """Create a new project.
 
@@ -293,6 +297,13 @@ def create_project(
     * **Port uniqueness** — 409 if any supplied port is already allocated.
     * **GitHub repo** — 422 if ``repo_url`` is set but the repository
       does not exist on GitHub.
+
+    On success, seeds three live documents
+    (``STATUS.md`` / ``HISTORY.md`` / ``ARCHITECT.md``) under
+    ``{knowledge_base_path}/projects/{slug}/``. The seeding happens
+    before the DB commit so a KB write failure rolls the project back
+    — a project never exists in the DB without its live documents in
+    the KB.
     """
     # Pre-creation validation (ports).  GitHub repo existence is NOT checked
     # here — in NEX Studio workflow the project is registered before the repo
@@ -304,10 +315,19 @@ def create_project(
 
     try:
         project = project_service.create(db, payload)
+        LiveDocumentService(project.slug, writer=kb_writer).init_live_documents(
+            db, project.id
+        )
         db.commit()
     except ValueError as exc:
         db.rollback()
         raise _map_value_error(exc) from exc
+    except OSError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to initialise live documents: {exc}",
+        ) from exc
     db.refresh(project)
     return ProjectRead.model_validate(project)
 

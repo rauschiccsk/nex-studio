@@ -872,3 +872,88 @@ def test_regenerate_status_no_writer_is_noop(db_session: Any) -> None:
 
     # Must not raise even though no writer is configured.
     svc.regenerate_status(db_session, project.id)
+
+
+# ── init_live_documents — project creation seed ──────────────────────
+
+
+def test_init_live_documents_creates_three_files(
+    db_session: Any, tmp_path: Path
+) -> None:
+    project = _make_project(db_session, slug="init-test")
+    writer = KnowledgeBaseWriter(tmp_path)
+    svc = LiveDocumentService("init-test", writer=writer)
+
+    svc.init_live_documents(db_session, project.id)
+
+    assert writer.exists("init-test", "STATUS.md") is True
+    assert writer.exists("init-test", "HISTORY.md") is True
+    assert writer.exists("init-test", "ARCHITECT.md") is True
+
+
+def test_init_live_documents_status_shows_empty_state(
+    db_session: Any, tmp_path: Path
+) -> None:
+    project = _make_project(db_session, name="Empty", slug="empty")
+    writer = KnowledgeBaseWriter(tmp_path)
+    svc = LiveDocumentService("empty", writer=writer)
+
+    svc.init_live_documents(db_session, project.id)
+
+    status_md = writer.read("empty", "STATUS.md")
+    assert "# Empty — Status" in status_md
+    assert "No epics planned yet." in status_md
+
+
+def test_init_live_documents_history_is_header_only(
+    db_session: Any, tmp_path: Path
+) -> None:
+    project = _make_project(db_session, slug="hist-test")
+    writer = KnowledgeBaseWriter(tmp_path)
+    svc = LiveDocumentService("hist-test", writer=writer)
+
+    svc.init_live_documents(db_session, project.id)
+
+    assert writer.read("hist-test", "HISTORY.md") == "# hist-test — History\n\n"
+
+
+def test_init_live_documents_architect_is_header_only(
+    db_session: Any, tmp_path: Path
+) -> None:
+    project = _make_project(db_session, slug="arch-test")
+    writer = KnowledgeBaseWriter(tmp_path)
+    svc = LiveDocumentService("arch-test", writer=writer)
+
+    svc.init_live_documents(db_session, project.id)
+
+    assert writer.read("arch-test", "ARCHITECT.md") == (
+        "# arch-test — Architecture Log\n\n"
+    )
+
+
+def test_init_live_documents_raises_without_writer(db_session: Any) -> None:
+    project = _make_project(db_session, slug="no-writer")
+    svc = LiveDocumentService("no-writer")  # writer=None
+
+    with pytest.raises(RuntimeError, match="requires a KnowledgeBaseWriter"):
+        svc.init_live_documents(db_session, project.id)
+
+
+def test_init_live_documents_overwrites_existing_files(
+    db_session: Any, tmp_path: Path
+) -> None:
+    """Re-running init on an existing KB cleanly overwrites any stale content."""
+    project = _make_project(db_session, slug="redo")
+    writer = KnowledgeBaseWriter(tmp_path)
+    svc = LiveDocumentService("redo", writer=writer)
+
+    # Pre-seed STATUS.md with stale content a previous init might have left.
+    writer.save("redo", "STATUS.md", "stale content\n")
+    writer.save("redo", "HISTORY.md", "stale history\n")
+    writer.save("redo", "ARCHITECT.md", "stale architect\n")
+
+    svc.init_live_documents(db_session, project.id)
+
+    assert "stale content" not in writer.read("redo", "STATUS.md")
+    assert writer.read("redo", "HISTORY.md") == "# redo — History\n\n"
+    assert writer.read("redo", "ARCHITECT.md") == "# redo — Architecture Log\n\n"
