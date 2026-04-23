@@ -131,6 +131,43 @@ class KnowledgeBaseWriter:
         """Return whether ``projects/{slug}/{filename}`` exists on disk."""
         return self._resolve(project_slug, filename).is_file()
 
+    def delete_project(self, project_slug: str) -> bool:
+        """Remove the project's KB folder (``projects/{slug}/``) entirely.
+
+        Intended for the DELETE /projects/{id} flow — after the DB row
+        is gone the live documents have no owner, and leaving them in
+        place was tracked as the open item surfaced in the Krok 9b
+        audit. Returns ``True`` when the folder existed and was
+        removed, ``False`` when there was nothing to remove.
+
+        Guards against path traversal via the same slug regex that
+        protects writes, then physically verifies the resolved path
+        is inside ``{base}/projects/`` before ``rmtree``-ing.
+        """
+        if not _SLUG_RE.match(project_slug):
+            raise ValueError(
+                f"Invalid project slug: {project_slug!r}. "
+                "Expected lowercase alphanumeric with hyphens."
+            )
+
+        projects_root = (self._base_path / "projects").resolve()
+        target = (projects_root / project_slug).resolve()
+
+        try:
+            target.relative_to(projects_root)
+        except ValueError as exc:
+            raise ValueError(
+                f"Resolved path escapes Knowledge Base projects root: {target}"
+            ) from exc
+
+        if not target.is_dir():
+            return False
+
+        import shutil
+
+        shutil.rmtree(target)
+        return True
+
     # ── internals ─────────────────────────────────────────────────────
 
     def _resolve(self, project_slug: str, filename: str) -> Path:

@@ -257,3 +257,64 @@ def create_github_repo(
         f"GitHub API returned unexpected status {response.status_code} "
         f"for repository creation '{repo}': {response.text}"
     )
+
+
+def delete_github_repo(repo: str) -> bool:
+    """Delete an existing GitHub repository.
+
+    Opt-in counterpart to :func:`create_github_repo` — the
+    ``DELETE /api/v1/projects/{id}?delete_github=true`` flow calls
+    this after the DB row is gone. Without the query flag NEX Studio
+    only cleans up DB + KB and leaves the repo untouched.
+
+    Returns
+    -------
+    bool
+        ``True`` when the repository was deleted (HTTP 204).
+        ``False`` when the repository did not exist (HTTP 404) — the
+        caller's goal was "be gone", and it already is.
+
+    Raises
+    ------
+    ValueError
+        If ``repo`` is not in ``owner/repo`` format.
+    RuntimeError
+        If no ``github_token`` is configured, the token lacks the
+        ``delete_repo`` scope (HTTP 403), or the API returns an
+        unexpected status.
+    """
+    if not repo or repo.count("/") != 1:
+        raise ValueError(f"Invalid repository format '{repo}'. Expected 'owner/repo'.")
+
+    owner, name = repo.split("/")
+    if not owner or not name:
+        raise ValueError(f"Invalid repository format '{repo}'. Owner and repo name must not be empty.")
+
+    if not settings.github_token:
+        raise RuntimeError(
+            "Cannot delete GitHub repository: no github_token configured."
+        )
+
+    url = f"{GITHUB_API_BASE}/repos/{owner}/{name}"
+    response = httpx.delete(
+        url, headers=_github_headers(), timeout=settings.github_api_timeout
+    )
+
+    if response.status_code == 204:
+        logger.info("Deleted GitHub repository %s", repo)
+        return True
+
+    if response.status_code == 404:
+        logger.info("GitHub repository %s not found — treating as already deleted", repo)
+        return False
+
+    if response.status_code in (401, 403):
+        raise RuntimeError(
+            f"GitHub API refused repository deletion for '{repo}' ({response.status_code}): "
+            "token missing or insufficient scope (needs 'delete_repo')."
+        )
+
+    raise RuntimeError(
+        f"GitHub API returned unexpected status {response.status_code} "
+        f"for repository deletion '{repo}': {response.text}"
+    )

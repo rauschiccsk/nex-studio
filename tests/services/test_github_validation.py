@@ -6,7 +6,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from backend.services.github_validation import create_github_repo, validate_github_repo
+from backend.services.github_validation import (
+    create_github_repo,
+    delete_github_repo,
+    validate_github_repo,
+)
 
 
 class TestValidateGithubRepo:
@@ -350,3 +354,57 @@ class TestCreateGithubRepo:
         body = mock_post.call_args[1]["json"]
         assert body["description"] == "A test project"
         assert body["private"] is False
+
+
+class TestDeleteGithubRepo:
+    """Tests for delete_github_repo()."""
+
+    @patch("backend.services.github_validation.httpx.delete")
+    def test_successful_delete_returns_true(self, mock_delete: MagicMock) -> None:
+        resp = MagicMock()
+        resp.status_code = 204
+        mock_delete.return_value = resp
+
+        with patch("backend.services.github_validation.settings") as mock_settings:
+            mock_settings.github_token = "ghp_test"
+            mock_settings.github_api_timeout = 10.0
+            result = delete_github_repo("rauschiccsk/nex-test")
+
+        assert result is True
+        url = mock_delete.call_args[0][0]
+        assert url == "https://api.github.com/repos/rauschiccsk/nex-test"
+
+    @patch("backend.services.github_validation.httpx.delete")
+    def test_nonexistent_repo_returns_false(self, mock_delete: MagicMock) -> None:
+        """404 is treated as success — the repo is gone, our goal."""
+        resp = MagicMock()
+        resp.status_code = 404
+        mock_delete.return_value = resp
+
+        with patch("backend.services.github_validation.settings") as mock_settings:
+            mock_settings.github_token = "ghp_test"
+            mock_settings.github_api_timeout = 10.0
+            assert delete_github_repo("rauschiccsk/already-gone") is False
+
+    @patch("backend.services.github_validation.httpx.delete")
+    def test_403_raises_runtime_scope_error(self, mock_delete: MagicMock) -> None:
+        resp = MagicMock()
+        resp.status_code = 403
+        resp.text = "Must have admin rights"
+        mock_delete.return_value = resp
+
+        with patch("backend.services.github_validation.settings") as mock_settings:
+            mock_settings.github_token = "ghp_test"
+            mock_settings.github_api_timeout = 10.0
+            with pytest.raises(RuntimeError, match="delete_repo"):
+                delete_github_repo("rauschiccsk/nex-test")
+
+    def test_missing_token_raises(self) -> None:
+        with patch("backend.services.github_validation.settings") as mock_settings:
+            mock_settings.github_token = ""
+            with pytest.raises(RuntimeError, match="no github_token configured"):
+                delete_github_repo("rauschiccsk/nex-test")
+
+    def test_invalid_format_raises_value_error(self) -> None:
+        with pytest.raises(ValueError, match="Invalid repository format"):
+            delete_github_repo("no-slash")

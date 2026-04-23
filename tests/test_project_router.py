@@ -502,6 +502,91 @@ class TestProjectRouter:
         assert remaining is None
         assert not (tmp_path / "projects" / "gh-fail").exists()
 
+    # ------------------------------------------------------------- delete cleanup
+
+    def test_delete_removes_kb_folder(self, router_client, creator, tmp_path):
+        """DELETE /{id} also removes the project's KB folder."""
+        payload = _payload(creator.id, slug="delete-cleanup")
+        created = router_client.post("/api/v1/projects", json=payload).json()
+        project_dir = tmp_path / "projects" / "delete-cleanup"
+        assert project_dir.is_dir()
+
+        resp = router_client.delete(f"/api/v1/projects/{created['id']}")
+        assert resp.status_code == 204
+        assert not project_dir.exists()
+
+    def test_delete_without_flag_does_not_touch_github(
+        self, router_client, creator, tmp_path, monkeypatch
+    ):
+        """Without ?delete_github=true, the GitHub API is not called."""
+        github_delete_calls = []
+
+        def _mock_delete(repo):
+            github_delete_calls.append(repo)
+            return True
+
+        monkeypatch.setattr(
+            "backend.services.github_validation.delete_github_repo", _mock_delete
+        )
+
+        payload = _payload(
+            creator.id, slug="keep-repo", repo_url="rauschiccsk/keep-repo"
+        )
+        created = router_client.post("/api/v1/projects", json=payload).json()
+        resp = router_client.delete(f"/api/v1/projects/{created['id']}")
+
+        assert resp.status_code == 204
+        assert github_delete_calls == []
+
+    def test_delete_with_flag_invokes_github_delete(
+        self, router_client, creator, tmp_path, monkeypatch
+    ):
+        """?delete_github=true passes repo_url to delete_github_repo."""
+        github_delete_calls = []
+
+        def _mock_delete(repo):
+            github_delete_calls.append(repo)
+            return True
+
+        monkeypatch.setattr(
+            "backend.services.github_validation.delete_github_repo", _mock_delete
+        )
+
+        payload = _payload(
+            creator.id, slug="also-delete-repo", repo_url="rauschiccsk/also-delete-repo"
+        )
+        created = router_client.post("/api/v1/projects", json=payload).json()
+        resp = router_client.delete(
+            f"/api/v1/projects/{created['id']}?delete_github=true"
+        )
+
+        assert resp.status_code == 204
+        assert github_delete_calls == ["rauschiccsk/also-delete-repo"]
+
+    def test_delete_github_failure_does_not_block_response(
+        self, router_client, creator, tmp_path, monkeypatch
+    ):
+        """If the GitHub delete fails, the endpoint still returns 204 — DB is gone."""
+
+        def _raise_runtime(repo):
+            raise RuntimeError("simulated GitHub outage")
+
+        monkeypatch.setattr(
+            "backend.services.github_validation.delete_github_repo", _raise_runtime
+        )
+
+        payload = _payload(
+            creator.id, slug="gh-del-fail", repo_url="rauschiccsk/gh-del-fail"
+        )
+        created = router_client.post("/api/v1/projects", json=payload).json()
+        resp = router_client.delete(
+            f"/api/v1/projects/{created['id']}?delete_github=true"
+        )
+
+        # Project and KB gone; only the repo is left stranded.
+        assert resp.status_code == 204
+        assert router_client.get(f"/api/v1/projects/{created['id']}").status_code == 404
+
     def test_create_github_value_error_returns_422(
         self, db_session, creator, tmp_path, monkeypatch
     ):

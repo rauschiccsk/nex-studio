@@ -249,3 +249,40 @@ def test_symlink_escape_is_rejected(writer: KnowledgeBaseWriter, tmp_path: Path)
 
     with pytest.raises(ValueError, match="escapes Knowledge Base projects root"):
         writer.save("escape-slug", "STATUS.md", "x")
+
+
+# ── delete_project ────────────────────────────────────────────────────
+
+
+def test_delete_project_removes_folder(writer: KnowledgeBaseWriter, tmp_path: Path) -> None:
+    writer.save("to-delete", "STATUS.md", "content")
+    writer.save("to-delete", "HISTORY.md", "content")
+    project_dir = tmp_path / "projects" / "to-delete"
+    assert project_dir.is_dir()
+
+    result = writer.delete_project("to-delete")
+
+    assert result is True
+    assert not project_dir.exists()
+
+
+def test_delete_project_returns_false_when_missing(writer: KnowledgeBaseWriter) -> None:
+    """Idempotent — deleting a non-existent project returns False."""
+    assert writer.delete_project("never-existed") is False
+
+
+def test_delete_project_rejects_invalid_slug(writer: KnowledgeBaseWriter) -> None:
+    with pytest.raises(ValueError, match="Invalid project slug"):
+        writer.delete_project("../traversal")
+
+
+def test_delete_project_leaves_other_projects_intact(
+    writer: KnowledgeBaseWriter, tmp_path: Path
+) -> None:
+    writer.save("keep-me", "STATUS.md", "content")
+    writer.save("remove-me", "STATUS.md", "content")
+
+    writer.delete_project("remove-me")
+
+    assert not (tmp_path / "projects" / "remove-me").exists()
+    assert (tmp_path / "projects" / "keep-me" / "STATUS.md").is_file()

@@ -439,6 +439,15 @@ def update_project(
 def delete_project(
     project_id: UUID,
     db: Session = Depends(get_db),
+    kb_writer: KnowledgeBaseWriter = Depends(get_knowledge_base_writer),
+    delete_github: bool = Query(
+        default=False,
+        description=(
+            "When true, also delete the project's GitHub repository via "
+            "the API (needs delete_repo token scope). Default false — "
+            "only the DB row and KB folder are removed, repo stays."
+        ),
+    ),
 ) -> Response:
     """Hard-delete a project by primary key.
 
@@ -449,11 +458,57 @@ def delete_project(
     preferred soft-disable path — callers should prefer ``PATCH`` with
     ``status='archived'`` and reserve delete for test fixtures / admin
     tooling.
+
+    Side effects on success:
+
+    * The KB folder ``{knowledge_base_path}/projects/{slug}/`` with
+      its live documents (STATUS.md / HISTORY.md / ARCHITECT.md) is
+      removed — matches the rest of the live-docs hooks.
+    * If ``delete_github=true`` is passed, the backing GitHub
+      repository is deleted too. Off by default — the DB row and KB
+      folder go, but the repo stays in case the caller wants to
+      re-register the project later or keep history on GitHub.
     """
+    # Capture slug + repo_url before deletion so we can drive the
+    # KB / GitHub cleanup after the DB row is gone. Uses the service
+    # lookup so "missing" still surfaces as a clean ValueError.
+    try:
+        project = project_service.get_by_id(db, project_id)
+    except ValueError as exc:
+        raise _map_value_error(exc) from exc
+
+    slug = project.slug
+    repo_url = project.repo_url
+
     try:
         project_service.delete(db, project_id)
         db.commit()
     except ValueError as exc:
         db.rollback()
         raise _map_value_error(exc) from exc
+
+    # KB cleanup — best-effort. A failure here does not undo the DB
+    # delete (that has already committed); we log and return 204 so
+    # the caller sees the project as gone, and a follow-up orphan
+    # scan picks up any stragglers.
+    try:
+        kb_writer.delete_project(slug)
+    except OSError as exc:
+        logger.warning(
+            "KB cleanup failed for deleted project %r: %s", slug, exc
+        )
+
+    # GitHub repo cleanup — opt-in.
+    if delete_github and repo_url:
+        try:
+            github_validation_service.delete_github_repo(repo_url)
+        except (ValueError, RuntimeError) as exc:
+            logger.warning(
+                "GitHub repo delete failed for %r: %s", repo_url, exc
+            )
+        except httpx.HTTPError as exc:
+            logger.warning(
+                "GitHub API unreachable during delete of %r: %s", repo_url, exc
+            )
+
     return Response(status_code=status.HTTP_204_NO_CONTENT)
