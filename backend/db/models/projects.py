@@ -51,6 +51,19 @@ class Project(Base, UUIDMixin, TimestampMixin):
             "status IN ('active', 'archived', 'paused')",
             name="ck_projects_status",
         ),
+        # Per-project port uniqueness — no two port columns on the same
+        # row may share a non-NULL value. Matches migration 030.
+        CheckConstraint(
+            """
+                    (backend_port IS NULL OR frontend_port IS NULL OR backend_port <> frontend_port)
+                AND (backend_port IS NULL OR db_port IS NULL OR backend_port <> db_port)
+                AND (backend_port IS NULL OR ui_design_port IS NULL OR backend_port <> ui_design_port)
+                AND (frontend_port IS NULL OR db_port IS NULL OR frontend_port <> db_port)
+                AND (frontend_port IS NULL OR ui_design_port IS NULL OR frontend_port <> ui_design_port)
+                AND (db_port IS NULL OR ui_design_port IS NULL OR db_port <> ui_design_port)
+            """,
+            name="ck_projects_ports_distinct",
+        ),
     )
 
     # Inverse side of Version.project (defined in backend/db/models/versions.py).

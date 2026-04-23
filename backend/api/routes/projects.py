@@ -91,11 +91,28 @@ def _validate_ports(db: Session, payload: ProjectCreate) -> None:
         ("ui_design_port", payload.ui_design_port),
     ]
 
+    # Same-row uniqueness — no two non-NULL port columns may share a value.
+    # Enforced at the DB level by ck_projects_ports_distinct (migration 030);
+    # we pre-check here to return a cleaner 422 before flush.
+    seen: dict[int, str] = {}
+    for field_name, port_value in ports:
+        if port_value is None:
+            continue
+        if port_value in seen:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"Port {port_value} is assigned to both '{seen[port_value]}' "
+                    f"and '{field_name}'. Each port column must be distinct."
+                ),
+            )
+        seen[port_value] = field_name
+
     for field_name, port_value in ports:
         if port_value is None:
             continue
 
-        # Range check (9100–9299)
+        # Range check (10100–14999)
         if port_value < port_registry_service.PORT_RANGE_MIN or port_value > port_registry_service.PORT_RANGE_MAX:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
