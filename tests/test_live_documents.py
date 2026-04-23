@@ -24,12 +24,19 @@ DB-bound piece) ships in a follow-up step with its own DB-backed tests.
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import pytest
+from sqlalchemy import select as sa_select
 
+from backend.db.models.delegations import Delegation, ExecutionLog
+from backend.db.models.foundation import User
+from backend.db.models.projects import Project
+from backend.db.models.tasks import Epic, Feat, Task
+from backend.db.models.versions import Version
 from backend.schemas.live_documents import FeatCompletionData, TaskCompletionData
 from backend.services.knowledge_base_writer import KnowledgeBaseWriter
 from backend.services.live_documents import (
@@ -452,3 +459,416 @@ def test_feat_completion_data_is_frozen() -> None:
     data = _feat()
     with pytest.raises(Exception):  # noqa: PT011
         data.feat_title = "mutated"  # type: ignore[misc]
+
+
+# ── DB factory helpers (for generate_status_md) ──────────────────────
+
+
+def _make_user(db_session: Any) -> User:
+    user = User(
+        username=f"user_{uuid.uuid4().hex[:8]}",
+        email=f"{uuid.uuid4().hex[:8]}@example.com",
+        password_hash="hashed_password_placeholder",
+        role="ri",
+    )
+    db_session.add(user)
+    db_session.flush()
+    return user
+
+
+def _make_project(db_session: Any, *, name: str | None = None, slug: str | None = None) -> Project:
+    user = _make_user(db_session)
+    suffix = uuid.uuid4().hex[:8]
+    project = Project(
+        name=name or f"Project {suffix}",
+        slug=slug or f"project-{suffix}",
+        category="multimodule",
+        description="Test project",
+        created_by=user.id,
+    )
+    db_session.add(project)
+    db_session.flush()
+    return project
+
+
+def _make_version(
+    db_session: Any,
+    *,
+    project: Project,
+    version_number: str = "v1.0",
+    name: str = "Foundation",
+) -> Version:
+    version = Version(
+        project_id=project.id,
+        version_number=version_number,
+        name=name,
+    )
+    db_session.add(version)
+    db_session.flush()
+    return version
+
+
+def _make_epic(
+    db_session: Any,
+    *,
+    project: Project,
+    number: int | None = None,
+    title: str = "Epic",
+    status: str = "planned",
+    version: Version | None = None,
+) -> Epic:
+    if number is None:
+        current = db_session.execute(
+            sa_select(Epic.number)
+            .where(Epic.project_id == project.id)
+            .order_by(Epic.number.desc())
+            .limit(1)
+        ).scalar()
+        number = (current or 0) + 1
+    epic = Epic(
+        project_id=project.id,
+        number=number,
+        title=title,
+        status=status,
+        version_id=version.id if version else None,
+    )
+    db_session.add(epic)
+    db_session.flush()
+    return epic
+
+
+def _make_feat(
+    db_session: Any,
+    *,
+    epic: Epic,
+    number: int | None = None,
+    title: str = "Feat",
+    status: str = "todo",
+) -> Feat:
+    if number is None:
+        current = db_session.execute(
+            sa_select(Feat.number)
+            .where(Feat.epic_id == epic.id)
+            .order_by(Feat.number.desc())
+            .limit(1)
+        ).scalar()
+        number = (current or 0) + 1
+    feat = Feat(
+        epic_id=epic.id,
+        number=number,
+        title=title,
+        status=status,
+    )
+    db_session.add(feat)
+    db_session.flush()
+    return feat
+
+
+def _make_task(
+    db_session: Any,
+    *,
+    feat: Feat,
+    number: int | None = None,
+    title: str = "Task",
+    status: str = "todo",
+    task_type: str = "backend",
+) -> Task:
+    if number is None:
+        current = db_session.execute(
+            sa_select(Task.number)
+            .where(Task.feat_id == feat.id)
+            .order_by(Task.number.desc())
+            .limit(1)
+        ).scalar()
+        number = (current or 0) + 1
+    task = Task(
+        feat_id=feat.id,
+        number=number,
+        title=title,
+        task_type=task_type,
+        status=status,
+    )
+    db_session.add(task)
+    db_session.flush()
+    return task
+
+
+def _make_execution_log(
+    db_session: Any,
+    *,
+    task: Task,
+    commit_hash: str | None,
+    status: str = "done",
+    created_at: datetime | None = None,
+) -> ExecutionLog:
+    delegation = Delegation(
+        task_id=task.id,
+        prompt=f"delegation-{uuid.uuid4().hex[:6]}",
+    )
+    db_session.add(delegation)
+    db_session.flush()
+    kwargs: dict[str, Any] = {
+        "delegation_id": delegation.id,
+        "task_id": task.id,
+        "status": status,
+        "commit_hash": commit_hash,
+    }
+    # Explicit ``created_at`` lets tests order rows deterministically;
+    # without it, three logs flushed in quick succession can share the
+    # same ``now()`` tick and the ORDER BY falls back to insertion order.
+    if created_at is not None:
+        kwargs["created_at"] = created_at
+    log = ExecutionLog(**kwargs)
+    db_session.add(log)
+    db_session.flush()
+    return log
+
+
+# ── generate_status_md — DB-backed ───────────────────────────────────
+
+
+def test_status_md_project_not_found(db_session: Any) -> None:
+    svc = LiveDocumentService("does-not-matter")
+
+    fake_id = uuid.uuid4()
+    md = svc.generate_status_md(db_session, fake_id)
+
+    assert md == "# Unknown Project — Status\n\nProject not found.\n"
+
+
+def test_status_md_empty_project(db_session: Any) -> None:
+    project = _make_project(db_session, name="My App", slug="my-app")
+    svc = LiveDocumentService(project.slug)
+
+    md = svc.generate_status_md(db_session, project.id)
+
+    assert "# My App — Status" in md
+    assert "Updated: " in md
+    assert "No epics planned yet." in md
+
+
+def test_status_md_basic_hierarchy(db_session: Any) -> None:
+    project = _make_project(db_session, name="App", slug="app")
+    epic = _make_epic(
+        db_session, project=project, number=1, title="Foundation", status="in_progress"
+    )
+    feat = _make_feat(db_session, epic=epic, number=1, title="Auth", status="in_progress")
+    _make_task(db_session, feat=feat, number=1, title="Login endpoint", status="done")
+    _make_task(db_session, feat=feat, number=2, title="Logout endpoint", status="todo")
+
+    svc = LiveDocumentService(project.slug)
+    md = svc.generate_status_md(db_session, project.id)
+
+    assert "## Epic 1: Foundation — IN PROGRESS" in md
+    assert "### Feat 1.1: Auth — IN PROGRESS" in md
+    assert "- [x] 1.1.1 Login endpoint" in md
+    assert "- [ ] 1.1.2 Logout endpoint" in md
+    # Summary line
+    assert "Epics: 0/1" in md
+    assert "Feats: 0/1" in md
+    assert "Tasks: 1/2" in md
+
+
+def test_status_md_version_renders_in_epic_header(db_session: Any) -> None:
+    project = _make_project(db_session)
+    version = _make_version(db_session, project=project, version_number="v1.0", name="F")
+    _make_epic(db_session, project=project, number=1, title="E", version=version)
+
+    svc = LiveDocumentService(project.slug)
+    md = svc.generate_status_md(db_session, project.id)
+
+    assert "## Epic 1: E — PLANNED  [v1.0]" in md
+
+
+def test_status_md_epic_without_version_has_no_bracket(db_session: Any) -> None:
+    project = _make_project(db_session)
+    _make_epic(db_session, project=project, number=1, title="E")
+
+    svc = LiveDocumentService(project.slug)
+    md = svc.generate_status_md(db_session, project.id)
+
+    assert "## Epic 1: E — PLANNED" in md
+    assert "[v" not in md  # no version bracket anywhere
+
+
+def test_status_md_commit_hash_trimmed_to_seven(db_session: Any) -> None:
+    project = _make_project(db_session)
+    epic = _make_epic(db_session, project=project, number=1)
+    feat = _make_feat(db_session, epic=epic, number=1)
+    task = _make_task(db_session, feat=feat, number=1, title="T", status="done")
+    _make_execution_log(db_session, task=task, commit_hash="b8fa302deadbeef1234")
+
+    svc = LiveDocumentService(project.slug)
+    md = svc.generate_status_md(db_session, project.id)
+
+    assert "- [x] 1.1.1 T (b8fa302)" in md
+    assert "deadbeef" not in md
+
+
+def test_status_md_done_task_without_execution_log_has_no_commit(db_session: Any) -> None:
+    project = _make_project(db_session)
+    epic = _make_epic(db_session, project=project, number=1)
+    feat = _make_feat(db_session, epic=epic, number=1)
+    _make_task(db_session, feat=feat, number=1, title="T", status="done")
+
+    svc = LiveDocumentService(project.slug)
+    md = svc.generate_status_md(db_session, project.id)
+
+    assert "- [x] 1.1.1 T" in md
+    assert "- [x] 1.1.1 T (" not in md  # no parenthesised commit
+
+
+def test_status_md_newest_execution_log_wins(db_session: Any) -> None:
+    project = _make_project(db_session)
+    epic = _make_epic(db_session, project=project, number=1)
+    feat = _make_feat(db_session, epic=epic, number=1)
+    task = _make_task(db_session, feat=feat, number=1, title="T", status="done")
+
+    # Three logs with explicit, monotonically-increasing timestamps —
+    # newest should win via ORDER BY created_at DESC.
+    _make_execution_log(
+        db_session,
+        task=task,
+        commit_hash="aaaaaaa1111",
+        created_at=datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc),
+    )
+    _make_execution_log(
+        db_session,
+        task=task,
+        commit_hash="bbbbbbb2222",
+        created_at=datetime(2026, 1, 1, 11, 0, tzinfo=timezone.utc),
+    )
+    _make_execution_log(
+        db_session,
+        task=task,
+        commit_hash="ccccccc3333",
+        created_at=datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc),
+    )
+
+    svc = LiveDocumentService(project.slug)
+    md = svc.generate_status_md(db_session, project.id)
+
+    assert "(ccccccc)" in md
+    assert "(aaaaaaa)" not in md
+    assert "(bbbbbbb)" not in md
+
+
+def test_status_md_ignores_execution_logs_without_commit(db_session: Any) -> None:
+    project = _make_project(db_session)
+    epic = _make_epic(db_session, project=project, number=1)
+    feat = _make_feat(db_session, epic=epic, number=1)
+    task = _make_task(db_session, feat=feat, number=1, title="T", status="done")
+
+    # An older log with a commit + a newer log with NULL commit — the real
+    # commit should still surface (NULL rows are filtered out in the query).
+    _make_execution_log(db_session, task=task, commit_hash="feedface1234")
+    _make_execution_log(db_session, task=task, commit_hash=None)
+
+    svc = LiveDocumentService(project.slug)
+    md = svc.generate_status_md(db_session, project.id)
+
+    assert "(feedfac)" in md
+
+
+def test_status_md_hierarchical_numbering_across_epics(db_session: Any) -> None:
+    project = _make_project(db_session)
+
+    epic1 = _make_epic(db_session, project=project, number=1, title="E1")
+    feat11 = _make_feat(db_session, epic=epic1, number=1, title="F1")
+    _make_task(db_session, feat=feat11, number=1, title="T11a")
+    _make_task(db_session, feat=feat11, number=2, title="T11b")
+    feat12 = _make_feat(db_session, epic=epic1, number=2, title="F2")
+    _make_task(db_session, feat=feat12, number=1, title="T12a")
+
+    epic2 = _make_epic(db_session, project=project, number=2, title="E2")
+    feat21 = _make_feat(db_session, epic=epic2, number=1, title="F3")
+    _make_task(db_session, feat=feat21, number=1, title="T21a")
+
+    svc = LiveDocumentService(project.slug)
+    md = svc.generate_status_md(db_session, project.id)
+
+    # Explicit hierarchical numbering in task list lines.
+    assert "- [ ] 1.1.1 T11a" in md
+    assert "- [ ] 1.1.2 T11b" in md
+    assert "- [ ] 1.2.1 T12a" in md
+    assert "- [ ] 2.1.1 T21a" in md
+
+    # Ordering: epic 1 comes before epic 2 in the rendered output.
+    assert md.index("Epic 1") < md.index("Epic 2")
+
+
+def test_status_md_summary_counts_mixed_statuses(db_session: Any) -> None:
+    project = _make_project(db_session)
+
+    epic_done = _make_epic(db_session, project=project, number=1, status="done")
+    feat_done = _make_feat(db_session, epic=epic_done, number=1, status="done")
+    _make_task(db_session, feat=feat_done, number=1, status="done")
+    _make_task(db_session, feat=feat_done, number=2, status="done")
+
+    epic_ip = _make_epic(db_session, project=project, number=2, status="in_progress")
+    feat_ip = _make_feat(db_session, epic=epic_ip, number=1, status="in_progress")
+    _make_task(db_session, feat=feat_ip, number=1, status="done")
+    _make_task(db_session, feat=feat_ip, number=2, status="todo")
+    _make_task(db_session, feat=feat_ip, number=3, status="failed")
+
+    svc = LiveDocumentService(project.slug)
+    md = svc.generate_status_md(db_session, project.id)
+
+    # 1/2 epics done, 1/2 feats done, 3/5 tasks done.
+    assert "Epics: 1/2" in md
+    assert "Feats: 1/2" in md
+    assert "Tasks: 3/5" in md
+
+
+def test_status_md_feat_without_tasks_still_renders(db_session: Any) -> None:
+    project = _make_project(db_session)
+    epic = _make_epic(db_session, project=project, number=1)
+    _make_feat(db_session, epic=epic, number=1, title="Planned feat", status="todo")
+
+    svc = LiveDocumentService(project.slug)
+    md = svc.generate_status_md(db_session, project.id)
+
+    assert "### Feat 1.1: Planned feat — TODO" in md
+    assert "Tasks: 0/0" in md
+
+
+# ── regenerate_status — persistence ──────────────────────────────────
+
+
+def test_regenerate_status_saves_to_kb(db_session: Any, tmp_path: Path) -> None:
+    project = _make_project(db_session, slug="app")
+    epic = _make_epic(db_session, project=project, number=1, title="E")
+    feat = _make_feat(db_session, epic=epic, number=1, title="F")
+    _make_task(db_session, feat=feat, number=1, title="T", status="done")
+
+    writer = KnowledgeBaseWriter(tmp_path)
+    svc = LiveDocumentService("app", writer=writer)
+
+    svc.regenerate_status(db_session, project.id)
+
+    content = writer.read("app", "STATUS.md")
+    assert "## Epic 1: E" in content
+    assert "- [x] 1.1.1 T" in content
+
+
+def test_regenerate_status_overwrites_previous(db_session: Any, tmp_path: Path) -> None:
+    project = _make_project(db_session, slug="app")
+    writer = KnowledgeBaseWriter(tmp_path)
+    svc = LiveDocumentService("app", writer=writer)
+
+    # Pre-seed STATUS.md with stale content.
+    writer.save("app", "STATUS.md", "stale content from before\n")
+
+    svc.regenerate_status(db_session, project.id)
+
+    content = writer.read("app", "STATUS.md")
+    assert "stale content from before" not in content
+    assert "# " in content  # starts with project header
+
+
+def test_regenerate_status_no_writer_is_noop(db_session: Any) -> None:
+    project = _make_project(db_session, slug="app")
+    svc = LiveDocumentService("app")  # writer=None
+
+    # Must not raise even though no writer is configured.
+    svc.regenerate_status(db_session, project.id)

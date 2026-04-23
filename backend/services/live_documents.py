@@ -3,24 +3,36 @@ persistence for per-project ``STATUS.md`` / ``ARCHITECT.md`` /
 ``HISTORY.md``.
 
 Ported from NEX Command (``backend/services/live_documents.py``, see
-``docs/architect/live-docs-port.md``). This module covers the
-generators and the KB persistence wiring; the STATUS.md rebuild (which
-queries the full ``Project → Version → Epic → Feat → Task`` tree) lands
-in a follow-up step.
+``docs/architect/live-docs-port.md``).
 
 ``HISTORY.md`` / ``ARCHITECT.md`` are append-only with a first-line
 dedup guard provided by :class:`KnowledgeBaseWriter` — replaying the
-same task completion is idempotent. ``STATUS.md`` will be a full
-rebuild (``save``, overwrite) to reflect the current DB state.
+same task completion is idempotent. ``STATUS.md`` is a full rebuild
+(``save``, overwrite) from the current ``Project → Version → Epic →
+Feat → Task`` tree; :meth:`LiveDocumentService.generate_status_md`
+produces the markdown and :meth:`regenerate_status` persists it.
 
-The service keeps a thin invariant: generators are pure functions of
-their input data; persistence methods (``append_*``) layer the writer
-on top. Pass ``writer=None`` to get string generation only (useful in
-tests and in call sites that want to preview an entry before commit).
+The service keeps a thin invariant: generators for history /
+architect entries are pure functions of their input data; the STATUS
+generator is a DB-driven rebuild parameterised on ``(db, project_id)``.
+Persistence methods (``append_*`` / ``regenerate_status``) layer the
+writer on top. Pass ``writer=None`` to get string generation only
+(useful in tests and in call sites that want to preview an entry
+before commit).
 """
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from uuid import UUID
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from backend.db.models.delegations import ExecutionLog
+from backend.db.models.projects import Project
+from backend.db.models.tasks import Epic, Feat, Task
+from backend.db.models.versions import Version
 from backend.schemas.live_documents import (
     FeatCompletionData,
     TaskCompletionData,
@@ -133,6 +145,125 @@ class LiveDocumentService:
         lines.append("")
         return "\n".join(lines)
 
+    def generate_status_md(self, db: Session, project_id: UUID) -> str:
+        """Rebuild ``STATUS.md`` markdown from the current DB state.
+
+        Queries the ``Project → Version (optional) → Epic → Feat → Task``
+        tree plus the latest ``ExecutionLog.commit_hash`` per done task
+        and renders a flat hierarchy:
+
+            # {project.name} — Status
+            Updated: {YYYY-MM-DD HH:MM UTC}
+
+            ## Epic {n}: {title} — {STATUS}[  [version_number]]
+            ### Feat {n}.{m}: {title} — {STATUS}
+            - [x] {n}.{m}.{t} {task title} ({commit7})
+            - [ ] {n}.{m}.{t+1} {task title}
+
+            ## Summary
+            Epics: X/Y | Feats: X/Y | Tasks: X/Y
+
+        Version appears as a bracketed suffix on the Epic header when
+        ``epic.version_id`` is set; version-less epics render without
+        it. The 7-character commit suffix appears only on done tasks
+        that have at least one ``ExecutionLog`` row with a non-null
+        ``commit_hash`` — if a task has several such logs, the newest
+        one wins.
+
+        Returns a special message when the project does not exist
+        (mirrors NEX Command behaviour) so the generator is safe to
+        call even during clean-up flows.
+        """
+        project = db.get(Project, project_id)
+        if project is None:
+            return "# Unknown Project — Status\n\nProject not found.\n"
+
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+        epics_rows = list(
+            db.execute(
+                select(Epic, Version)
+                .join(Version, Epic.version_id == Version.id, isouter=True)
+                .where(Epic.project_id == project_id)
+                .order_by(Epic.number)
+            ).all()
+        )
+
+        if not epics_rows:
+            return (
+                f"# {project.name} — Status\n"
+                f"Updated: {now}\n\n"
+                "No epics planned yet.\n"
+            )
+
+        epic_ids = [epic.id for epic, _ in epics_rows]
+        feats_by_epic = _group_feats_by_epic(db, epic_ids)
+        feat_ids = [f.id for feats in feats_by_epic.values() for f in feats]
+        tasks_by_feat = _group_tasks_by_feat(db, feat_ids)
+        done_task_ids = [
+            t.id
+            for feat_tasks in tasks_by_feat.values()
+            for t in feat_tasks
+            if t.status == "done"
+        ]
+        commit_by_task = _latest_commit_per_task(db, done_task_ids)
+
+        lines: list[str] = [f"# {project.name} — Status", f"Updated: {now}", ""]
+
+        epics_done = 0
+        feats_total = 0
+        feats_done = 0
+        tasks_total = 0
+        tasks_done = 0
+
+        for epic, version in epics_rows:
+            if epic.status == "done":
+                epics_done += 1
+
+            header = (
+                f"## Epic {epic.number}: {epic.title} — "
+                f"{epic.status.upper().replace('_', ' ')}"
+            )
+            if version is not None:
+                header += f"  [{version.version_number}]"
+            lines.append(header)
+
+            epic_feats = feats_by_epic.get(epic.id, [])
+            feats_total += len(epic_feats)
+
+            for feat in epic_feats:
+                if feat.status == "done":
+                    feats_done += 1
+
+                lines.append(
+                    f"### Feat {epic.number}.{feat.number}: {feat.title} — "
+                    f"{feat.status.upper().replace('_', ' ')}"
+                )
+
+                feat_tasks = tasks_by_feat.get(feat.id, [])
+                tasks_total += len(feat_tasks)
+
+                for task in feat_tasks:
+                    if task.status == "done":
+                        tasks_done += 1
+                    checkbox = "[x]" if task.status == "done" else "[ ]"
+                    commit = commit_by_task.get(task.id)
+                    commit_suffix = f" ({commit[:7]})" if commit else ""
+                    label = f"{epic.number}.{feat.number}.{task.number}"
+                    lines.append(f"- {checkbox} {label} {task.title}{commit_suffix}")
+
+                lines.append("")
+
+        lines.append("## Summary")
+        lines.append(
+            f"Epics: {epics_done}/{len(epics_rows)} | "
+            f"Feats: {feats_done}/{feats_total} | "
+            f"Tasks: {tasks_done}/{tasks_total}"
+        )
+        lines.append("")
+
+        return "\n".join(lines)
+
     def generate_phase_summary_entry(self, data: FeatCompletionData) -> str:
         """Return the phase-closing entry appended to ``HISTORY.md``.
 
@@ -187,6 +318,18 @@ class LiveDocumentService:
             header_if_new=self._architect_header(),
         )
 
+    def regenerate_status(self, db: Session, project_id: UUID) -> None:
+        """Rebuild ``STATUS.md`` from the DB and overwrite it in the KB.
+
+        Uses :meth:`KnowledgeBaseWriter.save` (overwrite), not append —
+        ``STATUS.md`` reflects the current DB state as a whole, so
+        patching is incorrect. No-op when the writer is not configured.
+        """
+        if self._writer is None:
+            return
+        content = self.generate_status_md(db, project_id)
+        self._writer.save(self._slug, "STATUS.md", content)
+
     def append_phase_summary(self, data: FeatCompletionData) -> None:
         """Append the feat-completion summary entry to ``HISTORY.md``.
 
@@ -212,6 +355,57 @@ class LiveDocumentService:
 
 
 # ── module-level helpers ─────────────────────────────────────────────
+
+
+def _group_feats_by_epic(db: Session, epic_ids: list[UUID]) -> dict[UUID, list[Feat]]:
+    """Return feats grouped by ``epic_id``, each list ordered by ``number ASC``."""
+    if not epic_ids:
+        return {}
+    feats = db.execute(
+        select(Feat).where(Feat.epic_id.in_(epic_ids)).order_by(Feat.number)
+    ).scalars()
+    grouped: dict[UUID, list[Feat]] = {}
+    for feat in feats:
+        grouped.setdefault(feat.epic_id, []).append(feat)
+    return grouped
+
+
+def _group_tasks_by_feat(db: Session, feat_ids: list[UUID]) -> dict[UUID, list[Task]]:
+    """Return tasks grouped by ``feat_id``, each list ordered by ``number ASC``."""
+    if not feat_ids:
+        return {}
+    tasks = db.execute(
+        select(Task).where(Task.feat_id.in_(feat_ids)).order_by(Task.number)
+    ).scalars()
+    grouped: dict[UUID, list[Task]] = {}
+    for task in tasks:
+        grouped.setdefault(task.feat_id, []).append(task)
+    return grouped
+
+
+def _latest_commit_per_task(db: Session, task_ids: list[UUID]) -> dict[UUID, str]:
+    """Return a mapping of ``task_id`` → newest ``ExecutionLog.commit_hash``.
+
+    Only rows with ``status='done'`` and a non-null ``commit_hash`` are
+    considered; for a task with multiple such rows, the newest one
+    (``created_at DESC``) wins.
+    """
+    if not task_ids:
+        return {}
+    rows = db.execute(
+        select(ExecutionLog.task_id, ExecutionLog.commit_hash)
+        .where(
+            ExecutionLog.task_id.in_(task_ids),
+            ExecutionLog.commit_hash.is_not(None),
+            ExecutionLog.status == "done",
+        )
+        .order_by(ExecutionLog.task_id, ExecutionLog.created_at.desc())
+    ).all()
+    commit_by_task: dict[UUID, str] = {}
+    for task_id, commit_hash in rows:
+        # First row per task_id due to DESC order — setdefault preserves it.
+        commit_by_task.setdefault(task_id, commit_hash)
+    return commit_by_task
 
 
 def _filter_arch_files(files: list[str]) -> list[str]:
