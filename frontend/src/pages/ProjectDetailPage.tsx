@@ -1,9 +1,18 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { listProjectsApi } from "@/services/api/projects";
 import { listVersions } from "@/services/api/versions";
 import type { ProjectRead } from "@/types";
 import type { Version } from "@/types/version";
+
+interface JustCreatedState {
+  justCreated?: boolean;
+  repoUrl?: string | null;
+  backendPort?: number | null;
+  frontendPort?: number | null;
+  dbPort?: number | null;
+  uiDesignPort?: number | null;
+}
 
 // ─── Pipeline bar ─────────────────────────────────────────────────────────────
 
@@ -82,10 +91,29 @@ function VersionCard({ version, onOpen }: { version: Version; onOpen: () => void
 export default function ProjectDetailPage() {
   const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const [project, setProject] = useState<ProjectRead | null>(null);
   const [versions, setVersions] = useState<Version[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  // "Project just created" banner — shown only immediately after a
+  // successful POST /projects navigate. The state is cleared (via
+  // history replaceState) the moment this component reads it so a
+  // page refresh never re-surfaces the banner.
+  const [justCreated, setJustCreated] = useState<JustCreatedState | null>(null);
+  useEffect(() => {
+    const st = (location.state ?? null) as JustCreatedState | null;
+    if (st?.justCreated) {
+      setJustCreated(st);
+      // Wipe location.state so refresh / back navigation does not re-show.
+      window.history.replaceState({}, "");
+      // Auto-dismiss after 8 seconds.
+      const timer = setTimeout(() => setJustCreated(null), 8000);
+      return () => clearTimeout(timer);
+    }
+    return undefined;
+  }, [location.state]);
 
   useEffect(() => {
     if (!slug) return;
@@ -131,6 +159,59 @@ export default function ProjectDetailPage() {
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
+      {/* "Just created" banner — visible for 8s right after POST /projects. */}
+      {justCreated && (
+        <div className="mb-4 rounded-lg border border-green-500/30 bg-green-500/10 px-4 py-3 flex items-start gap-3">
+          <svg
+            className="w-5 h-5 text-green-400 mt-0.5 flex-shrink-0"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+            />
+          </svg>
+          <div className="flex-1 text-sm text-green-100">
+            <div className="font-medium">Projekt vytvorený.</div>
+            <div className="text-[12px] text-green-200/80 mt-0.5 flex flex-wrap gap-x-3">
+              {justCreated.repoUrl && (
+                <span>
+                  GitHub repo:{" "}
+                  <a
+                    href={`https://github.com/${justCreated.repoUrl}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-mono underline hover:text-green-50"
+                  >
+                    {justCreated.repoUrl}
+                  </a>
+                </span>
+              )}
+              {(justCreated.backendPort || justCreated.frontendPort ||
+                justCreated.dbPort || justCreated.uiDesignPort) && (
+                <span className="font-mono">
+                  ports {justCreated.backendPort ?? "—"}/{justCreated.frontendPort ?? "—"}/
+                  {justCreated.dbPort ?? "—"}/{justCreated.uiDesignPort ?? "—"}
+                </span>
+              )}
+            </div>
+          </div>
+          <button
+            onClick={() => setJustCreated(null)}
+            className="text-green-300/70 hover:text-green-100 transition-colors"
+            aria-label="Dismiss"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center gap-3 mb-6">
         <button

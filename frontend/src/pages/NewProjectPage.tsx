@@ -155,7 +155,16 @@ export default function NewProjectPage() {
         ui_design_port: uiDesignPort ? Number(uiDesignPort) : null,
         created_by: user?.id ?? "",
       });
-      navigate(`/projects/${project.slug}`);
+      navigate(`/projects/${project.slug}`, {
+        state: {
+          justCreated: true,
+          repoUrl: project.repo_url,
+          backendPort: project.backend_port,
+          frontendPort: project.frontend_port,
+          dbPort: project.db_port,
+          uiDesignPort: project.ui_design_port,
+        },
+      });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Nepodarilo sa vytvoriť projekt.";
       setFormError(msg);
