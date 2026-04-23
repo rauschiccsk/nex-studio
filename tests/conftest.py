@@ -25,6 +25,7 @@ from backend.db.base import Base
 # import errors during test collection.
 from backend.db.models.bugs import Bug  # noqa: F401
 from backend.db.models.projects import ModuleDependency, Project, ProjectModule  # noqa: F401
+from backend.db.models.system_settings import SystemSetting  # noqa: F401
 from backend.db.models.tasks import Epic  # noqa: F401
 from backend.db.models.versions import Version  # noqa: F401
 from backend.db.session import _ensure_pg8000_driver, get_db

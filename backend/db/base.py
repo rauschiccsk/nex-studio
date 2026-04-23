@@ -21,6 +21,7 @@ from backend.db.models.migration import MigrationBatch, MigrationCategoryStatus,
 from backend.db.models.projects import ModuleDependency, Project, ProjectModule
 from backend.db.models.reports import ReportConfig
 from backend.db.models.specifications import DesignDocument, ProfessionalSpecification, RawSpecification, UIDesign
+from backend.db.models.system_settings import SystemSetting
 from backend.db.models.tasks import Epic, Feat, Task
 from backend.db.models.versions import Version
 
@@ -55,6 +56,7 @@ ALL_MODELS: tuple[type, ...] = (
     GuardianReview,
     UIDesign,
     Version,
+    SystemSetting,
 )
 
 __all__ = [
@@ -82,6 +84,7 @@ __all__ = [
     "ProjectModule",
     "RawSpecification",
     "ReportConfig",
+    "SystemSetting",
     "Task",
     "TimestampMixin",
     "UIDesign",

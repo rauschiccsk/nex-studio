@@ -35,6 +35,7 @@ from backend.api.routes.project_modules import router as project_modules_router
 from backend.api.routes.projects import router as projects_router
 from backend.api.routes.raw_specifications import router as raw_specifications_router
 from backend.api.routes.report_configs import router as report_configs_router
+from backend.api.routes.system_settings import router as system_settings_router
 from backend.api.routes.tasks import router as tasks_router
 from backend.api.routes.ui_designs import router as ui_designs_router
 from backend.api.routes.uploads import router as uploads_router
@@ -123,6 +124,7 @@ app.include_router(migration_id_maps_router, prefix="/api/v1/migration-id-maps")
 # ``/versions/{id}``) — see DESIGN.md §2.6 Version Management.
 app.include_router(versions_router, prefix="/api/v1")
 app.include_router(uploads_router, prefix="/api/v1")
+app.include_router(system_settings_router, prefix="/api/v1/system-settings")
 
 
 @app.get("/health")

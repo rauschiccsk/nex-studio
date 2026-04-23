@@ -19,6 +19,7 @@ each name as a locally-defined fixture of the same scope.
 # missing registration surfaces as an ImportError during test collection.
 from backend.db.models.bugs import Bug  # noqa: F401
 from backend.db.models.projects import ModuleDependency, Project, ProjectModule  # noqa: F401
+from backend.db.models.system_settings import SystemSetting  # noqa: F401
 from backend.db.models.tasks import Epic  # noqa: F401
 from backend.db.models.versions import Version  # noqa: F401
 from tests.conftest import (  # noqa: F401
