@@ -19,6 +19,7 @@ python-jose = {version = "^3.3", extras = ["cryptography"]}
 passlib = {version = "^1.7", extras = ["bcrypt"]}
 python-multipart = "^0.0.20"
 httpx = "^0.28.1"
+qdrant-client = "^1.12"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3"
