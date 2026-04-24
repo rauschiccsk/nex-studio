@@ -32,6 +32,11 @@ export default function ProfSpecPage() {
   const [chatInput, setChatInput] = useState("");
   const [chatStreaming, setChatStreaming] = useState(false);
   const [chatBuffer, setChatBuffer] = useState("");
+  // Ref-mirrored accumulator so ``onDone`` reads the final text without
+  // hitting the stale-closure snapshot of ``chatBuffer`` captured at
+  // send time (which would otherwise always be "").
+  const chatBufferRef = useRef("");
+  const [chatError, setChatError] = useState("");
   const [specContent, setSpecContent] = useState("");
   const abortRef = useRef<AbortController | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -79,25 +84,33 @@ export default function ProfSpecPage() {
     setChatHistory((h) => [...h, { role: "user", content: msg }]);
     setChatStreaming(true);
     setChatBuffer("");
+    setChatError("");
+    chatBufferRef.current = "";
 
     abortRef.current = chatProfessionalSpec(
       spec.id,
       msg,
       specContent,
       chatHistory,
-      (chunk) => setChatBuffer((prev) => prev + chunk),
+      (chunk) => {
+        chatBufferRef.current += chunk;
+        setChatBuffer(chatBufferRef.current);
+      },
       (chunk) => setSpecContent((prev) => prev + chunk),
       () => {
         setChatStreaming(false);
-        setChatHistory((h) => {
-          const lastBuf = chatBuffer || "";
-          return [...h, { role: "assistant", content: lastBuf }];
-        });
+        const finalMsg = chatBufferRef.current;
+        chatBufferRef.current = "";
         setChatBuffer("");
+        if (finalMsg) {
+          setChatHistory((h) => [...h, { role: "assistant", content: finalMsg }]);
+        }
       },
       (err) => {
         setChatStreaming(false);
+        chatBufferRef.current = "";
         setChatBuffer("");
+        setChatError(err.message || "Chyba pri komunikácii s AI.");
         console.error("Chat error:", err);
       },
     );
@@ -261,6 +274,18 @@ export default function ProfSpecPage() {
             <div ref={chatEndRef} />
           </div>
           <div className="border-t border-slate-800 p-3 flex-shrink-0 space-y-2">
+            {chatError && (
+              <div className="rounded-md border border-red-500/30 bg-red-500/10 px-2.5 py-1.5 text-[11px] text-red-400 flex items-start gap-2">
+                <span className="flex-1">{chatError}</span>
+                <button
+                  onClick={() => setChatError("")}
+                  className="text-red-400/70 hover:text-red-300 shrink-0"
+                  aria-label="Zavrieť chybu"
+                >
+                  ×
+                </button>
+              </div>
+            )}
             <textarea
               value={chatInput}
               onChange={(e) => setChatInput(e.target.value)}
