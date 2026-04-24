@@ -46,6 +46,12 @@ export default function UIDesignPage() {
   const [chatBuffer, setChatBuffer] = useState("");
   const [chatError, setChatError] = useState("");
   const [chatAutosaveNote, setChatAutosaveNote] = useState("");
+  // Flips on the first chunk of ANY kind (chat OR html). The
+  // "AI premýšľa…" placeholder hides once this is true so a reply
+  // that goes straight to [HTML] without a [SPRÁVA] body doesn't
+  // leave the chat panel looking frozen while the preview on the
+  // right is actively streaming.
+  const [hasStreamedAnyChunk, setHasStreamedAnyChunk] = useState(false);
   const [htmlContent, setHtmlContent] = useState("");
   const abortRef = useRef<AbortController | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -111,15 +117,18 @@ export default function UIDesignPage() {
       setChatBuffer("");
       setChatError("");
       setChatAutosaveNote("");
+      setHasStreamedAnyChunk(false);
       abortRef.current = generateUIDesign(
         created.id,
         (event: UIDesignSSEEvent) => {
           if (event.type === "chat_chunk") {
             chatAccum += event.content;
             setChatBuffer(chatAccum);
+            setHasStreamedAnyChunk(true);
           } else if (event.type === "html_chunk") {
             htmlAccum += event.content;
             setHtmlContent(htmlAccum);
+            setHasStreamedAnyChunk(true);
           } else if (event.type === "done") {
             setChatStreaming(false);
             setChatHistory([
@@ -164,6 +173,7 @@ export default function UIDesignPage() {
     setChatBuffer("");
     setChatError("");
     setChatAutosaveNote("");
+    setHasStreamedAnyChunk(false);
 
     let htmlAccum = "";
     let chatAccum = "";
@@ -178,9 +188,11 @@ export default function UIDesignPage() {
         if (event.type === "chat_chunk") {
           chatAccum += event.content;
           setChatBuffer(chatAccum);
+          setHasStreamedAnyChunk(true);
         } else if (event.type === "html_chunk") {
           htmlAccum += event.content;
           setHtmlContent(htmlAccum);
+          setHasStreamedAnyChunk(true);
         } else if (event.type === "done") {
           setChatStreaming(false);
           const finalMsg = chatAccum.trim();
@@ -335,7 +347,7 @@ export default function UIDesignPage() {
                   </div>
                 </div>
               ))}
-              {chatStreaming && !chatBuffer && (
+              {chatStreaming && !hasStreamedAnyChunk && (
                 <div className="flex gap-2 justify-start">
                   <div className="w-6 h-6 rounded-full bg-primary-600/30 flex items-center justify-center text-[9px] text-primary-400 font-bold shrink-0 mt-0.5">AI</div>
                   <div className="max-w-[85%] text-xs px-3 py-2 rounded-lg bg-slate-800 text-slate-500 rounded-tl-none flex items-center gap-2">
@@ -345,6 +357,14 @@ export default function UIDesignPage() {
                       <span className="w-1.5 h-1.5 rounded-full bg-slate-500 animate-bounce" />
                     </span>
                     <span className="italic">AI premýšľa…</span>
+                  </div>
+                </div>
+              )}
+              {chatStreaming && hasStreamedAnyChunk && !chatBuffer && (
+                <div className="flex gap-2 justify-start">
+                  <div className="w-6 h-6 rounded-full bg-primary-600/30 flex items-center justify-center text-[9px] text-primary-400 font-bold shrink-0 mt-0.5">AI</div>
+                  <div className="max-w-[85%] text-xs px-3 py-2 rounded-lg bg-slate-800 text-slate-500 rounded-tl-none italic">
+                    Generujem mockup — pozri pravý panel…
                   </div>
                 </div>
               )}

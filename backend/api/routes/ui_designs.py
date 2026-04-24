@@ -257,6 +257,9 @@ async def chat_ui_design(
         # then treated as chat (no HTML update) so a markerless reply
         # (e.g. AI answering a plain question) isn't silently swallowed.
         state = "preamble"
+        total_chars = 0
+        chat_emitted = 0
+        html_emitted = 0
         chat_accumulator: list[str] = []
         stream_error = False
 
@@ -267,6 +270,7 @@ async def chat_ui_design(
                 timeout=stream_timeout,
             ):
                 buffer += chunk
+                total_chars += len(chunk)
 
                 changed = True
                 while changed:
@@ -286,6 +290,7 @@ async def chat_ui_design(
                             if chat_part:
                                 yield f"data: {json.dumps({'type': 'chat_chunk', 'content': chat_part})}\n\n"
                                 chat_accumulator.append(chat_part)
+                                chat_emitted += len(chat_part)
                             buffer = buffer[idx + len(_HTML_MARKER):]
                             state = "html"
                             changed = True
@@ -302,6 +307,7 @@ async def chat_ui_design(
                             if chat_part:
                                 yield f"data: {json.dumps({'type': 'chat_chunk', 'content': chat_part})}\n\n"
                                 chat_accumulator.append(chat_part)
+                                chat_emitted += len(chat_part)
                             buffer = buffer[idx + len(_HTML_MARKER):]
                             state = "html"
                             changed = True
@@ -310,17 +316,20 @@ async def chat_ui_design(
                             if safe_len > 0:
                                 yield f"data: {json.dumps({'type': 'chat_chunk', 'content': buffer[:safe_len]})}\n\n"
                                 chat_accumulator.append(buffer[:safe_len])
+                                chat_emitted += safe_len
                                 buffer = buffer[safe_len:]
 
                     elif state == "chat_fallback":
                         if buffer:
                             yield f"data: {json.dumps({'type': 'chat_chunk', 'content': buffer})}\n\n"
                             chat_accumulator.append(buffer)
+                            chat_emitted += len(buffer)
                             buffer = ""
 
                     elif state == "html":
                         if buffer:
                             yield f"data: {json.dumps({'type': 'html_chunk', 'content': buffer})}\n\n"
+                            html_emitted += len(buffer)
                             buffer = ""
 
         except (RuntimeError, TimeoutError) as exc:
@@ -333,6 +342,9 @@ async def chat_ui_design(
             yield f"data: {json.dumps({'type': event_type, 'content': buffer.strip()})}\n\n"
             if event_type == "chat_chunk":
                 chat_accumulator.append(buffer.strip())
+                chat_emitted += len(buffer.strip())
+            else:
+                html_emitted += len(buffer.strip())
 
         # Persist the turn (user + assistant) so the chat panel survives
         # navigation. Skipped on errored streams — partial logs would be
@@ -368,6 +380,14 @@ async def chat_ui_design(
             finally:
                 persist_db.close()
 
+        logger.info(
+            "ui_design chat %s done: state=%s received=%d chat=%d html=%d",
+            ui_design_id,
+            state,
+            total_chars,
+            chat_emitted,
+            html_emitted,
+        )
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
     return StreamingResponse(
@@ -489,6 +509,9 @@ async def generate_ui_design(
     async def _sse_generator():
         buffer = ""
         state = "preamble"
+        total_chars = 0
+        chat_emitted = 0
+        html_emitted = 0
         # Mirror of ``/chat`` — accumulate the chat portion so the
         # assistant's reply can be persisted at end of stream. The
         # initial-generate turn has no user-typed prompt, so only the
@@ -504,6 +527,7 @@ async def generate_ui_design(
                 timeout=stream_timeout,
             ):
                 buffer += chunk
+                total_chars += len(chunk)
                 changed = True
                 while changed:
                     changed = False
@@ -519,6 +543,7 @@ async def generate_ui_design(
                             if chat_part:
                                 yield f"data: {json.dumps({'type': 'chat_chunk', 'content': chat_part})}\n\n"
                                 chat_accumulator.append(chat_part)
+                                chat_emitted += len(chat_part)
                             buffer = buffer[idx + len(_HTML_MARKER):]
                             state = "html"
                             changed = True
@@ -532,6 +557,7 @@ async def generate_ui_design(
                             if chat_part:
                                 yield f"data: {json.dumps({'type': 'chat_chunk', 'content': chat_part})}\n\n"
                                 chat_accumulator.append(chat_part)
+                                chat_emitted += len(chat_part)
                             buffer = buffer[idx + len(_HTML_MARKER):]
                             state = "html"
                             changed = True
@@ -540,15 +566,18 @@ async def generate_ui_design(
                             if safe_len > 0:
                                 yield f"data: {json.dumps({'type': 'chat_chunk', 'content': buffer[:safe_len]})}\n\n"
                                 chat_accumulator.append(buffer[:safe_len])
+                                chat_emitted += safe_len
                                 buffer = buffer[safe_len:]
                     elif state == "chat_fallback":
                         if buffer:
                             yield f"data: {json.dumps({'type': 'chat_chunk', 'content': buffer})}\n\n"
                             chat_accumulator.append(buffer)
+                            chat_emitted += len(buffer)
                             buffer = ""
                     elif state == "html":
                         if buffer:
                             yield f"data: {json.dumps({'type': 'html_chunk', 'content': buffer})}\n\n"
+                            html_emitted += len(buffer)
                             buffer = ""
         except (RuntimeError, TimeoutError) as exc:
             stream_error = True
@@ -560,6 +589,9 @@ async def generate_ui_design(
             yield f"data: {json.dumps({'type': event_type, 'content': buffer.strip()})}\n\n"
             if event_type == "chat_chunk":
                 chat_accumulator.append(buffer.strip())
+                chat_emitted += len(buffer.strip())
+            else:
+                html_emitted += len(buffer.strip())
 
         # Persist the assistant turn so the chat panel survives navigation
         # after the first mockup generation. Uses a fresh SessionLocal —
@@ -593,6 +625,14 @@ async def generate_ui_design(
             finally:
                 persist_db.close()
 
+        logger.info(
+            "ui_design generate %s done: state=%s received=%d chat=%d html=%d",
+            ui_design_id,
+            state,
+            total_chars,
+            chat_emitted,
+            html_emitted,
+        )
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
     return StreamingResponse(
