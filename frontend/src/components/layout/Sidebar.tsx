@@ -210,7 +210,9 @@ export default function Sidebar() {
             </div>
             <div className="flex-1 min-w-0">
               <div className="text-sm font-bold text-slate-100 leading-tight">NEX Studio</div>
-              <div className="text-[10px] text-primary-400 font-mono">v0.1.x</div>
+              <div className="text-[10px] text-primary-400 font-mono">
+                v{import.meta.env.VITE_APP_VERSION || "dev"}
+              </div>
             </div>
           </>
         )}
