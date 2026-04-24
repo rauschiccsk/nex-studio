@@ -211,6 +211,8 @@ export default function SpecPage() {
             onChange={(e) => setEditText(e.target.value)}
             placeholder="Opíšte požiadavky zákazníka…&#10;&#10;Napr.:&#10;- Pridať funkciu exportu do PDF&#10;- Opraviť chybu v kalkulácii DPH&#10;- Zmeniť farebné schémy dashboardu"
             autoFocus
+            lang="sk"
+            spellCheck
             className="flex-1 w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-sm text-slate-200 font-mono resize-none focus:outline-none focus:border-primary-500 transition-colors leading-relaxed"
           />
         </div>

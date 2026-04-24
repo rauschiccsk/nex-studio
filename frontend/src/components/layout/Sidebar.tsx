@@ -35,12 +35,6 @@ const IconSpec = () => (
   </svg>
 );
 
-const IconDoc = () => (
-  <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-  </svg>
-);
-
 const IconUIDesign = () => (
   <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zM14 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
@@ -179,16 +173,20 @@ export default function Sidebar() {
 
   const initials = user?.username ? user.username.slice(0, 1).toUpperCase() : "?";
 
-  // Pipeline step nav data — one list drives the ordered render below.
+  // Pipeline step nav data — matches the mockup sidebar (index.html lines
+  // 165-191). The mockup collapses raw spec (Krok 1) + vývojová dok (Krok 2A)
+  // into a single "Specification" entry that internally tabs between the two;
+  // NEX Studio keeps them as separate routes, so the sidebar link targets
+  // ``/spec`` and the user moves to ``/profspec`` via the "Krok 2 →" button
+  // on SpecPage or from VersionDetailPage.
   const pipelineSteps: { label: string; step: string; icon: React.ReactNode }[] = [
-    { label: "Zákaznícka špecifikácia", step: "spec", icon: <IconSpec /> },
-    { label: "Vývojová dokumentácia", step: "profspec", icon: <IconDoc /> },
+    { label: "Specification", step: "spec", icon: <IconSpec /> },
     { label: "UI Design", step: "uidesign", icon: <IconUIDesign /> },
-    { label: "Súhrnná dokumentácia", step: "summary", icon: <IconSummary /> },
+    { label: "Summary", step: "summary", icon: <IconSummary /> },
     { label: "Architecture", step: "architecture", icon: <IconArchitecture /> },
     { label: "Quality Audit", step: "audit", icon: <IconAudit /> },
     { label: "Task Plan", step: "taskplan", icon: <IconTaskPlan /> },
-    { label: "Implementácia", step: "implementacia", icon: <IconImplementation /> },
+    { label: "Implementation", step: "implementacia", icon: <IconImplementation /> },
   ];
 
   const hasCtx = Boolean(ctx);
@@ -252,7 +250,6 @@ export default function Sidebar() {
           </div>
         )}
 
-        <SectionLabel label="Pipeline" collapsed={collapsed} />
         {pipelineSteps.map((s) => (
           <NavItem
             key={s.step}
@@ -263,7 +260,6 @@ export default function Sidebar() {
             active={isStepActive(s.step)}
           />
         ))}
-
         <NavItem icon={<IconBook />} label="Knowledge Base" path="/kb" collapsed={collapsed} active={isActive("/kb")} />
 
         <SectionLabel label="Settings" collapsed={collapsed} />
