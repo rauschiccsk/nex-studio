@@ -8,6 +8,8 @@ import type { ProjectRead } from "@/types";
 import type { Version } from "@/types/version";
 import { useActiveContextSync } from "@/hooks/useActiveContextSync";
 import SolutionTabs from "@/components/pipeline/SolutionTabs";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { ProfessionalSpecificationRead } from "@/types/professionalSpecification";
 import type { SpecChatHistoryItem } from "@/services/api/professionalSpecifications";
 
@@ -332,7 +334,21 @@ export default function ProfSpecPage() {
             />
           ) : (
             <div className="flex-1 overflow-y-auto p-5">
-              <pre className="text-sm text-slate-300 font-mono whitespace-pre-wrap leading-relaxed">{specContent}</pre>
+              <div
+                className="prose prose-invert prose-sm max-w-none
+                  prose-headings:text-slate-100 prose-headings:font-semibold
+                  prose-h1:text-2xl prose-h2:text-lg prose-h3:text-base prose-h4:text-sm
+                  prose-p:text-slate-300 prose-li:text-slate-300
+                  prose-strong:text-slate-100
+                  prose-code:text-primary-300 prose-code:bg-slate-800 prose-code:px-1 prose-code:rounded
+                  prose-code:before:content-none prose-code:after:content-none
+                  prose-table:text-sm prose-th:text-slate-200 prose-td:text-slate-300
+                  prose-th:border-slate-700 prose-td:border-slate-800
+                  prose-hr:border-slate-800
+                  prose-a:text-primary-400 hover:prose-a:text-primary-300"
+              >
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{specContent}</ReactMarkdown>
+              </div>
             </div>
           )}
         </div>

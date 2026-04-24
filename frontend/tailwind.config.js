@@ -1,3 +1,5 @@
+import typography from "@tailwindcss/typography";
+
 /** @type {import('tailwindcss').Config} */
 export default {
   // DESIGN.md § 3.3a — dark mode via class strategy (html.dark toggles dark: variants)
@@ -49,5 +51,5 @@ export default {
       },
     },
   },
-  plugins: [],
+  plugins: [typography],
 };
