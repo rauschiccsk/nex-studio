@@ -1,20 +1,82 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { listUsersApi, createUserApi, updateUserApi } from "@/services/api/users";
 import {
-  getSystemSettingApi,
+  listSystemSettingsApi,
   updateSystemSettingApi,
 } from "@/services/api/systemSettings";
 import { useAuthStore } from "@/store/authStore";
 import type { UserRead, UserRole } from "@/types/user";
+import type { SystemSettingRead } from "@/types/system_setting";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-type SettingsTab = "appearance" | "icc" | "users" | "sessions";
+type SettingsTab = "appearance" | "system" | "users" | "sessions";
 
 function roleCls(role: string) {
   if (role === "ri") return "text-indigo-400";
   if (role === "ha") return "text-green-400";
   return "text-amber-400";
+}
+
+/**
+ * System-settings categories. Every ``system_settings`` key whose
+ * prefix matches one of ``prefixes`` is rendered under the category.
+ * Keys that fit none of the prefixes fall through into the trailing
+ * "Ostatné" bucket so forward-compat additions stay visible.
+ */
+const SETTINGS_CATEGORIES: {
+  id: string;
+  label: string;
+  description: string;
+  prefixes: string[];
+}[] = [
+  {
+    id: "pipeline",
+    label: "Pipeline / AI",
+    description:
+      "Timeouty pre Claude CLI (chat, generovanie dokumentácie, task plan) a limity kontextu pre AI prompty.",
+    prefixes: ["claude_", "conversation_", "design_doc_"],
+  },
+  {
+    id: "github",
+    label: "GitHub",
+    description:
+      "Integrácia s GitHubom — cieľová organizácia a sieťové nastavenia volaní do GitHub API.",
+    prefixes: ["github_"],
+  },
+  {
+    id: "auth",
+    label: "Autentifikácia",
+    description: "JWT tokeny a súvisiace časové obmedzenia.",
+    prefixes: ["access_token_"],
+  },
+  {
+    id: "ports",
+    label: "Port Registry (ICC D-020)",
+    description:
+      "Rozsah portov prideľovaných projektom a veľkosť per-project bloku. Zmena má dosah len na nové projekty.",
+    prefixes: ["port_"],
+  },
+  {
+    id: "paths",
+    label: "Cesty a šablóny",
+    description:
+      "Defaultné šablóny pre ``source_path`` a KB cestu pri vytvorení projektu. ``{slug}`` sa nahradí slugom projektu.",
+    prefixes: ["default_source_path", "default_kb_path"],
+  },
+];
+
+function _classifyKey(key: string): string {
+  for (const cat of SETTINGS_CATEGORIES) {
+    if (cat.prefixes.some((p) => key.startsWith(p))) return cat.id;
+  }
+  return "other";
+}
+
+function _inputTypeFor(valueType: string): "number" | "checkbox" | "text" {
+  if (valueType === "int" || valueType === "float") return "number";
+  if (valueType === "bool") return "checkbox";
+  return "text";
 }
 
 // ─── SettingsPage ─────────────────────────────────────────────────────────────
@@ -26,48 +88,60 @@ export default function SettingsPage() {
   // Appearance
   const [lang, setLang] = useState<"sk" | "en">("sk");
 
-  // ICC — github_org
-  const [githubOrg, setGithubOrg] = useState("");
-  const [githubOrgLoaded, setGithubOrgLoaded] = useState(false);
-  const [githubOrgIsDefault, setGithubOrgIsDefault] = useState(true);
-  const [githubOrgSaving, setGithubOrgSaving] = useState(false);
-  const [githubOrgError, setGithubOrgError] = useState("");
-  const [githubOrgSavedFlash, setGithubOrgSavedFlash] = useState(false);
-  const [githubOrgUpdatedBy, setGithubOrgUpdatedBy] = useState<string | null>(null);
-  const [githubOrgUpdatedAt, setGithubOrgUpdatedAt] = useState<string | null>(null);
+  // System settings — loaded once the System tab becomes visible. The
+  // per-row editor state (draft + saving + flash) lives alongside the
+  // settings list to keep handlers simple.
+  const [settings, setSettings] = useState<SystemSettingRead[]>([]);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [settingsLoadError, setSettingsLoadError] = useState("");
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [savingKey, setSavingKey] = useState<string | null>(null);
+  const [saveErrors, setSaveErrors] = useState<Record<string, string>>({});
+  const [flashKey, setFlashKey] = useState<string | null>(null);
 
   const isRi = user?.role === "ri";
 
-  // Load github_org whenever the ICC tab becomes visible (first time only).
   useEffect(() => {
-    if (tab !== "icc" || githubOrgLoaded) return;
-    getSystemSettingApi("github_org")
-      .then((s) => {
-        setGithubOrg(s.value);
-        setGithubOrgIsDefault(s.is_default);
-        setGithubOrgUpdatedBy(s.updated_by_username);
-        setGithubOrgUpdatedAt(s.updated_at);
-        setGithubOrgLoaded(true);
+    if (tab !== "system" || settingsLoaded) return;
+    listSystemSettingsApi()
+      .then((rows) => {
+        setSettings(rows);
+        const initialDrafts: Record<string, string> = {};
+        for (const r of rows) initialDrafts[r.key] = r.value;
+        setDrafts(initialDrafts);
+        setSettingsLoaded(true);
       })
-      .catch(() => setGithubOrgError("Nepodarilo sa načítať nastavenie."));
-  }, [tab, githubOrgLoaded]);
+      .catch(() => setSettingsLoadError("Nepodarilo sa načítať nastavenia."));
+  }, [tab, settingsLoaded]);
 
-  async function handleSaveGithubOrg() {
-    if (!githubOrg.trim()) return;
-    setGithubOrgSaving(true);
-    setGithubOrgError("");
+  const groupedSettings = useMemo(() => {
+    const groups: Record<string, SystemSettingRead[]> = {};
+    for (const s of settings) {
+      const catId = _classifyKey(s.key);
+      (groups[catId] ||= []).push(s);
+    }
+    for (const list of Object.values(groups)) {
+      list.sort((a, b) => a.key.localeCompare(b.key));
+    }
+    return groups;
+  }, [settings]);
+
+  async function handleSaveSetting(key: string) {
+    const draft = (drafts[key] ?? "").toString();
+    if (!draft.trim() && draft !== "0" && draft.toLowerCase() !== "false") return;
+    setSavingKey(key);
+    setSaveErrors((prev) => ({ ...prev, [key]: "" }));
     try {
-      const updated = await updateSystemSettingApi("github_org", githubOrg.trim());
-      setGithubOrg(updated.value);
-      setGithubOrgIsDefault(updated.is_default);
-      setGithubOrgUpdatedBy(updated.updated_by_username);
-      setGithubOrgUpdatedAt(updated.updated_at);
-      setGithubOrgSavedFlash(true);
-      setTimeout(() => setGithubOrgSavedFlash(false), 2000);
-    } catch {
-      setGithubOrgError("Nepodarilo sa uložiť. Skontroluj, či máš rolu ri.");
+      const updated = await updateSystemSettingApi(key, draft);
+      setSettings((prev) => prev.map((s) => (s.key === key ? updated : s)));
+      setDrafts((prev) => ({ ...prev, [key]: updated.value }));
+      setFlashKey(key);
+      setTimeout(() => setFlashKey((k) => (k === key ? null : k)), 2000);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Neznáma chyba.";
+      setSaveErrors((prev) => ({ ...prev, [key]: msg }));
     } finally {
-      setGithubOrgSaving(false);
+      setSavingKey(null);
     }
   }
 
@@ -123,7 +197,7 @@ export default function SettingsPage() {
 
   const TABS: { id: SettingsTab; label: string }[] = [
     { id: "appearance", label: "Appearance" },
-    { id: "icc", label: "ICC" },
+    { id: "system", label: "System" },
     { id: "users", label: "Users" },
     { id: "sessions", label: "Sessions" },
   ];
@@ -206,61 +280,113 @@ export default function SettingsPage() {
           </div>
         )}
 
-        {/* ── ICC ── */}
-        {tab === "icc" && (
-          <div className="p-6 max-w-lg">
-            <h2 className="text-sm font-semibold text-slate-300 mb-1">ICC integrations</h2>
+        {/* ── System settings ── */}
+        {tab === "system" && (
+          <div className="p-6 max-w-3xl">
+            <h2 className="text-sm font-semibold text-slate-300 mb-1">Systémové nastavenia</h2>
             <p className="text-xs text-slate-600 mb-4">
-              Runtime-mutable ICC-wide settings. Editable only by ri role.
+              Runtime-mutable ICC-wide settings. Editovateľné iba rolou <code>ri</code>; zmeny sa prejavia do 30 s (interná cache TTL).
             </p>
-            <div className="rounded-lg border border-slate-700 bg-slate-900 p-4 space-y-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-widest mb-1">
-                  GitHub organization
-                </label>
-                <p className="text-xs text-slate-600 mb-2">
-                  Used to auto-fill the repository URL on the new-project
-                  form as <code className="text-slate-400">{"{github_org}/{slug}"}</code>.
-                </p>
-                <div className="flex gap-2 items-center">
-                  <input
-                    type="text"
-                    value={githubOrg}
-                    onChange={(e) => setGithubOrg(e.target.value)}
-                    disabled={!isRi || !githubOrgLoaded}
-                    placeholder="rauschiccsk"
-                    className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 font-mono focus:outline-none focus:border-primary-500 disabled:opacity-50"
-                  />
-                  {isRi && (
-                    <button
-                      onClick={handleSaveGithubOrg}
-                      disabled={githubOrgSaving || !githubOrg.trim() || !githubOrgLoaded}
-                      className="px-3 py-2 text-xs font-medium text-white bg-primary-600 hover:bg-primary-500 disabled:opacity-40 rounded-lg transition-colors"
-                    >
-                      {githubOrgSaving ? "Ukladám…" : "Save"}
-                    </button>
-                  )}
-                </div>
-                <div className="mt-2 text-[11px] flex items-center gap-2">
-                  {githubOrgIsDefault && githubOrgLoaded && (
-                    <span className="text-slate-600">Using default value.</span>
-                  )}
-                  {!githubOrgIsDefault && githubOrgLoaded && (
-                    <span className="text-slate-500">
-                      Stored override
-                      {githubOrgUpdatedBy && <> by <span className="text-slate-400 font-medium">{githubOrgUpdatedBy}</span></>}
-                      {githubOrgUpdatedAt && <> at <span className="text-slate-500">{new Date(githubOrgUpdatedAt).toLocaleString("sk-SK")}</span></>}
-                      .
-                    </span>
-                  )}
-                  {githubOrgSavedFlash && <span className="text-green-400">Uložené.</span>}
-                  {githubOrgError && <span className="text-red-400">{githubOrgError}</span>}
-                  {!isRi && (
-                    <span className="ml-auto text-slate-700">Read-only — ri role required.</span>
-                  )}
-                </div>
+            {settingsLoadError && (
+              <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400 mb-4">
+                {settingsLoadError}
               </div>
-            </div>
+            )}
+            {!settingsLoaded && !settingsLoadError && (
+              <div className="text-xs text-slate-600">Načítavam…</div>
+            )}
+            {settingsLoaded && (
+              <div className="space-y-6">
+                {[...SETTINGS_CATEGORIES, { id: "other", label: "Ostatné", description: "", prefixes: [] }].map((cat) => {
+                  const rows = groupedSettings[cat.id] ?? [];
+                  if (rows.length === 0) return null;
+                  return (
+                    <section key={cat.id}>
+                      <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-1">{cat.label}</h3>
+                      {cat.description && (
+                        <p className="text-[11px] text-slate-600 mb-2">{cat.description}</p>
+                      )}
+                      <div className="rounded-lg border border-slate-700 bg-slate-900 divide-y divide-slate-800">
+                        {rows.map((s) => {
+                          const draft = drafts[s.key] ?? s.value;
+                          const dirty = draft !== s.value;
+                          const inputType = _inputTypeFor(s.value_type);
+                          const saving = savingKey === s.key;
+                          const err = saveErrors[s.key];
+                          return (
+                            <div key={s.key} className="p-4">
+                              <div className="flex items-start justify-between gap-4 mb-1">
+                                <div className="min-w-0">
+                                  <div className="text-sm font-medium text-slate-200 font-mono">{s.key}</div>
+                                  <div className="text-[10px] text-slate-600 uppercase tracking-widest mt-0.5">{s.value_type}</div>
+                                </div>
+                                {isRi && (
+                                  <button
+                                    onClick={() => handleSaveSetting(s.key)}
+                                    disabled={saving || !dirty}
+                                    className="shrink-0 px-3 py-1.5 text-xs font-medium text-white bg-primary-600 hover:bg-primary-500 disabled:opacity-40 disabled:cursor-not-allowed rounded transition-colors"
+                                  >
+                                    {saving ? "Ukladám…" : dirty ? "Uložiť" : "Uložené"}
+                                  </button>
+                                )}
+                              </div>
+                              {s.description && (
+                                <p className="text-xs text-slate-500 mb-2 leading-relaxed">{s.description}</p>
+                              )}
+                              {inputType === "checkbox" ? (
+                                <label className="flex items-center gap-2 text-xs text-slate-300">
+                                  <input
+                                    type="checkbox"
+                                    checked={draft.toLowerCase() === "true" || draft === "1"}
+                                    onChange={(e) =>
+                                      setDrafts((prev) => ({ ...prev, [s.key]: e.target.checked ? "true" : "false" }))
+                                    }
+                                    disabled={!isRi}
+                                    className="rounded border-slate-700 bg-slate-800 text-primary-500 focus:ring-primary-500 disabled:opacity-50"
+                                  />
+                                  <span className="font-mono">{draft}</span>
+                                </label>
+                              ) : (
+                                <input
+                                  type={inputType}
+                                  value={draft}
+                                  onChange={(e) => setDrafts((prev) => ({ ...prev, [s.key]: e.target.value }))}
+                                  disabled={!isRi}
+                                  step={s.value_type === "float" ? "any" : undefined}
+                                  className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-primary-500 disabled:opacity-50"
+                                />
+                              )}
+                              <div className="mt-2 text-[11px] flex items-center gap-2 flex-wrap">
+                                {s.is_default ? (
+                                  <span className="text-slate-600">Default hodnota.</span>
+                                ) : (
+                                  <span className="text-slate-500">
+                                    Uložený override
+                                    {s.updated_by_username && (
+                                      <> — <span className="text-slate-400 font-medium">{s.updated_by_username}</span></>
+                                    )}
+                                    {s.updated_at && (
+                                      <> · {new Date(s.updated_at).toLocaleString("sk-SK")}</>
+                                    )}
+                                  </span>
+                                )}
+                                {flashKey === s.key && <span className="text-green-400">✓ Uložené</span>}
+                                {err && <span className="text-red-400">{err}</span>}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  );
+                })}
+                {!isRi && (
+                  <p className="text-[11px] text-slate-700 italic">
+                    Read-only — na úpravu je potrebná rola <code>ri</code>.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         )}
 

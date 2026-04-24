@@ -5,9 +5,13 @@
  * service layer, a stored override sets ``is_default`` to false.
  */
 
+/** Runtime type of ``value`` — mirrors ``ck_system_settings_value_type``. */
+export type SystemSettingValueType = "string" | "int" | "float" | "bool";
+
 export interface SystemSettingRead {
   key: string;
   value: string;
+  value_type: SystemSettingValueType;
   description: string | null;
   /** ISO-8601 timestamp of last edit; ``null`` when the value is a default. */
   updated_at: string | null;
