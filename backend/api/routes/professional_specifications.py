@@ -113,6 +113,7 @@ from backend.schemas.professional_specification import (
 from backend.services import claude_subprocess
 from backend.services import design_document as design_document_service
 from backend.services import professional_specification as professional_specification_service
+from backend.services import system_setting as system_setting_service
 
 logger = logging.getLogger(__name__)
 
@@ -380,6 +381,8 @@ async def chat_professional_spec(
     # markers before the real response gets buffered into the void.
     PREAMBLE_FALLBACK_THRESHOLD = 256
 
+    stream_timeout = system_setting_service.get_int(db, "claude_stream_timeout_seconds")
+
     async def _sse_generator():
         buffer = ""
         # ``preamble`` → ``chat`` on [SPRÁVA] → ``spec`` on [SPEC].
@@ -394,6 +397,7 @@ async def chat_professional_spec(
             async for chunk in claude_subprocess.run_claude_stream(
                 prompt=user_prompt,
                 context=system_prompt,
+                timeout=stream_timeout,
             ):
                 buffer += chunk
                 total_chars += len(chunk)
@@ -700,6 +704,9 @@ async def generate_design_doc(
     )
 
     project_id = prof_spec.project_id
+    design_doc_timeout = system_setting_service.get_int(
+        db, "claude_design_doc_timeout_seconds"
+    )
 
     async def _sse_generator():
         full_content: list[str] = []
@@ -708,7 +715,7 @@ async def generate_design_doc(
             async for chunk in claude_subprocess.run_claude_stream(
                 prompt=user_prompt,
                 context=system_prompt,
-                timeout=settings.claude_design_doc_timeout,
+                timeout=design_doc_timeout,
             ):
                 full_content.append(chunk)
                 yield f"data: {json.dumps({'type': 'chunk', 'content': chunk})}\n\n"

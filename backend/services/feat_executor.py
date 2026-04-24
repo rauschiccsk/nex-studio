@@ -35,11 +35,15 @@ from backend.db.models.projects import Project
 from backend.db.models.specifications import DesignDocument
 from backend.db.models.tasks import Epic, Feat, Task
 from backend.services import claude_subprocess
+from backend.services import system_setting as system_setting_service
 from backend.services.task import recompute_feat_status
 
 logger = logging.getLogger(__name__)
 
-# Max DESIGN.md characters sent as context — keep prompts manageable.
+# Default max DESIGN.md characters sent as context — overridable at
+# runtime via Settings UI key ``design_doc_max_chars``. The module-level
+# constant below mirrors the registered default and is used as the
+# fallback when a caller omits the parameter.
 _DESIGN_MAX_CHARS = 12_000
 
 
@@ -80,6 +84,7 @@ def _build_task_prompt(
     feat: Feat,
     task: Task,
     design_content: str | None,
+    design_max_chars: int = _DESIGN_MAX_CHARS,
 ) -> str:
     """Build the CC prompt for a single task."""
     lines: list[str] = [
@@ -98,7 +103,7 @@ def _build_task_prompt(
         lines += [
             "",
             "=== DESIGN.md (kontext projektu) ===",
-            design_content[:_DESIGN_MAX_CHARS],
+            design_content[:design_max_chars],
             "=== /DESIGN.md ===",
         ]
 
@@ -199,7 +204,13 @@ async def execute_feat_stream(feat_id: UUID, db: Session) -> AsyncGenerator[str,
             }
         )
 
-        prompt = _build_task_prompt(epic, feat, task, design_content)
+        prompt = _build_task_prompt(
+            epic,
+            feat,
+            task,
+            design_content,
+            design_max_chars=system_setting_service.get_int(db, "design_doc_max_chars"),
+        )
         task_output: list[str] = []
         task_failed = False
 
@@ -207,6 +218,7 @@ async def execute_feat_stream(feat_id: UUID, db: Session) -> AsyncGenerator[str,
             async for chunk in claude_subprocess.run_claude_stream(
                 prompt=prompt,
                 cwd=project.source_path,
+                timeout=system_setting_service.get_int(db, "claude_stream_timeout_seconds"),
             ):
                 task_output.append(chunk)
                 yield _sse({"type": "chunk", "text": chunk, "task_id": str(task.id)})

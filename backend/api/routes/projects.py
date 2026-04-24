@@ -49,6 +49,7 @@ from backend.schemas.project import (
 from backend.services import github_validation as github_validation_service
 from backend.services import port_registry as port_registry_service
 from backend.services import project as project_service
+from backend.services import system_setting as system_setting_service
 from backend.services.knowledge_base_writer import KnowledgeBaseWriter
 from backend.services.live_documents import LiveDocumentService
 
@@ -112,13 +113,16 @@ def _validate_ports(db: Session, payload: ProjectCreate) -> None:
         if port_value is None:
             continue
 
-        # Range check (10100–14999)
-        if port_value < port_registry_service.PORT_RANGE_MIN or port_value > port_registry_service.PORT_RANGE_MAX:
+        # Range check — bounds are runtime-configurable via Settings UI
+        # (keys ``port_range_min`` / ``port_range_max``).
+        range_min = system_setting_service.get_int(db, "port_range_min")
+        range_max = system_setting_service.get_int(db, "port_range_max")
+        if port_value < range_min or port_value > range_max:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=(
                     f"Port {port_value} ({field_name}) is outside the allowed range "
-                    f"({port_registry_service.PORT_RANGE_MIN}–{port_registry_service.PORT_RANGE_MAX})."
+                    f"({range_min}–{range_max})."
                 ),
             )
 
@@ -138,7 +142,7 @@ def _validate_ports(db: Session, payload: ProjectCreate) -> None:
             )
 
 
-def _validate_github_repo(repo_url: str | None) -> None:
+def _validate_github_repo(repo_url: str | None, *, timeout: float) -> None:
     """Validate that the GitHub repository exists via the GitHub API.
 
     Delegates to :func:`backend.services.github_validation.validate_github_repo`
@@ -152,7 +156,7 @@ def _validate_github_repo(repo_url: str | None) -> None:
         return
 
     try:
-        exists = github_validation_service.validate_github_repo(repo_url)
+        exists = github_validation_service.validate_github_repo(repo_url, timeout=timeout)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -299,7 +303,7 @@ def suggest_port_block(
 
     return PortBlockSuggestResponse(
         base=base,
-        block_size=port_registry_service.PORT_BLOCK_SIZE,
+        block_size=system_setting_service.get_int(db, "port_block_size"),
     )
 
 
@@ -362,6 +366,8 @@ def create_project(
     # Resolve created_by — use supplied UUID or fall back to active ri user.
     payload.created_by = _resolve_created_by(db, payload.created_by)
 
+    gh_timeout = float(system_setting_service.get_int(db, "github_api_timeout_seconds"))
+
     # Stage 1 — GitHub repo. Runs before any DB state so a failure is
     # fully reversible (nothing has happened yet on our side).
     if payload.repo_url:
@@ -370,6 +376,7 @@ def create_project(
                 payload.repo_url,
                 description=payload.description or "",
                 private=True,
+                timeout=gh_timeout,
             )
         except ValueError as exc:
             raise HTTPException(
@@ -500,8 +507,11 @@ def delete_project(
 
     # GitHub repo cleanup — opt-in.
     if delete_github and repo_url:
+        gh_timeout = float(
+            system_setting_service.get_int(db, "github_api_timeout_seconds")
+        )
         try:
-            github_validation_service.delete_github_repo(repo_url)
+            github_validation_service.delete_github_repo(repo_url, timeout=gh_timeout)
         except (ValueError, RuntimeError) as exc:
             logger.warning(
                 "GitHub repo delete failed for %r: %s", repo_url, exc

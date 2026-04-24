@@ -9,10 +9,13 @@ appear rather than squeezing them through serialisation here.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
+
+# Mirrors ``ck_system_settings_value_type`` (migration 034).
+SystemSettingValueType = Literal["string", "int", "float", "bool"]
 
 
 class SystemSettingRead(BaseModel):
@@ -26,6 +29,13 @@ class SystemSettingRead(BaseModel):
 
     key: str = Field(..., max_length=100)
     value: str
+    value_type: SystemSettingValueType = Field(
+        default="string",
+        description=(
+            "Runtime type of ``value``. Service helpers cast against "
+            "this hint; the UI uses it for type-aware input widgets."
+        ),
+    )
     description: Optional[str] = None
     updated_at: Optional[datetime] = None
     updated_by: Optional[UUID] = None

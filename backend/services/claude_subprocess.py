@@ -35,6 +35,14 @@ from backend.config.settings import settings
 logger = logging.getLogger(__name__)
 
 
+# Safety fallback when a caller does not resolve the timeout from
+# system_settings. Callers with a DB session should always pass an
+# explicit value via
+# ``system_settings_service.get_int(db, "claude_stream_timeout_seconds")``;
+# this constant is the worst-case default for test / CLI paths.
+_DEFAULT_CLAUDE_STREAM_TIMEOUT = 1800
+
+
 async def run_claude_stream(
     prompt: str,
     context: str | None = None,
@@ -48,7 +56,11 @@ async def run_claude_stream(
         context: Optional system prompt — written to a temp file and
             passed via ``--system-prompt-file`` to avoid ARG_MAX limits.
         timeout: Maximum wall-clock seconds before killing the process.
-            Defaults to ``Settings.claude_stream_timeout`` (300 s).
+            Callers with a DB session should resolve this from
+            :mod:`backend.services.system_setting` (key
+            ``claude_stream_timeout_seconds``); otherwise the
+            :data:`_DEFAULT_CLAUDE_STREAM_TIMEOUT` safety fallback is
+            used.
 
     Yields:
         Text strings from ``content_block_delta`` streaming events.
@@ -57,7 +69,7 @@ async def run_claude_stream(
         RuntimeError: If the subprocess exits with a non-zero code.
         TimeoutError: If the subprocess exceeds *timeout* seconds.
     """
-    effective_timeout = timeout if timeout is not None else settings.claude_stream_timeout
+    effective_timeout = timeout if timeout is not None else _DEFAULT_CLAUDE_STREAM_TIMEOUT
 
     # Write system prompt to a temp file — avoids OS ARG_MAX for large templates.
     tmp_path: str | None = None

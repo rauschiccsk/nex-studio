@@ -52,11 +52,9 @@ from backend.services import architect_message as architect_message_service
 from backend.services import architect_session as architect_session_service
 from backend.services import claude_subprocess
 from backend.services import project as project_service
+from backend.services import system_setting as system_setting_service
 
 logger = logging.getLogger(__name__)
-
-# Maximum number of recent messages to include in Claude context window.
-CONVERSATION_HISTORY_LIMIT = 100
 
 router = APIRouter(tags=["Architect"])
 
@@ -334,10 +332,11 @@ async def send_architect_message(
         raise _map_value_error(exc) from exc
 
     # --- Build conversation history for context ---
+    history_limit = system_setting_service.get_int(db, "conversation_history_limit")
     history_messages = architect_message_service.list_architect_messages(
         db,
         session_id=session_id,
-        limit=CONVERSATION_HISTORY_LIMIT,
+        limit=history_limit,
         offset=0,
     )
     conversation_parts: list[str] = []
@@ -348,6 +347,8 @@ async def send_architect_message(
 
     full_context = f"{context}\n\n---\n\n## Conversation History\n\n{conversation_history}"
 
+    stream_timeout = system_setting_service.get_int(db, "claude_stream_timeout_seconds")
+
     # --- Stream SSE response ---
     async def _sse_generator():
         full_content: list[str] = []
@@ -356,6 +357,7 @@ async def send_architect_message(
             async for chunk in claude_subprocess.run_claude_stream(
                 prompt=payload.content,
                 context=full_context,
+                timeout=stream_timeout,
             ):
                 full_content.append(chunk)
                 event_data = json.dumps({"type": "chunk", "content": chunk})

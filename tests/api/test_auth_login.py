@@ -13,6 +13,7 @@ from jose import jwt
 
 from backend.config.settings import settings
 from backend.db.models.foundation import UserSession
+from backend.services.system_setting import DEFAULT_SETTINGS
 
 from .conftest import seed_user
 
@@ -31,7 +32,9 @@ class TestLoginSuccess:
         assert resp.status_code == 200
         body = resp.json()
         assert body["token_type"] == "bearer"
-        assert body["expires_in"] == settings.access_token_expire_minutes * 60
+        # access_token_expire_minutes is now a DB-backed system setting.
+        expected_minutes = int(DEFAULT_SETTINGS["access_token_expire_minutes"].value)
+        assert body["expires_in"] == expected_minutes * 60
         assert "access_token" in body
 
         # Verify JWT payload

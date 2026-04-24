@@ -102,6 +102,7 @@ from backend.schemas.raw_specification import (
 from backend.services import claude_subprocess
 from backend.services import professional_specification as professional_specification_service
 from backend.services import raw_specification as raw_specification_service
+from backend.services import system_setting as system_setting_service
 
 logger = logging.getLogger(__name__)
 
@@ -333,6 +334,8 @@ async def generate_professional_spec(
 
     project_id = raw_spec.project_id
 
+    stream_timeout = system_setting_service.get_int(db, "claude_stream_timeout_seconds")
+
     async def _sse_generator():
         full_content: list[str] = []
         error_occurred = False
@@ -340,6 +343,7 @@ async def generate_professional_spec(
             async for chunk in claude_subprocess.run_claude_stream(
                 prompt=user_prompt,
                 context=system_prompt,
+                timeout=stream_timeout,
             ):
                 full_content.append(chunk)
                 yield f"data: {json.dumps({'type': 'chunk', 'content': chunk})}\n\n"

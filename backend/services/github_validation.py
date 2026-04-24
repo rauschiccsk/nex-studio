@@ -23,8 +23,14 @@ logger = logging.getLogger(__name__)
 
 GITHUB_API_BASE = "https://api.github.com"
 
+# Safety fallback used when a caller does not resolve the timeout from
+# :mod:`backend.services.system_setting` (key
+# ``github_api_timeout_seconds``). All routes that invoke these
+# functions pass an explicit ``timeout`` sourced from the DB.
+_DEFAULT_GITHUB_API_TIMEOUT = 10.0
 
-def validate_github_repo(repo: str) -> bool:
+
+def validate_github_repo(repo: str, *, timeout: float = _DEFAULT_GITHUB_API_TIMEOUT) -> bool:
     """Check whether a GitHub repository exists and is accessible.
 
     Parameters
@@ -61,7 +67,7 @@ def validate_github_repo(repo: str) -> bool:
     if settings.github_token:
         headers["Authorization"] = f"Bearer {settings.github_token}"
 
-    response = httpx.get(url, headers=headers, timeout=settings.github_api_timeout)
+    response = httpx.get(url, headers=headers, timeout=timeout)
 
     if response.status_code == 200:
         return True
@@ -82,7 +88,7 @@ def _github_headers() -> dict[str, str]:
     }
 
 
-def _resolve_repo_endpoint(owner: str) -> str:
+def _resolve_repo_endpoint(owner: str, timeout: float) -> str:
     """Return the correct ``POST .../repos`` URL for the owner.
 
     GitHub splits repo creation across two endpoints — ``/orgs/{org}/
@@ -102,9 +108,7 @@ def _resolve_repo_endpoint(owner: str) -> str:
         On unexpected GitHub API response codes.
     """
     probe_url = f"{GITHUB_API_BASE}/users/{owner}"
-    probe = httpx.get(
-        probe_url, headers=_github_headers(), timeout=settings.github_api_timeout
-    )
+    probe = httpx.get(probe_url, headers=_github_headers(), timeout=timeout)
     if probe.status_code == 404:
         raise ValueError(f"GitHub account '{owner}' not found. Check the github_org setting.")
     if probe.status_code != 200:
@@ -124,7 +128,7 @@ def _resolve_repo_endpoint(owner: str) -> str:
         who_resp = httpx.get(
             f"{GITHUB_API_BASE}/user",
             headers=_github_headers(),
-            timeout=settings.github_api_timeout,
+            timeout=timeout,
         )
         if who_resp.status_code != 200:
             raise RuntimeError(
@@ -151,6 +155,7 @@ def create_github_repo(
     *,
     description: str = "",
     private: bool = True,
+    timeout: float = _DEFAULT_GITHUB_API_TIMEOUT,
 ) -> bool:
     """Create a new GitHub repository under the given owner.
 
@@ -204,7 +209,7 @@ def create_github_repo(
             "Set GITHUB_TOKEN in the backend environment."
         )
 
-    url = _resolve_repo_endpoint(owner)
+    url = _resolve_repo_endpoint(owner, timeout=timeout)
     # auto_init=True asks GitHub to create an initial README and materialise
     # the default branch on the first commit. Without it the repo is
     # technically created but has no refs, which surprises the first
@@ -219,7 +224,7 @@ def create_github_repo(
     }
 
     response = httpx.post(
-        url, headers=_github_headers(), json=body, timeout=settings.github_api_timeout
+        url, headers=_github_headers(), json=body, timeout=timeout
     )
 
     if response.status_code == 201:
@@ -259,7 +264,7 @@ def create_github_repo(
     )
 
 
-def delete_github_repo(repo: str) -> bool:
+def delete_github_repo(repo: str, *, timeout: float = _DEFAULT_GITHUB_API_TIMEOUT) -> bool:
     """Delete an existing GitHub repository.
 
     Opt-in counterpart to :func:`create_github_repo` — the
@@ -296,9 +301,7 @@ def delete_github_repo(repo: str) -> bool:
         )
 
     url = f"{GITHUB_API_BASE}/repos/{owner}/{name}"
-    response = httpx.delete(
-        url, headers=_github_headers(), timeout=settings.github_api_timeout
-    )
+    response = httpx.delete(url, headers=_github_headers(), timeout=timeout)
 
     if response.status_code == 204:
         logger.info("Deleted GitHub repository %s", repo)

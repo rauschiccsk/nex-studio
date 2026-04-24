@@ -28,6 +28,7 @@ from backend.db.session import get_db
 from backend.schemas.pagination import PaginatedResponse
 from backend.schemas.ui_design import UIDesignCreate, UIDesignRead, UIDesignUpdate
 from backend.services import claude_subprocess
+from backend.services import system_setting as system_setting_service
 from backend.services import ui_design as ui_design_service
 
 logger = logging.getLogger(__name__)
@@ -182,6 +183,8 @@ async def chat_ui_design(
         + f"POŽIADAVKA:\n{payload.message}"
     )
 
+    stream_timeout = system_setting_service.get_int(db, "claude_stream_timeout_seconds")
+
     async def _sse_generator():
         buffer = ""
         state = "preamble"
@@ -190,6 +193,7 @@ async def chat_ui_design(
             async for chunk in claude_subprocess.run_claude_stream(
                 prompt=user_prompt,
                 context=_SYSTEM_PROMPT,
+                timeout=stream_timeout,
             ):
                 buffer += chunk
 
@@ -281,6 +285,8 @@ async def generate_ui_design(
         "Použi realistické slovenské dummy dáta."
     )
 
+    stream_timeout = system_setting_service.get_int(db, "claude_stream_timeout_seconds")
+
     async def _sse_generator():
         buffer = ""
         state = "preamble"
@@ -289,6 +295,7 @@ async def generate_ui_design(
             async for chunk in claude_subprocess.run_claude_stream(
                 prompt=user_prompt,
                 context=_SYSTEM_PROMPT,
+                timeout=stream_timeout,
             ):
                 buffer += chunk
                 changed = True

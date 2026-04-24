@@ -7,23 +7,6 @@ from alembic.config import Config
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-# Route application loggers at INFO to stderr so ``docker logs`` surfaces
-# request-level diagnostics (SSE state, Claude subprocess events, spec
-# chat statistics). Without this Python's root logger runs at WARNING
-# and every ``logger.info`` in the codebase gets silently dropped, which
-# hid the spec-chat state machine from us during the "žiadna reakcia"
-# incident. We lift our ``backend.*`` logger directly instead of
-# replacing uvicorn's root handlers (``force=True`` would break
-# uvicorn's own colourised access log).
-logging.getLogger("backend").setLevel(logging.INFO)
-if not logging.getLogger("backend").hasHandlers():
-    _handler = logging.StreamHandler(sys.stderr)
-    _handler.setFormatter(
-        logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
-    )
-    logging.getLogger("backend").addHandler(_handler)
-    logging.getLogger("backend").propagate = False
-
 from backend.api.routes.architect import router as architect_router
 from backend.api.routes.architect_messages import router as architect_messages_router
 from backend.api.routes.architect_sessions import router as architect_sessions_router
@@ -61,6 +44,23 @@ from backend.api.routes.user_sessions import router as user_sessions_router
 from backend.api.routes.users import router as users_router
 from backend.api.routes.versions import router as versions_router
 from backend.config.settings import settings
+
+# Route application loggers at INFO to stderr so ``docker logs`` surfaces
+# request-level diagnostics (SSE state, Claude subprocess events, spec
+# chat statistics). Without this Python's root logger runs at WARNING
+# and every ``logger.info`` in the codebase gets silently dropped, which
+# hid the spec-chat state machine from us during the "žiadna reakcia"
+# incident. We lift our ``backend.*`` logger directly instead of
+# replacing uvicorn's root handlers (``force=True`` would break
+# uvicorn's own colourised access log).
+logging.getLogger("backend").setLevel(logging.INFO)
+if not logging.getLogger("backend").hasHandlers():
+    _handler = logging.StreamHandler(sys.stderr)
+    _handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    )
+    logging.getLogger("backend").addHandler(_handler)
+    logging.getLogger("backend").propagate = False
 
 logger = logging.getLogger(__name__)
 

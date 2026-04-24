@@ -22,11 +22,11 @@ from sqlalchemy import func as sqlfunc
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.config.settings import settings
 from backend.db.models.specifications import DesignDocument
 from backend.db.models.tasks import Epic, Feat, Task
 from backend.db.models.versions import Version
 from backend.services import claude_subprocess
+from backend.services import system_setting as system_setting_service
 
 logger = logging.getLogger(__name__)
 
@@ -219,7 +219,7 @@ async def generate_task_plan_stream(
         async for chunk in claude_subprocess.run_claude_stream(
             prompt=user_prompt,
             context=_SYSTEM_PROMPT,
-            timeout=settings.claude_task_plan_timeout,
+            timeout=system_setting_service.get_int(db, "claude_task_plan_timeout_seconds"),
         ):
             full_response_parts.append(chunk)
             chunk_count += 1

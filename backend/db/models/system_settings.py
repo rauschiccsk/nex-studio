@@ -10,7 +10,7 @@ install resolves known keys without needing a seed migration. A row
 in this table represents a runtime override of the default.
 """
 
-from sqlalchemy import TIMESTAMP, Column, ForeignKey, String, Text, func
+from sqlalchemy import TIMESTAMP, CheckConstraint, Column, ForeignKey, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 
 from backend.db.models.base import Base
@@ -29,6 +29,10 @@ class SystemSetting(Base):
 
     key = Column(String(100), primary_key=True)
     value = Column(Text, nullable=False)
+    # Runtime type of ``value`` — callers use service helpers
+    # ``get_int`` / ``get_float`` / ``get_bool`` / ``get_str`` which cast
+    # against this hint. Mirrors migration 034's CHECK.
+    value_type = Column(String(20), nullable=False, server_default="string")
     description = Column(Text, nullable=True)
     updated_at = Column(
         TIMESTAMP(timezone=True),
@@ -40,4 +44,11 @@ class SystemSetting(Base):
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "value_type IN ('string', 'int', 'float', 'bool')",
+            name="ck_system_settings_value_type",
+        ),
     )

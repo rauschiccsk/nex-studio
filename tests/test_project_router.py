@@ -521,7 +521,7 @@ class TestProjectRouter:
         """Without ?delete_github=true, the GitHub API is not called."""
         github_delete_calls = []
 
-        def _mock_delete(repo):
+        def _mock_delete(repo, **kwargs):
             github_delete_calls.append(repo)
             return True
 
@@ -544,7 +544,7 @@ class TestProjectRouter:
         """?delete_github=true passes repo_url to delete_github_repo."""
         github_delete_calls = []
 
-        def _mock_delete(repo):
+        def _mock_delete(repo, **kwargs):
             github_delete_calls.append(repo)
             return True
 
@@ -568,7 +568,7 @@ class TestProjectRouter:
     ):
         """If the GitHub delete fails, the endpoint still returns 204 — DB is gone."""
 
-        def _raise_runtime(repo):
+        def _raise_runtime(repo, **kwargs):
             raise RuntimeError("simulated GitHub outage")
 
         monkeypatch.setattr(

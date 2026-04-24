@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 
 from backend.config.settings import settings
 from backend.db.models.foundation import User, UserSession
+from backend.services import system_setting as system_setting_service
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -75,13 +76,21 @@ def _bump_token_version(db: Session, user_id: object) -> int:
     return session.token_version
 
 
-def create_access_token(user: User, token_version: int) -> tuple[str, int]:
+def create_access_token(user: User, token_version: int, expire_minutes: int) -> tuple[str, int]:
     """Create a signed JWT for the given user.
+
+    Args:
+        user: The authenticated user.
+        token_version: Per-user version counter used to invalidate old
+            tokens on logout / password change.
+        expire_minutes: Token lifetime in minutes. Callers resolve this
+            from :mod:`backend.services.system_setting` (key
+            ``access_token_expire_minutes``) so it can be changed
+            without code edits.
 
     Returns:
         Tuple of (encoded_jwt, expires_in_seconds).
     """
-    expire_minutes = settings.access_token_expire_minutes
     expires_in = expire_minutes * 60
     expire = datetime.now(timezone.utc) + timedelta(minutes=expire_minutes)
 
@@ -107,7 +116,8 @@ def login(db: Session, username: str, password: str) -> tuple[User, str, int]:
     """
     user = authenticate_user(db, username, password)
     token_version = _bump_token_version(db, user.id)
-    access_token, expires_in = create_access_token(user, token_version)
+    expire_minutes = system_setting_service.get_int(db, "access_token_expire_minutes")
+    access_token, expires_in = create_access_token(user, token_version, expire_minutes)
     return user, access_token, expires_in
 
 

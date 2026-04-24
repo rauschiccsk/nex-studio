@@ -20,15 +20,33 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from backend.db.models.projects import Project
+from backend.services import system_setting as system_setting_service
 
 # ICC Port Registry v2 — commercial projects band (DECISIONS.md D-020).
+# The actual range + block size are resolved at request time from
+# ``system_settings`` (keys ``port_range_min`` / ``port_range_max`` /
+# ``port_block_size``) via the helpers below; ``DEFAULT_SETTINGS`` in
+# :mod:`backend.services.system_setting` carries the initial values.
+#
+# The module-level constants below are the compile-time defaults —
+# tests import them as expected values and they match the registered
+# defaults. Runtime code paths always read from the DB via the
+# private helpers so a Settings-UI override takes effect.
 PORT_RANGE_MIN = 10100
 PORT_RANGE_MAX = 14999
+PORT_BLOCK_SIZE = 10
 PORT_TYPES = ("backend", "frontend", "db", "ui_design")
 
-# Size of a per-project port block (DECISIONS.md D-020 layout: +0 backend,
-# +1 frontend, +2 postgres, +3 UI design preview, +4–9 reserve).
-PORT_BLOCK_SIZE = 10
+
+def _port_range(db: Session) -> tuple[int, int]:
+    return (
+        system_setting_service.get_int(db, "port_range_min"),
+        system_setting_service.get_int(db, "port_range_max"),
+    )
+
+
+def _port_block_size(db: Session) -> int:
+    return system_setting_service.get_int(db, "port_block_size")
 
 
 def check_port_available(
@@ -58,8 +76,9 @@ def check_port_available(
     ValueError
         If *port* is outside the allowed 9100–9299 range.
     """
-    if port < PORT_RANGE_MIN or port > PORT_RANGE_MAX:
-        raise ValueError(f"Port {port} is outside the allowed range ({PORT_RANGE_MIN}–{PORT_RANGE_MAX}).")
+    range_min, range_max = _port_range(db)
+    if port < range_min or port > range_max:
+        raise ValueError(f"Port {port} is outside the allowed range ({range_min}–{range_max}).")
 
     stmt = select(Project.id).where(
         or_(
@@ -101,12 +120,13 @@ def suggest_next_port(db: Session, port_type: str) -> int:
         raise ValueError(f"Invalid port type '{port_type}'. Must be one of: {', '.join(PORT_TYPES)}.")
 
     allocated = _get_all_used_ports(db)
+    range_min, range_max = _port_range(db)
 
-    for port in range(PORT_RANGE_MIN, PORT_RANGE_MAX + 1):
+    for port in range(range_min, range_max + 1):
         if port not in allocated:
             return port
 
-    raise ValueError(f"No free ports available in range {PORT_RANGE_MIN}–{PORT_RANGE_MAX}.")
+    raise ValueError(f"No free ports available in range {range_min}–{range_max}.")
 
 
 def get_all_allocated_ports(db: Session) -> dict[str, list[int]]:
@@ -199,28 +219,27 @@ def _get_all_used_ports(db: Session) -> set[int]:
 
 
 def suggest_next_port_block(
-    db: Session, block_size: int = PORT_BLOCK_SIZE
+    db: Session, block_size: int | None = None
 ) -> int:
     """Return the base port of the first free ``block_size``-port block.
 
     A block is considered free when **none** of its ``block_size``
     consecutive ports (``base``, ``base+1``, …, ``base+block_size-1``)
-    is currently allocated to any project. Blocks start at
-    :data:`PORT_RANGE_MIN` and advance by ``block_size`` (so the first
-    four blocks are 10100, 10110, 10120, 10130 when ``block_size=10``).
+    is currently allocated to any project. Blocks start at the
+    configured ``port_range_min`` and advance by ``block_size``.
 
-    Callers are expected to use the first :data:`PORT_BLOCK_SIZE` /
-    number-of-ports-in-use slots for actual services (backend,
-    frontend, db, ui_design — see DECISIONS.md D-020) and leave the
-    rest as per-project reserve.
+    Callers are expected to use the first ``block_size`` / number-of-
+    ports-in-use slots for actual services (backend, frontend, db,
+    ui_design — see DECISIONS.md D-020) and leave the rest as
+    per-project reserve.
 
     Parameters
     ----------
     db:
         Active SQLAlchemy session.
     block_size:
-        Number of consecutive ports per block. Defaults to
-        :data:`PORT_BLOCK_SIZE`.
+        Number of consecutive ports per block. When ``None`` the
+        configured ``port_block_size`` system setting is used.
 
     Returns
     -------
@@ -233,19 +252,22 @@ def suggest_next_port_block(
         If ``block_size`` is not positive, or if no free block remains
         in the registry range.
     """
+    if block_size is None:
+        block_size = _port_block_size(db)
     if block_size <= 0:
         raise ValueError(f"block_size must be positive, got {block_size!r}.")
 
     used = _get_all_used_ports(db)
+    range_min, range_max = _port_range(db)
 
-    for base in range(PORT_RANGE_MIN, PORT_RANGE_MAX + 1, block_size):
+    for base in range(range_min, range_max + 1, block_size):
         block_end = base + block_size - 1
-        if block_end > PORT_RANGE_MAX:
+        if block_end > range_max:
             break
         if used.isdisjoint(range(base, base + block_size)):
             return base
 
     raise ValueError(
         f"No free {block_size}-port block in range "
-        f"{PORT_RANGE_MIN}–{PORT_RANGE_MAX}."
+        f"{range_min}–{range_max}."
     )

@@ -56,6 +56,7 @@ from backend.schemas.project import (
     ProjectStatus,
     ProjectUpdate,
 )
+from backend.services import system_setting as system_setting_service
 
 
 def list_projects(
@@ -183,14 +184,16 @@ def create(db: Session, data: ProjectCreate) -> Project:
         raise ValueError(f"Project with slug {data.slug!r} already exists")
 
     # Convention-based defaults for filesystem paths — only applied when the
-    # caller did not supply an explicit value. ``source_path`` is where the
-    # project's git checkout lives on ANDROS (matches /opt/<repo>-src
-    # pattern used by every ICC project) and ``kb_path`` is the KB root for
-    # the per-project live documents managed by LiveDocumentService. A
-    # caller that wants something else (external checkout, shared KB) can
-    # still pass an explicit value and these lines leave it alone.
-    source_path = data.source_path or f"/opt/{data.slug}-src"
-    kb_path = data.kb_path or f"/home/icc/knowledge/projects/{data.slug}"
+    # caller did not supply an explicit value. The templates live in
+    # ``system_settings`` (keys ``default_source_path_template`` +
+    # ``default_kb_path_template``) so operators running NEX Studio in
+    # a different layout can adjust the defaults via the Settings UI
+    # without a code change. ``{slug}`` is substituted with the project
+    # slug; any other placeholders are left intact.
+    source_tmpl = system_setting_service.get_str(db, "default_source_path_template")
+    kb_tmpl = system_setting_service.get_str(db, "default_kb_path_template")
+    source_path = data.source_path or source_tmpl.format(slug=data.slug)
+    kb_path = data.kb_path or kb_tmpl.format(slug=data.slug)
 
     project = Project(
         name=data.name,

@@ -103,16 +103,22 @@ class TestValidateGithubRepo:
         assert call_headers["Authorization"] == "Bearer ghp_test_token_123"
 
     @patch("backend.services.github_validation.httpx.get")
-    def test_timeout_from_settings(self, mock_get: MagicMock) -> None:
-        """Timeout is read from settings.github_api_timeout."""
+    def test_timeout_passed_through(self, mock_get: MagicMock) -> None:
+        """``timeout`` kwarg is forwarded to the underlying httpx call.
+
+        Since migration 034 + the ``github_api_timeout_seconds`` system
+        setting moved the resolved timeout out of ``Settings`` and into
+        the DB, the service function now takes the value as an
+        explicit parameter. The caller (``projects`` router) resolves
+        it from :mod:`backend.services.system_setting`.
+        """
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_get.return_value = mock_response
 
         with patch("backend.services.github_validation.settings") as mock_settings:
             mock_settings.github_token = "ghp_test"
-            mock_settings.github_api_timeout = 30.0
-            validate_github_repo("octocat/Hello-World")
+            validate_github_repo("octocat/Hello-World", timeout=30.0)
 
         call_timeout = mock_get.call_args[1]["timeout"]
         assert call_timeout == 30.0
