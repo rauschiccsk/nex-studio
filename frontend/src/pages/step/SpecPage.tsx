@@ -31,6 +31,9 @@ export default function SpecPage() {
   const [editText, setEditText] = useState("");
   const [saving, setSaving] = useState(false);
 
+  // Copy-to-clipboard feedback
+  const [copiedKey, setCopiedKey] = useState<"view" | "edit" | null>(null);
+
   // Generation
   const [generating, setGenerating] = useState(false);
   const [genOutput, setGenOutput] = useState("");
@@ -97,6 +100,18 @@ export default function SpecPage() {
     setEditing(true);
   }
 
+  async function handleCopy(text: string, key: "view" | "edit") {
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedKey(key);
+      setTimeout(() => setCopiedKey((k) => (k === key ? null : k)), 1500);
+    } catch {
+      // Clipboard API can fail in insecure contexts or without permission.
+      // Fallback: select the textarea content so the user can Ctrl+C manually.
+    }
+  }
+
   function handleGenerate() {
     if (!rawSpec) return;
     setGenerating(true);
@@ -155,12 +170,53 @@ export default function SpecPage() {
         )}
       </div>
 
-      {/* Content */}
+      {/* Content — editing uses full screen; other states keep the narrower column */}
+      {editing ? (
+        <div className="flex-1 flex flex-col p-6 gap-3 overflow-hidden">
+          <div className="flex items-center justify-between flex-shrink-0">
+            <span className="text-sm font-semibold text-slate-300">
+              {rawSpec ? "Upraviť špecifikáciu" : "Nová špecifikácia"}
+            </span>
+            <div className="flex gap-2">
+              <button
+                onClick={() => handleCopy(editText, "edit")}
+                disabled={!editText.trim()}
+                className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-300 border border-slate-700 hover:border-slate-500 disabled:opacity-40 px-3 py-1.5 rounded-lg transition-colors"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+                {copiedKey === "edit" ? "Skopírované ✓" : "Kopírovať"}
+              </button>
+              <button
+                onClick={() => setEditing(false)}
+                className="text-xs text-slate-500 border border-slate-700 px-3 py-1.5 rounded-lg hover:border-slate-500 transition-colors"
+              >
+                Zrušiť
+              </button>
+              <button
+                onClick={rawSpec ? handleSaveEdit : handleSaveNew}
+                disabled={saving || !editText.trim()}
+                className="text-xs bg-primary-600 hover:bg-primary-500 disabled:opacity-40 text-white px-3 py-1.5 rounded-lg font-medium transition-colors"
+              >
+                {saving ? "Ukladám…" : "Uložiť"}
+              </button>
+            </div>
+          </div>
+          <textarea
+            value={editText}
+            onChange={(e) => setEditText(e.target.value)}
+            placeholder="Opíšte požiadavky zákazníka…&#10;&#10;Napr.:&#10;- Pridať funkciu exportu do PDF&#10;- Opraviť chybu v kalkulácii DPH&#10;- Zmeniť farebné schémy dashboardu"
+            autoFocus
+            className="flex-1 w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-sm text-slate-200 font-mono resize-none focus:outline-none focus:border-primary-500 transition-colors leading-relaxed"
+          />
+        </div>
+      ) : (
       <div className="flex-1 overflow-y-auto p-6">
         <div className="max-w-3xl mx-auto">
 
           {/* Empty state */}
-          {!rawSpec && !editing && (
+          {!rawSpec && (
             <div className="rounded-xl border border-dashed border-slate-700 p-10 text-center">
               <svg className="w-10 h-10 text-slate-700 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -179,40 +235,8 @@ export default function SpecPage() {
             </div>
           )}
 
-          {/* Edit / Create form */}
-          {editing && (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-semibold text-slate-300">
-                  {rawSpec ? "Upraviť špecifikáciu" : "Nová špecifikácia"}
-                </span>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setEditing(false)}
-                    className="text-xs text-slate-500 border border-slate-700 px-3 py-1.5 rounded-lg hover:border-slate-500 transition-colors"
-                  >
-                    Zrušiť
-                  </button>
-                  <button
-                    onClick={rawSpec ? handleSaveEdit : handleSaveNew}
-                    disabled={saving || !editText.trim()}
-                    className="text-xs bg-primary-600 hover:bg-primary-500 disabled:opacity-40 text-white px-3 py-1.5 rounded-lg font-medium transition-colors"
-                  >
-                    {saving ? "Ukladám…" : "Uložiť"}
-                  </button>
-                </div>
-              </div>
-              <textarea
-                value={editText}
-                onChange={(e) => setEditText(e.target.value)}
-                placeholder="Opíšte požiadavky zákazníka…&#10;&#10;Napr.:&#10;- Pridať funkciu exportu do PDF&#10;- Opraviť chybu v kalkulácii DPH&#10;- Zmeniť farebné schémy dashboardu"
-                className="w-full h-64 px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-sm text-slate-200 font-mono resize-y focus:outline-none focus:border-primary-500 transition-colors leading-relaxed"
-              />
-            </div>
-          )}
-
           {/* Spec exists — show it */}
-          {rawSpec && !editing && (
+          {rawSpec && (
             <div className="space-y-4">
               {/* Spec header */}
               <div className="flex items-center gap-3">
@@ -227,6 +251,15 @@ export default function SpecPage() {
                 </span>
                 <span className="text-[10px] text-slate-600 font-mono">{new Date(rawSpec.created_at).toLocaleDateString("sk-SK")}</span>
                 <div className="flex-1" />
+                <button
+                  onClick={() => handleCopy(rawSpec.input_text, "view")}
+                  className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-300 border border-slate-700 hover:border-slate-500 px-2 py-1 rounded transition-colors"
+                >
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                  </svg>
+                  {copiedKey === "view" ? "Skopírované ✓" : "Kopírovať"}
+                </button>
                 <button
                   onClick={handleStartEdit}
                   className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-300 border border-slate-700 hover:border-slate-500 px-2 py-1 rounded transition-colors"
@@ -328,6 +361,7 @@ export default function SpecPage() {
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }
