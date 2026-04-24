@@ -312,6 +312,19 @@ export default function ProfSpecPage() {
                 </div>
               </div>
             ))}
+            {chatStreaming && !chatBuffer && (
+              <div className="flex gap-2 justify-start">
+                <div className="w-6 h-6 rounded-full bg-primary-600/30 flex items-center justify-center text-[9px] text-primary-400 font-bold shrink-0 mt-0.5">AI</div>
+                <div className="max-w-[85%] text-xs px-3 py-2 rounded-lg bg-slate-800 text-slate-500 rounded-tl-none flex items-center gap-2">
+                  <span className="flex gap-1" aria-hidden>
+                    <span className="w-1.5 h-1.5 rounded-full bg-slate-500 animate-bounce [animation-delay:-0.3s]" />
+                    <span className="w-1.5 h-1.5 rounded-full bg-slate-500 animate-bounce [animation-delay:-0.15s]" />
+                    <span className="w-1.5 h-1.5 rounded-full bg-slate-500 animate-bounce" />
+                  </span>
+                  <span className="italic">AI premýšľa…</span>
+                </div>
+              </div>
+            )}
             {chatStreaming && chatBuffer && (
               <div className="flex gap-2 justify-start">
                 <div className="w-6 h-6 rounded-full bg-primary-600/30 flex items-center justify-center text-[9px] text-primary-400 font-bold shrink-0 mt-0.5">AI</div>
