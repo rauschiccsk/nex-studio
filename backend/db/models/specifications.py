@@ -157,6 +157,38 @@ class DesignDocument(Base, UUIDMixin, TimestampMixin):
     )
 
 
+class UIDesignChatMessage(Base, UUIDMixin):
+    """Append-only chat turn on a UIDesign mockup refinement thread.
+
+    Same shape as :class:`ProfessionalSpecChatMessage` — survives FE
+    navigation by living in the DB instead of React state. See
+    migration 036.
+    """
+
+    __tablename__ = "ui_design_chat_messages"
+
+    ui_design_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("ui_designs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    role = Column(String(20), nullable=False)
+    content = Column(Text, nullable=False)
+    created_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "role IN ('user', 'assistant')",
+            name="ck_ui_design_chat_messages_role",
+        ),
+    )
+
+
 class UIDesign(Base, UUIDMixin, TimestampMixin):
     """AI-assisted UI mockup for a project — Step 2B of the pipeline."""
 

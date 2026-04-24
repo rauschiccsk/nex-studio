@@ -25,17 +25,21 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.config.settings import settings
-
 from backend.core.security import require_ri_role
 from backend.db.models.foundation import User
 from backend.db.models.projects import Project
 from backend.db.models.specifications import ProfessionalSpecification
-from backend.db.session import get_db
+from backend.db.session import SessionLocal, get_db
 from backend.schemas.pagination import PaginatedResponse
 from backend.schemas.ui_design import UIDesignCreate, UIDesignRead, UIDesignUpdate
+from backend.schemas.ui_design_chat_message import (
+    UIDesignChatMessageCreate,
+    UIDesignChatMessageRead,
+)
 from backend.services import claude_subprocess
 from backend.services import system_setting as system_setting_service
 from backend.services import ui_design as ui_design_service
+from backend.services import ui_design_chat_message as chat_message_service
 
 logger = logging.getLogger(__name__)
 
@@ -238,6 +242,8 @@ async def chat_ui_design(
     async def _sse_generator():
         buffer = ""
         state = "preamble"
+        chat_accumulator: list[str] = []
+        stream_error = False
 
         try:
             async for chunk in claude_subprocess.run_claude_stream(
@@ -266,6 +272,7 @@ async def chat_ui_design(
                             chat_part = buffer[:idx].strip()
                             if chat_part:
                                 yield f"data: {json.dumps({'type': 'chat_chunk', 'content': chat_part})}\n\n"
+                                chat_accumulator.append(chat_part)
                             buffer = buffer[idx + len(_HTML_MARKER):]
                             state = "html"
                             changed = True
@@ -273,6 +280,7 @@ async def chat_ui_design(
                             safe_len = max(0, len(buffer) - len(_HTML_MARKER))
                             if safe_len > 0:
                                 yield f"data: {json.dumps({'type': 'chat_chunk', 'content': buffer[:safe_len]})}\n\n"
+                                chat_accumulator.append(buffer[:safe_len])
                                 buffer = buffer[safe_len:]
 
                     elif state == "html":
@@ -281,12 +289,49 @@ async def chat_ui_design(
                             buffer = ""
 
         except (RuntimeError, TimeoutError) as exc:
+            stream_error = True
             logger.error("Claude stream error for UI design chat %s: %s", ui_design_id, exc)
             yield f"data: {json.dumps({'type': 'error', 'content': str(exc)})}\n\n"
 
         if buffer:
             event_type = "html_chunk" if state == "html" else "chat_chunk"
             yield f"data: {json.dumps({'type': event_type, 'content': buffer.strip()})}\n\n"
+            if event_type == "chat_chunk":
+                chat_accumulator.append(buffer.strip())
+
+        # Persist the turn (user + assistant) so the chat panel survives
+        # navigation. Skipped on errored streams — partial logs would be
+        # misleading. Uses a fresh SessionLocal because the request-scoped
+        # session may already be closed by the time the SSE tail runs.
+        if not stream_error:
+            assistant_text = "".join(chat_accumulator).strip()
+            persist_db = SessionLocal()
+            try:
+                chat_message_service.create(
+                    persist_db,
+                    UIDesignChatMessageCreate(
+                        ui_design_id=ui_design_id,
+                        role="user",
+                        content=payload.message,
+                    ),
+                )
+                if assistant_text:
+                    chat_message_service.create(
+                        persist_db,
+                        UIDesignChatMessageCreate(
+                            ui_design_id=ui_design_id,
+                            role="assistant",
+                            content=assistant_text,
+                        ),
+                    )
+                persist_db.commit()
+            except Exception:
+                persist_db.rollback()
+                logger.exception(
+                    "Failed to persist chat messages for UIDesign %s", ui_design_id
+                )
+            finally:
+                persist_db.close()
 
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
@@ -295,6 +340,30 @@ async def chat_ui_design(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# ── Chat message history ──────────────────────────────────────────────────────
+
+
+@router.get(
+    "/{ui_design_id}/chat-messages",
+    response_model=list[UIDesignChatMessageRead],
+)
+def list_chat_messages(
+    ui_design_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_ri_role),
+) -> list[UIDesignChatMessageRead]:
+    """Return every persisted chat turn for a UIDesign — drives the
+    left-panel chat hydration on UIDesignPage mount. Sorted ASC by
+    ``created_at`` so the FE can render top-to-bottom.
+    """
+    try:
+        ui_design_service.get_by_id(db, ui_design_id)
+    except ValueError as exc:
+        raise _map_value_error(exc) from exc
+    rows = chat_message_service.list_by_ui_design(db, ui_design_id)
+    return [UIDesignChatMessageRead.model_validate(r) for r in rows]
 
 
 # ── Initial generate ──────────────────────────────────────────────────────────

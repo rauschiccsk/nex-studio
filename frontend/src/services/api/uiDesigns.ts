@@ -46,6 +46,21 @@ export function getUIDesign(id: string): Promise<UIDesignRead> {
   return api.get<UIDesignRead>(`/ui-designs/${id}`);
 }
 
+/** Persisted chat message — append-only log for a UIDesign refinement thread. */
+export interface UIDesignChatMessage {
+  id: string;
+  ui_design_id: string;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+}
+
+export function listUIDesignChatMessages(
+  uiDesignId: string,
+): Promise<UIDesignChatMessage[]> {
+  return api.get<UIDesignChatMessage[]>(`/ui-designs/${uiDesignId}/chat-messages`);
+}
+
 export function createUIDesign(data: UIDesignCreate): Promise<UIDesignRead> {
   return api.post<UIDesignRead>("/ui-designs", data);
 }

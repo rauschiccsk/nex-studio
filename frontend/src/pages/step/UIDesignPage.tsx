@@ -8,6 +8,7 @@ import {
   updateUIDesign,
   chatUIDesign,
   generateUIDesign,
+  listUIDesignChatMessages,
 } from "@/services/api/uiDesigns";
 import type { UIDesignSSEEvent, ChatHistoryItem } from "@/services/api/uiDesigns";
 import { useAuthStore } from "@/store/authStore";
@@ -73,6 +74,18 @@ export default function UIDesignPage() {
         const ui = uiRes.items[0] ?? null;
         setUIDesign(ui);
         if (ui?.html_preview) setHtmlContent(ui.html_preview);
+        if (ui) {
+          // Rehydrate chat history — mirror of ProfSpecPage. Tichá
+          // chyba, chat log je UX overlay.
+          listUIDesignChatMessages(ui.id)
+            .then((msgs) => {
+              if (cancelled) return;
+              setChatHistory(
+                msgs.map((m) => ({ role: m.role, content: m.content })),
+              );
+            })
+            .catch(() => { /* non-blocking */ });
+        }
         setLoading(false);
       });
     }).catch(() => { if (!cancelled) { setError("Nepodarilo sa načítať dáta."); setLoading(false); } });

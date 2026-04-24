@@ -15,6 +15,8 @@ from backend.db.models.specifications import (
     ProfessionalSpecChatMessage,
     ProfessionalSpecification,
     RawSpecification,
+    UIDesign,
+    UIDesignChatMessage,
 )
 from backend.db.models.tasks import Epic, Feat, Task
 from backend.db.models.versions import Version
@@ -47,6 +49,8 @@ __all__ = [
     "Epic",
     "Feat",
     "Task",
+    "UIDesign",
+    "UIDesignChatMessage",
     "User",
     "UserSession",
     "Version",
