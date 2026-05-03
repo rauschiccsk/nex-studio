@@ -60,7 +60,7 @@ def upgrade() -> None:
         ),
     )
     op.create_index(
-        "ix_professional_spec_chat_messages_spec_id",
+        "ix_professional_spec_chat_messages_professional_spec_id",
         "professional_spec_chat_messages",
         ["professional_spec_id"],
     )
@@ -68,7 +68,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index(
-        "ix_professional_spec_chat_messages_spec_id",
+        "ix_professional_spec_chat_messages_professional_spec_id",
         table_name="professional_spec_chat_messages",
     )
     op.drop_table("professional_spec_chat_messages")

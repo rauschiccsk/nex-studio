@@ -185,9 +185,12 @@ def nazar(db_session) -> User:
 NEX_HORIZONT_NAME = "NEX Horizont"
 NEX_HORIZONT_SLUG = "nex-horizont"
 NEX_HORIZONT_REPO_URL = "rauschiccsk/nex-horizont"
-NEX_HORIZONT_BACKEND_PORT = 9170
-NEX_HORIZONT_FRONTEND_PORT = 9171
-NEX_HORIZONT_DB_PORT = 9172
+# Updated 2026-05-03: legacy 9170-9172 (NEX Payroll legacy block) is
+# outside commercial range 10100-14999 per D-020 / port_range_min.
+# Test reallocated to 10180-10182 (free block).
+NEX_HORIZONT_BACKEND_PORT = 10180
+NEX_HORIZONT_FRONTEND_PORT = 10181
+NEX_HORIZONT_DB_PORT = 10182
 NEX_HORIZONT_DESCRIPTION = "Enterprise ERP successor to NEX Command."
 
 

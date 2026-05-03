@@ -54,9 +54,15 @@ class TestProjectCreationFlow:
         # ------------------------------------------------------------------
         # Step 3: Create project with valid ports + GitHub repo (mocked)
         # ------------------------------------------------------------------
-        with patch(
-            "backend.services.github_validation.validate_github_repo",
-            return_value=True,
+        with (
+            patch(
+                "backend.services.github_validation.validate_github_repo",
+                return_value=True,
+            ),
+            patch(
+                "backend.services.github_validation.create_github_repo",
+                return_value=None,
+            ),
         ):
             create_resp = integration_client.post(
                 "/api/v1/projects",
@@ -124,9 +130,15 @@ class TestProjectCreationFlow:
         # ------------------------------------------------------------------
         # Step 7: Verify slug uniqueness is enforced
         # ------------------------------------------------------------------
-        with patch(
-            "backend.services.github_validation.validate_github_repo",
-            return_value=True,
+        with (
+            patch(
+                "backend.services.github_validation.validate_github_repo",
+                return_value=True,
+            ),
+            patch(
+                "backend.services.github_validation.create_github_repo",
+                return_value=None,
+            ),
         ):
             dup_resp = integration_client.post(
                 "/api/v1/projects",
@@ -155,9 +167,15 @@ class TestProjectCreationFlow:
         admin_user_id = login_resp.json()["user"]["id"]
 
         # Create project with specific ports
-        with patch(
-            "backend.services.github_validation.validate_github_repo",
-            return_value=True,
+        with (
+            patch(
+                "backend.services.github_validation.validate_github_repo",
+                return_value=True,
+            ),
+            patch(
+                "backend.services.github_validation.create_github_repo",
+                return_value=None,
+            ),
         ):
             create_resp = integration_client.post(
                 "/api/v1/projects",

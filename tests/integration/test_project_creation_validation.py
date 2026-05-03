@@ -12,7 +12,31 @@ invalid inputs with appropriate HTTP status codes:
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _mock_github_for_validation_tests():
+    """Auto-mock GitHub API across this module's tests.
+
+    The CI runner's GITHUB_TOKEN doesn't have admin:org scope to actually
+    create repos, so unmocked calls return 401 ("Bad credentials") and
+    POST /api/v1/projects 500-s before the validation logic under test
+    can run. Production deploy uses a token with the right scope.
+    """
+    with (
+        patch(
+            "backend.services.github_validation.validate_github_repo",
+            return_value=True,
+        ),
+        patch(
+            "backend.services.github_validation.create_github_repo",
+            return_value=None,
+        ),
+    ):
+        yield
 
 
 @pytest.mark.integration
