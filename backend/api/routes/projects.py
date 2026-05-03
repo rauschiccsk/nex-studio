@@ -145,6 +145,73 @@ def _validate_ports(db: Session, payload: ProjectCreate) -> None:
                 ).model_dump(),
             )
 
+        # Reserved-block check — read CSV from system_settings
+        # (key: reserved_port_ranges, e.g. "10110-10159,10200-10209").
+        # Externally-managed reservations (NEX Automat per D-022, etc.)
+        # not represented in the projects table go here.
+        reserved_csv = system_setting_service.get_str(db, "reserved_port_ranges")
+        if reserved_csv:
+            for spec in (s.strip() for s in reserved_csv.split(",")):
+                if not spec or "-" not in spec:
+                    continue
+                try:
+                    start_str, end_str = spec.split("-", 1)
+                    r_start = int(start_str.strip())
+                    r_end = int(end_str.strip())
+                except ValueError:
+                    # Malformed entry — skip (operator will see in logs);
+                    # don't block project creation on a config typo.
+                    logger.warning(
+                        "Malformed reserved_port_ranges entry %r — skipped", spec
+                    )
+                    continue
+                if r_start <= port_value <= r_end:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=(
+                            f"Port {port_value} ({field_name}) falls inside "
+                            f"reserved range {r_start}-{r_end}. This range is "
+                            f"reserved per ICC_STANDARDS / DECISIONS — pick a "
+                            f"different port block."
+                        ),
+                    )
+
+    # Block-alignment check — backend_port must be at the start of a
+    # 10-port block (10100, 10110, 10120, ...) when in commercial range
+    # (>= 10100). Legacy 9100-9199 entries are exempt (D-020 "no
+    # migration" clause). Frontend / db / ui_design must follow the
+    # D-020 layout (+0 BE, +1 FE, +2 DB, +3 ui-design) so contiguous
+    # blocks remain coherent and `suggest_next_port_block` can find
+    # the next free 10-port block deterministically.
+    bp = payload.backend_port
+    if bp is not None and bp >= 10100:
+        if bp % 10 != 0:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"backend_port {bp} must be 10-aligned (10100, 10110, "
+                    f"10120, ...) per D-020 commercial-range layout. The "
+                    f"first port of a 10-port block starts the project's "
+                    f"reserved slot."
+                ),
+            )
+        layout = [
+            ("frontend_port", payload.frontend_port, 1),
+            ("db_port", payload.db_port, 2),
+            ("ui_design_port", payload.ui_design_port, 3),
+        ]
+        for field_name, value, offset in layout:
+            if value is not None and value != bp + offset:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=(
+                        f"{field_name} {value} does not match D-020 layout — "
+                        f"expected backend_port + {offset} = {bp + offset} "
+                        f"(got {value}). Either use the expected slot or "
+                        f"leave the column NULL."
+                    ),
+                )
+
 
 def _validate_github_repo(repo_url: str | None, *, timeout: float) -> None:
     """Validate that the GitHub repository exists via the GitHub API.

@@ -218,6 +218,37 @@ def _get_all_used_ports(db: Session) -> set[int]:
     return used
 
 
+def _get_reserved_ports(db: Session) -> set[int]:
+    """Expand ``reserved_port_ranges`` system setting into a set of ports.
+
+    External reservations (NEX Automat per D-022, future commercial
+    partners managed outside NEX Studio) are configured as a CSV of
+    ``<start>-<end>`` ranges. ``suggest_next_port_block`` calls both
+    this and :func:`_get_all_used_ports` so its proposed base never
+    lands inside a range that ``_validate_ports`` will subsequently
+    reject — keeping FE auto-suggest consistent with create-time
+    validation.
+    """
+    csv = system_setting_service.get_str(db, "reserved_port_ranges")
+    if not csv:
+        return set()
+    blocked: set[int] = set()
+    for spec in (s.strip() for s in csv.split(",")):
+        if not spec or "-" not in spec:
+            continue
+        try:
+            start_str, end_str = spec.split("-", 1)
+            r_start = int(start_str.strip())
+            r_end = int(end_str.strip())
+        except ValueError:
+            # Malformed entry — silent skip; _validate_ports logs a warning
+            # at request time so the operator notices.
+            continue
+        if r_start <= r_end:
+            blocked.update(range(r_start, r_end + 1))
+    return blocked
+
+
 def suggest_next_port_block(
     db: Session, block_size: int | None = None
 ) -> int:
@@ -257,14 +288,17 @@ def suggest_next_port_block(
     if block_size <= 0:
         raise ValueError(f"block_size must be positive, got {block_size!r}.")
 
-    used = _get_all_used_ports(db)
+    # Combine DB-allocated ports + externally-reserved ranges so the
+    # suggested base never lands inside a range that _validate_ports
+    # will subsequently reject (consistent FE/BE behaviour).
+    blocked = _get_all_used_ports(db) | _get_reserved_ports(db)
     range_min, range_max = _port_range(db)
 
     for base in range(range_min, range_max + 1, block_size):
         block_end = base + block_size - 1
         if block_end > range_max:
             break
-        if used.isdisjoint(range(base, base + block_size)):
+        if blocked.isdisjoint(range(base, base + block_size)):
             return base
 
     raise ValueError(

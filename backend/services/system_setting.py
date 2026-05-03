@@ -163,6 +163,17 @@ DEFAULT_SETTINGS: dict[str, _Default] = {
         ),
         value_type="int",
     ),
+    "reserved_port_ranges": _Default(
+        value="10110-10159",
+        description=(
+            "Comma-separated list of port ranges reserved for projects "
+            "managed externally (not via NEX Studio web UI). Format: "
+            "'<start>-<end>,<start>-<end>,...'. _validate_ports rejects "
+            "any port inside these ranges with HTTP 422. Default reserves "
+            "10110-10159 for NEX Automat per D-022 (50-port mega-app "
+            "allocation). Add new entries as ICC_STANDARDS evolves."
+        ),
+    ),
 }
 
 
