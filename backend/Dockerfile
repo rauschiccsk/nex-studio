@@ -30,11 +30,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 # Install system dependencies + Node.js 20 via NodeSource
+# git is required by template_bootstrap subprocess (icc-claude-template
+# init.sh runs `git init` + first commit when bootstrapping new projects).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         curl \
         ca-certificates \
         gnupg \
+        git \
     && mkdir -p /etc/apt/keyrings \
     && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
         | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
@@ -45,6 +48,15 @@ RUN apt-get update \
     && apt-get purge -y gnupg \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
+
+# Set system-wide git identity used by template_bootstrap when init.sh
+# does the first commit on a freshly-created project. The identity is
+# generic ICC service-account style; per-project commits later will be
+# attributed via the developer's own git config from the host or from
+# the project's local .git/config (init.sh creates the repo with this
+# identity then the developer overrides as needed).
+RUN git config --system user.email "ci@icc.sk" \
+    && git config --system user.name "ICC NEX Studio Bot"
 
 # Install Claude CLI globally
 RUN npm install -g @anthropic-ai/claude-code \
