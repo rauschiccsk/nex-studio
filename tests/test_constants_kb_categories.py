@@ -29,8 +29,7 @@ def test_kb_categories_match_pydantic_literal():
 
 def test_kb_categories_match_db_check_constraint():
     constraints = [
-        c for c in KbDocument.__table__.constraints
-        if getattr(c, "name", None) == "ck_kb_documents_doc_category"
+        c for c in KbDocument.__table__.constraints if getattr(c, "name", None) == "ck_kb_documents_doc_category"
     ]
     assert len(constraints) == 1
     expr = str(constraints[0].sqltext)
