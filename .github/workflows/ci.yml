@@ -145,7 +145,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Deploy with Docker Compose
-        working-directory: /opt/nex-studio-src
+        working-directory: /opt/projects/nex-studio
         env:
           VITE_APP_VERSION: "0.1.${{ github.run_number }}"
         run: |
@@ -157,6 +157,6 @@ jobs:
           sleep 5
 
       - name: Health check
-        working-directory: /opt/nex-studio-src
+        working-directory: /opt/projects/nex-studio
         run: |
           python -m backend.scripts.healthcheck || echo "Health check pending — backend may still be starting"
