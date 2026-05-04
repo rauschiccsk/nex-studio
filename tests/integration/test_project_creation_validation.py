@@ -39,6 +39,41 @@ def _mock_github_for_validation_tests():
         yield
 
 
+@pytest.fixture(autouse=True)
+def _force_init_sh_dry_run():
+    """Force ``invoke_init_script`` into dry-run mode for this module.
+
+    The validation tests POST to ``/api/v1/projects`` which (success
+    path) invokes ``init.sh`` to bootstrap a real on-disk project
+    under ``/opt/projects/<slug>/`` plus a KB folder under
+    ``/home/icc/knowledge/projects/<slug>/``. Filesystem ``mkdir`` in
+    init.sh is NOT transactional, so a failed assertion + DB rollback
+    leaves orphan directories on disk (audit 2026-05-04 found 9 in
+    /opt/projects/ and many more in KB).
+
+    The fix: wrap ``invoke_init_script`` to inject ``dry_run=True``,
+    so init.sh validates args and logs planned actions but performs
+    no filesystem / git side effects. Tests still exercise the API
+    layer + schema validation + service layer end-to-end.
+
+    The patch target is ``backend.api.routes.projects`` because that
+    module imports ``invoke_init_script`` by name (binding-by-value),
+    so patching the source module ``template_bootstrap`` does not
+    rebind the route's reference.
+    """
+    from backend.services.template_bootstrap import invoke_init_script as real_invoke
+
+    def _dry_run_wrapper(db, project, **kwargs):
+        kwargs.setdefault("dry_run", True)
+        return real_invoke(db, project, **kwargs)
+
+    with patch(
+        "backend.api.routes.projects.invoke_init_script",
+        side_effect=_dry_run_wrapper,
+    ):
+        yield
+
+
 @pytest.mark.integration
 class TestProjectCreationValidation:
     """Validate all error paths for project creation."""

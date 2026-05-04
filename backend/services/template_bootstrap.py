@@ -89,7 +89,7 @@ def _repo_from_url(repo_url: str | None, slug: str) -> str:
     return f"rauschiccsk/{slug}"
 
 
-def invoke_init_script(db: Session, project: Project) -> BootstrapResult:
+def invoke_init_script(db: Session, project: Project, *, dry_run: bool = False) -> BootstrapResult:
     """Run the icc-claude-template init.sh for the given project.
 
     Pre-conditions:
@@ -105,6 +105,13 @@ def invoke_init_script(db: Session, project: Project) -> BootstrapResult:
             the caller's transaction). The function reads
             ``name`` / ``slug`` / ``description`` / ``backend_port``
             / ``repo_url`` / ``source_path``.
+        dry_run: When True, ``--dry-run`` is appended to the init.sh
+            invocation. The script then validates arguments and logs
+            planned actions without making any filesystem / git side
+            effects. Used by integration tests to exercise the API +
+            schema + service layer without polluting ``/opt/projects/``
+            and ``/home/icc/knowledge/projects/``. Production callers
+            never set this.
 
     Returns:
         BootstrapResult with the target path, init.sh path, and
@@ -163,17 +170,20 @@ def invoke_init_script(db: Session, project: Project) -> BootstrapResult:
         project.source_path,
         "--init-target",  # create the target dir if it doesn't exist
     ]
+    if dry_run:
+        args.append("--dry-run")
 
     timeout = system_setting_service.get_int(db, "template_init_timeout_seconds")
 
     logger.info(
-        "Invoking template init.sh for project %s (slug=%s, target=%s, port-base=%d, repo=%s, timeout=%ds)",
+        "Invoking template init.sh for project %s (slug=%s, target=%s, port-base=%d, repo=%s, timeout=%ds, dry_run=%s)",
         project.id,
         project.slug,
         project.source_path,
         port_base,
         repo,
         timeout,
+        dry_run,
     )
 
     try:
