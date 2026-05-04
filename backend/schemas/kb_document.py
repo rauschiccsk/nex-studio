@@ -190,3 +190,20 @@ class KbDocumentCategoryWithCount(BaseModel):
         ge=0,
         description="Number of kb_documents rows in this category.",
     )
+
+
+class KbDocumentContent(BaseModel):
+    """On-disk content of a KB document, returned as a UTF-8 string.
+
+    Returned by ``GET /api/v1/kb-documents/{id}/content``. Files under
+    ``credentials/`` are NEVER returned (HTTP 403 — CLAUDE.md §13).
+    Binary files and files exceeding ``settings.kb_content_max_bytes``
+    are rejected with HTTP 422.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    document_id: UUID = Field(..., description="Primary key of the kb_documents row.")
+    file_path: str = Field(..., description="Absolute path on the ANDROS filesystem.")
+    content: str = Field(..., description="UTF-8-decoded file content.")
+    size_bytes: int = Field(..., ge=0, description="On-disk file size in bytes.")

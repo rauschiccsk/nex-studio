@@ -37,6 +37,13 @@ class Settings(BaseSettings):
     # Knowledge Base path (mounted read-only from host)
     knowledge_base_path: str = "/home/icc/knowledge"
 
+    # Maximum size in bytes the ``GET /kb-documents/{id}/content``
+    # endpoint will return. Larger files are rejected with HTTP 422 to
+    # protect the backend (and client) from accidentally loading huge
+    # markdown / log dumps. 5 MB is generous for hand-written docs and
+    # well below the threshold where rendering becomes painful.
+    kb_content_max_bytes: int = 5 * 1024 * 1024
+
     # Admin URL of the mockup server (``mockup_server/app.py``) that
     # hosts each project's UI design at its own ``ui_design_port``.
     # After the backend persists a new ``UIDesign.html_preview`` it

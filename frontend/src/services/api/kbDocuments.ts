@@ -6,6 +6,7 @@ import type {
   KbDocumentRead,
   KbDocumentCategory,
   KbDocumentCategoryWithCount,
+  KbDocumentContent,
 } from "../../types/kbDocument";
 
 export interface ListKbDocumentsParams {
@@ -38,6 +39,10 @@ export function listKbCategories(
 
 export function getKbDocument(id: string): Promise<KbDocumentRead> {
   return api.get<KbDocumentRead>(`/kb-documents/${id}`);
+}
+
+export function getKbDocumentContent(id: string): Promise<KbDocumentContent> {
+  return api.get<KbDocumentContent>(`/kb-documents/${id}/content`);
 }
 
 export function createKbDocument(data: KbDocumentCreate): Promise<KbDocumentRead> {

@@ -647,3 +647,107 @@ class TestKbCategoriesEndpoint:
         # If FastAPI matched ``/{document_id}`` first, the response would
         # be 422 (invalid UUID); the categories endpoint returns 200.
         assert resp.status_code == 200
+
+
+class TestKbDocumentContentEndpoint:
+    """Tests for ``GET /api/v1/kb-documents/{id}/content``.
+
+    Verifies the on-disk content read together with the §13 / path-
+    traversal / size-limit / binary security checks.
+    """
+
+    @pytest.fixture()
+    def kb_root(self, tmp_path, monkeypatch):
+        """Create a temporary KB root and point settings at it."""
+        from backend.config.settings import settings
+
+        kb = tmp_path / "knowledge"
+        kb.mkdir()
+        (kb / "credentials").mkdir()
+        monkeypatch.setattr(settings, "knowledge_base_path", str(kb))
+        return kb
+
+    def _persist(self, db_session, project, *, file_path: str, doc_category: str = "standards"):
+        """Insert a kb_documents row with the given on-disk path."""
+        doc = KbDocument(
+            project_id=project.id,
+            module_id=None,
+            title="content test",
+            file_path=file_path,
+            doc_category=doc_category,
+        )
+        db_session.add(doc)
+        db_session.flush()
+        return doc
+
+    def test_content_returns_markdown(self, router_client, db_session, project, kb_root):
+        markdown = "# Hello\n\n- one\n- two\n"
+        path = kb_root / "doc.md"
+        path.write_text(markdown, encoding="utf-8")
+        doc = self._persist(db_session, project, file_path=str(path))
+
+        resp = router_client.get(f"/api/v1/kb-documents/{doc.id}/content")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["document_id"] == str(doc.id)
+        assert body["file_path"] == str(path)
+        assert body["content"] == markdown
+        assert body["size_bytes"] == len(markdown.encode("utf-8"))
+
+    def test_content_404_when_doc_missing(self, router_client, kb_root):
+        resp = router_client.get(f"/api/v1/kb-documents/{uuid.uuid4()}/content")
+        assert resp.status_code == 404
+
+    def test_content_404_when_file_missing_on_disk(self, router_client, db_session, project, kb_root):
+        doc = self._persist(db_session, project, file_path=str(kb_root / "missing.md"))
+        resp = router_client.get(f"/api/v1/kb-documents/{doc.id}/content")
+        assert resp.status_code == 404
+
+    def test_content_403_for_credentials_path(self, router_client, db_session, project, kb_root):
+        secret = kb_root / "credentials" / "secret.md"
+        secret.write_text("API_KEY=should-never-be-returned", encoding="utf-8")
+        doc = self._persist(db_session, project, file_path=str(secret), doc_category="credentials")
+
+        resp = router_client.get(f"/api/v1/kb-documents/{doc.id}/content")
+        assert resp.status_code == 403
+        # Body must NOT echo the secret content.
+        assert "should-never-be-returned" not in resp.text
+
+    def test_content_422_for_path_outside_kb(self, router_client, db_session, project, kb_root, tmp_path):
+        # File exists but resolves outside the KB root.
+        outside = tmp_path / "outside.md"
+        outside.write_text("escape", encoding="utf-8")
+        doc = self._persist(db_session, project, file_path=str(outside))
+
+        resp = router_client.get(f"/api/v1/kb-documents/{doc.id}/content")
+        assert resp.status_code == 422
+
+    def test_content_422_for_symlink_escape(self, router_client, db_session, project, kb_root, tmp_path):
+        """A symlink inside the KB pointing outside must not bypass the check."""
+        target = tmp_path / "outside.md"
+        target.write_text("escape via symlink", encoding="utf-8")
+        link = kb_root / "link.md"
+        link.symlink_to(target)
+        doc = self._persist(db_session, project, file_path=str(link))
+
+        resp = router_client.get(f"/api/v1/kb-documents/{doc.id}/content")
+        assert resp.status_code == 422
+
+    def test_content_422_for_binary_file(self, router_client, db_session, project, kb_root):
+        path = kb_root / "image.png"
+        path.write_bytes(b"\x89PNG\r\n\x1a\n\x00\x01\x02\xff\xfe")  # valid PNG header — not UTF-8
+        doc = self._persist(db_session, project, file_path=str(path))
+
+        resp = router_client.get(f"/api/v1/kb-documents/{doc.id}/content")
+        assert resp.status_code == 422
+
+    def test_content_422_for_oversized_file(self, router_client, db_session, project, kb_root, monkeypatch):
+        from backend.config.settings import settings
+
+        monkeypatch.setattr(settings, "kb_content_max_bytes", 100)
+        path = kb_root / "big.md"
+        path.write_text("x" * 200, encoding="utf-8")
+        doc = self._persist(db_session, project, file_path=str(path))
+
+        resp = router_client.get(f"/api/v1/kb-documents/{doc.id}/content")
+        assert resp.status_code == 422

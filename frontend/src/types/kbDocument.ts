@@ -22,6 +22,14 @@ export interface KbDocumentCategoryWithCount {
   count: number;
 }
 
+/** On-disk content of a KB document — ``GET /kb-documents/{id}/content``. */
+export interface KbDocumentContent {
+  document_id: string;
+  file_path: string;
+  content: string;
+  size_bytes: number;
+}
+
 /** Payload for creating a new knowledge-base document. */
 export interface KbDocumentCreate {
   /** ``null`` denotes an ICC-wide document. */

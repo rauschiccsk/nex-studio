@@ -73,19 +73,27 @@ Design notes (per DESIGN.md §1.10 KbDocument, §1.4 Knowledge Base
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Optional
 from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from backend.config.settings import settings
 from backend.constants.kb_categories import KB_CATEGORIES
 from backend.db.models.kb import KbDocument
 from backend.schemas.kb_document import (
     KbDocumentCategory,
+    KbDocumentContent,
     KbDocumentCreate,
     KbDocumentUpdate,
 )
+
+# Subdirectory under the KB root whose files must NEVER be returned
+# via the content endpoint. Per CLAUDE.md §13: any read of a file
+# under ``credentials/`` is a P0 incident.
+_KB_CREDENTIALS_DIR_NAME = "credentials"
 
 
 def list_kb_documents(
@@ -214,6 +222,78 @@ def list_categories_with_counts(
         stmt = stmt.where(KbDocument.project_id == project_id)
     counts: dict[str, int] = {row[0]: int(row[1]) for row in db.execute(stmt).all()}
     return [(cat, counts.get(cat, 0)) for cat in KB_CATEGORIES]
+
+
+def read_kb_document_content(
+    db: Session,
+    document_id: UUID,
+) -> KbDocumentContent:
+    """Return the on-disk content of a KB document as a UTF-8 string.
+
+    Security checks (CLAUDE.md §13 + path-traversal hardening):
+
+    1. The document row must exist (else ``ValueError("not found")``).
+    2. The on-disk path is resolved (``Path.resolve()`` follows
+       symlinks) and must lie under
+       ``settings.knowledge_base_path`` after resolution. A symlink
+       pointing outside the KB therefore fails this check.
+    3. The resolved path must NOT lie under ``{kb_root}/credentials/``.
+       Reading credentials files is a P0 incident regardless of how
+       the row was created.
+    4. The file must exist on disk.
+    5. The file must not exceed ``settings.kb_content_max_bytes``.
+    6. The file must decode as UTF-8 — binary blobs are rejected.
+
+    Exceptions are intentionally semantic so the router can map them
+    to the right HTTP status:
+
+    * :class:`ValueError` (``"... not found"``) — document row missing
+      → 404.
+    * :class:`PermissionError` — credentials path → 403.
+    * :class:`FileNotFoundError` — file missing on disk → 404.
+    * :class:`ValueError` (other) — path outside KB / binary / over
+      size limit → 422.
+    """
+    document = get_by_id(db, document_id)
+
+    kb_root = Path(settings.knowledge_base_path).resolve()
+    requested = Path(document.file_path).resolve()
+
+    try:
+        requested.relative_to(kb_root)
+    except ValueError as exc:
+        raise ValueError(f"file_path resolves outside the knowledge base: {document.file_path}") from exc
+
+    credentials_root = kb_root / _KB_CREDENTIALS_DIR_NAME
+    try:
+        requested.relative_to(credentials_root)
+    except ValueError:
+        # Not under credentials/ — allowed.
+        pass
+    else:
+        raise PermissionError(f"credentials access forbidden for document {document_id}")
+
+    if not requested.is_file():
+        raise FileNotFoundError(f"file not found on disk: {document.file_path}")
+
+    size_bytes = requested.stat().st_size
+    if size_bytes > settings.kb_content_max_bytes:
+        raise ValueError(
+            f"file too large: {size_bytes} bytes exceeds kb_content_max_bytes ({settings.kb_content_max_bytes})"
+        )
+
+    raw = requested.read_bytes()
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"file is not valid UTF-8 (likely binary): {document.file_path}") from exc
+
+    return KbDocumentContent(
+        document_id=document.id,
+        file_path=document.file_path,
+        content=text,
+        size_bytes=size_bytes,
+    )
 
 
 def get_by_id(db: Session, document_id: UUID) -> KbDocument:

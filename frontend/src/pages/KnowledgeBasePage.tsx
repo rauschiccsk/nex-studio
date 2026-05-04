@@ -1,13 +1,17 @@
 import { useEffect, useState, useCallback } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   listKbDocuments,
   listKbCategories,
   createKbDocument,
   updateKbDocument,
   deleteKbDocument,
+  getKbDocumentContent,
 } from "@/services/api/kbDocuments";
 import { listProjectsApi } from "@/services/api/projects";
 import { kbCategoryColor } from "@/config/kbCategoryColors";
+import { ApiError } from "@/services/api";
 import type {
   KbDocumentRead,
   KbDocumentCategory,
@@ -41,6 +45,12 @@ export default function KnowledgeBasePage() {
   // Selected doc
   const [selected, setSelected] = useState<KbDocumentRead | null>(null);
   const [mode, setMode] = useState<KbMode>("view");
+
+  // Content of the selected doc — loaded on demand from
+  // ``GET /kb-documents/{id}/content``. ``null`` until first fetch.
+  const [content, setContent] = useState<string | null>(null);
+  const [contentLoading, setContentLoading] = useState(false);
+  const [contentError, setContentError] = useState<string | null>(null);
 
   // Edit state
   const [editTitle, setEditTitle] = useState("");
@@ -101,6 +111,36 @@ export default function KnowledgeBasePage() {
   useEffect(() => {
     loadCategories();
   }, [loadCategories]);
+
+  // Load on-disk content whenever the selected doc changes (in view mode).
+  useEffect(() => {
+    if (!selected || mode !== "view") {
+      setContent(null);
+      setContentError(null);
+      return;
+    }
+    setContentLoading(true);
+    setContentError(null);
+    setContent(null);
+    getKbDocumentContent(selected.id)
+      .then((res) => setContent(res.content))
+      .catch((err) => {
+        if (err instanceof ApiError) {
+          if (err.status === 403) {
+            setContentError("🔒 Tento dokument obsahuje citlivé dáta a jeho obsah nemožno zobraziť.");
+          } else if (err.status === 404) {
+            setContentError("Súbor neexistuje na disku — možno bol presunutý alebo vymazaný.");
+          } else if (err.status === 422) {
+            setContentError("Obsah nemožno zobraziť (binárny súbor, mimo KB, alebo prekročený limit 5 MB).");
+          } else {
+            setContentError(`Načítanie zlyhalo (HTTP ${err.status}).`);
+          }
+        } else {
+          setContentError("Načítanie zlyhalo — skontroluj sieť alebo backend.");
+        }
+      })
+      .finally(() => setContentLoading(false));
+  }, [selected, mode]);
 
   const filteredDocs = search.trim()
     ? docs.filter((d) =>
@@ -475,6 +515,24 @@ export default function KnowledgeBasePage() {
                             <div className="text-xs text-slate-500 mb-0.5">Indexované</div>
                             <div className="text-xs text-green-400">{new Date(selected.indexed_at).toLocaleString("sk-SK")}</div>
                           </div>
+                        )}
+                      </div>
+
+                      {/* Markdown content — GET /kb-documents/{id}/content */}
+                      <div className="rounded-xl border border-slate-800 bg-slate-900 p-5">
+                        <div className="text-xs text-slate-500 uppercase tracking-widest mb-3">Obsah</div>
+                        {contentLoading && (
+                          <div className="text-sm text-slate-500">Načítavam obsah…</div>
+                        )}
+                        {contentError && (
+                          <div className="text-sm text-amber-400">{contentError}</div>
+                        )}
+                        {!contentLoading && !contentError && content !== null && (
+                          <article className="prose prose-invert prose-sm max-w-none">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                              {content}
+                            </ReactMarkdown>
+                          </article>
                         )}
                       </div>
                     </div>
