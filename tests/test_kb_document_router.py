@@ -581,3 +581,69 @@ class TestKbDocumentRouter:
         db_session.expire_all()
         assert db_session.get(KbDocument, uuid.UUID(target["id"])) is None
         assert db_session.get(KbDocument, uuid.UUID(sibling["id"])) is not None
+
+
+class TestKbCategoriesEndpoint:
+    """Tests for ``GET /api/v1/kb-documents/categories``.
+
+    The endpoint returns every category from
+    :data:`backend.constants.kb_categories.KB_CATEGORIES` together with
+    its current document count, optionally filtered by ``project_id``.
+    Categories with zero matching documents are included with count=0
+    so the frontend sidebar renders deterministically.
+    """
+
+    def test_categories_returns_full_list_with_zero_counts_when_empty(self, router_client):
+        from backend.constants.kb_categories import KB_CATEGORIES
+
+        resp = router_client.get("/api/v1/kb-documents/categories")
+        assert resp.status_code == 200
+        body = resp.json()
+        codes = [item["code"] for item in body]
+        assert codes == list(KB_CATEGORIES)
+        assert all(item["count"] == 0 for item in body)
+
+    def test_categories_counts_reflect_documents(self, router_client, project):
+        # Create 2 'standards' and 1 'lessons' for this project.
+        router_client.post("/api/v1/kb-documents", json=_payload(project.id, doc_category="standards"))
+        router_client.post("/api/v1/kb-documents", json=_payload(project.id, doc_category="standards"))
+        router_client.post("/api/v1/kb-documents", json=_payload(project.id, doc_category="lessons"))
+
+        resp = router_client.get("/api/v1/kb-documents/categories")
+        assert resp.status_code == 200
+        counts = {item["code"]: item["count"] for item in resp.json()}
+        assert counts["standards"] == 2
+        assert counts["lessons"] == 1
+        assert counts["decisions"] == 0  # other categories remain at 0
+
+    def test_categories_filtered_by_project_id(self, router_client, db_session):
+        project_a = _make_project(db_session)
+        project_b = _make_project(db_session)
+        router_client.post("/api/v1/kb-documents", json=_payload(project_a.id, doc_category="design"))
+        router_client.post("/api/v1/kb-documents", json=_payload(project_b.id, doc_category="design"))
+        router_client.post("/api/v1/kb-documents", json=_payload(project_b.id, doc_category="design"))
+
+        resp_a = router_client.get(f"/api/v1/kb-documents/categories?project_id={project_a.id}")
+        resp_b = router_client.get(f"/api/v1/kb-documents/categories?project_id={project_b.id}")
+
+        counts_a = {item["code"]: item["count"] for item in resp_a.json()}
+        counts_b = {item["code"]: item["count"] for item in resp_b.json()}
+        assert counts_a["design"] == 1
+        assert counts_b["design"] == 2
+
+    def test_categories_includes_icc_wide_when_no_project_filter(self, router_client):
+        # ICC-wide document (project_id=None).
+        router_client.post("/api/v1/kb-documents", json=_payload(None, doc_category="icc"))
+
+        resp = router_client.get("/api/v1/kb-documents/categories")
+        counts = {item["code"]: item["count"] for item in resp.json()}
+        assert counts["icc"] == 1
+
+    def test_categories_route_does_not_collide_with_document_id(self, router_client):
+        """The literal ``/categories`` path must take precedence over the
+        ``/{document_id}`` UUID-typed path.
+        """
+        resp = router_client.get("/api/v1/kb-documents/categories")
+        # If FastAPI matched ``/{document_id}`` first, the response would
+        # be 422 (invalid UUID); the categories endpoint returns 200.
+        assert resp.status_code == 200

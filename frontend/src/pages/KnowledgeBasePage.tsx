@@ -1,39 +1,23 @@
 import { useEffect, useState, useCallback } from "react";
 import {
   listKbDocuments,
+  listKbCategories,
   createKbDocument,
   updateKbDocument,
   deleteKbDocument,
 } from "@/services/api/kbDocuments";
 import { listProjectsApi } from "@/services/api/projects";
-import type { KbDocumentRead, KbDocumentCategory } from "@/types/kbDocument";
+import { kbCategoryColor } from "@/config/kbCategoryColors";
+import type {
+  KbDocumentRead,
+  KbDocumentCategory,
+  KbDocumentCategoryWithCount,
+} from "@/types/kbDocument";
 import type { ProjectRead } from "@/types";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const CATEGORIES: { value: KbDocumentCategory | "all"; label: string }[] = [
-  { value: "all", label: "Všetky" },
-  { value: "standards", label: "standards" },
-  { value: "decisions", label: "decisions" },
-  { value: "lessons", label: "lessons" },
-  { value: "patterns", label: "patterns" },
-  { value: "design", label: "design" },
-  { value: "behavior", label: "behavior" },
-  { value: "session", label: "session" },
-];
-
-function catColor(cat: KbDocumentCategory): string {
-  switch (cat) {
-    case "standards": return "bg-indigo-500/20 border-indigo-500/30 text-indigo-400";
-    case "decisions": return "bg-purple-500/20 border-purple-500/30 text-purple-400";
-    case "lessons": return "bg-amber-500/20 border-amber-500/30 text-amber-400";
-    case "patterns": return "bg-cyan-500/20 border-cyan-500/30 text-cyan-400";
-    case "design": return "bg-green-500/20 border-green-500/25 text-green-400";
-    case "behavior": return "bg-rose-500/20 border-rose-500/30 text-rose-400";
-    case "session": return "bg-slate-700/60 border-slate-600 text-slate-400";
-    default: return "bg-slate-700/60 border-slate-600 text-slate-400";
-  }
-}
+const ALL_CATEGORIES_LABEL = "Všetky";
 
 type KbMode = "view" | "edit" | "create";
 type KbTab = "documents" | "quality";
@@ -49,6 +33,7 @@ export default function KnowledgeBasePage() {
 
   // Data
   const [docs, setDocs] = useState<KbDocumentRead[]>([]);
+  const [categories, setCategories] = useState<KbDocumentCategoryWithCount[]>([]);
   const [loading, setLoading] = useState(false);
   const [projects, setProjects] = useState<ProjectRead[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
@@ -64,7 +49,7 @@ export default function KnowledgeBasePage() {
 
   // Create state
   const [createTitle, setCreateTitle] = useState("");
-  const [createCat, setCreateCat] = useState<KbDocumentCategory>("design");
+  const [createCat, setCreateCat] = useState<KbDocumentCategory>("");
   const [createPath, setCreatePath] = useState("");
   const [createContent, setCreateContent] = useState("");
   const [createError, setCreateError] = useState("");
@@ -89,6 +74,20 @@ export default function KnowledgeBasePage() {
       .finally(() => setLoading(false));
   }, [scope, selectedProjectId, selectedCat]);
 
+  const loadCategories = useCallback(() => {
+    const params: Parameters<typeof listKbCategories>[0] = {};
+    if (scope === "global") {
+      params.project_id = null;
+    } else if (selectedProjectId) {
+      params.project_id = selectedProjectId;
+    } else {
+      // project scope without a selected project — no rows match
+      setCategories([]);
+      return;
+    }
+    listKbCategories(params).then(setCategories);
+  }, [scope, selectedProjectId]);
+
   useEffect(() => {
     listProjectsApi({ limit: 100 }).then((res) => setProjects(res.items));
   }, []);
@@ -98,6 +97,10 @@ export default function KnowledgeBasePage() {
     setSelected(null);
     setMode("view");
   }, [loadDocs]);
+
+  useEffect(() => {
+    loadCategories();
+  }, [loadCategories]);
 
   const filteredDocs = search.trim()
     ? docs.filter((d) =>
@@ -144,7 +147,8 @@ export default function KnowledgeBasePage() {
   function handleStartCreate() {
     setMode("create");
     setSelected(null);
-    setCreateTitle(""); setCreateCat("design"); setCreatePath(""); setCreateContent(""); setCreateError("");
+    const defaultCat = categories[0]?.code ?? "";
+    setCreateTitle(""); setCreateCat(defaultCat); setCreatePath(""); setCreateContent(""); setCreateError("");
   }
 
   async function handleSaveCreate() {
@@ -279,12 +283,16 @@ export default function KnowledgeBasePage() {
             {/* Categories */}
             <div className="flex-1 overflow-y-auto py-2 px-2 space-y-0.5">
               <div className="text-[10px] text-slate-600 uppercase tracking-widest font-semibold px-2 pb-1">Kategórie</div>
-              {CATEGORIES.map((c) => {
-                const count = c.value === "all" ? docs.length : docs.filter((d) => d.doc_category === c.value).length;
-                return (
+              {(() => {
+                const totalCount = categories.reduce((sum, c) => sum + c.count, 0);
+                const sidebarItems: { value: KbDocumentCategory | "all"; label: string; count: number }[] = [
+                  { value: "all", label: ALL_CATEGORIES_LABEL, count: totalCount },
+                  ...categories.map((c) => ({ value: c.code, label: c.code, count: c.count })),
+                ];
+                return sidebarItems.map((c) => (
                   <button
                     key={c.value}
-                    onClick={() => setSelectedCat(c.value as KbDocumentCategory | "all")}
+                    onClick={() => setSelectedCat(c.value)}
                     className={`w-full text-left px-2 py-1.5 rounded-lg text-xs flex items-center justify-between transition-colors ${
                       selectedCat === c.value
                         ? "bg-primary-600/20 text-primary-400"
@@ -292,10 +300,10 @@ export default function KnowledgeBasePage() {
                     }`}
                   >
                     <span>{c.label}</span>
-                    <span className="font-mono text-[10px] text-slate-600">{count}</span>
+                    <span className="font-mono text-[10px] text-slate-600">{c.count}</span>
                   </button>
-                );
-              })}
+                ));
+              })()}
             </div>
 
             {/* Actions */}
@@ -346,7 +354,7 @@ export default function KnowledgeBasePage() {
                 >
                   <div className="text-xs font-medium text-slate-200 truncate">{doc.title}</div>
                   <div className="flex items-center gap-1.5 mt-0.5">
-                    <span className={`text-[9px] font-mono px-1 py-0.5 rounded border ${catColor(doc.doc_category)}`}>
+                    <span className={`text-[9px] font-mono px-1 py-0.5 rounded border ${kbCategoryColor(doc.doc_category)}`}>
                       {doc.doc_category}
                     </span>
                     {doc.qdrant_point_id && (
@@ -373,7 +381,7 @@ export default function KnowledgeBasePage() {
                   </span>
                   {selected && (
                     <div className="flex items-center gap-1">
-                      <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border ${catColor(selected.doc_category)}`}>
+                      <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border ${kbCategoryColor(selected.doc_category)}`}>
                         {selected.doc_category}
                       </span>
                       <button
@@ -447,7 +455,7 @@ export default function KnowledgeBasePage() {
                         <div className="grid grid-cols-2 gap-3">
                           <div>
                             <div className="text-xs text-slate-500 mb-0.5">Kategória</div>
-                            <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${catColor(selected.doc_category)}`}>
+                            <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${kbCategoryColor(selected.doc_category)}`}>
                               {selected.doc_category}
                             </span>
                           </div>
@@ -584,11 +592,11 @@ export default function KnowledgeBasePage() {
                       <label className="block text-xs font-medium text-slate-400 mb-1">Kategória</label>
                       <select
                         value={createCat}
-                        onChange={(e) => setCreateCat(e.target.value as KbDocumentCategory)}
+                        onChange={(e) => setCreateCat(e.target.value)}
                         className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-primary-500 transition-colors"
                       >
-                        {(["design","behavior","standards","decisions","lessons","patterns","session"] as KbDocumentCategory[]).map((c) => (
-                          <option key={c} value={c}>{c}</option>
+                        {categories.map((c) => (
+                          <option key={c.code} value={c.code}>{c.code}</option>
                         ))}
                       </select>
                     </div>

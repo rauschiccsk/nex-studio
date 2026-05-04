@@ -6,18 +6,21 @@
  */
 
 /**
- * Mirrors ``doc_category IN
- *   ('standards','decisions','lessons','patterns','design','behavior','session')``
- * on the ``kb_documents`` table.
+ * KB document category code.
+ *
+ * The backend (``backend/constants/kb_categories.py``) is the single
+ * source of truth for the allowed category set; the frontend treats it
+ * as an open string to avoid drift (Clean Code §2 DRY). Components
+ * fetch the live list via ``GET /api/v1/kb-documents/categories`` and
+ * render whatever the backend currently allows.
  */
-export type KbDocumentCategory =
-  | "standards"
-  | "decisions"
-  | "lessons"
-  | "patterns"
-  | "design"
-  | "behavior"
-  | "session";
+export type KbDocumentCategory = string;
+
+/** Single category entry returned by ``GET /kb-documents/categories``. */
+export interface KbDocumentCategoryWithCount {
+  code: KbDocumentCategory;
+  count: number;
+}
 
 /** Payload for creating a new knowledge-base document. */
 export interface KbDocumentCreate {

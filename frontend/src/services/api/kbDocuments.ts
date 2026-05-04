@@ -5,6 +5,7 @@ import type {
   KbDocumentUpdate,
   KbDocumentRead,
   KbDocumentCategory,
+  KbDocumentCategoryWithCount,
 } from "../../types/kbDocument";
 
 export interface ListKbDocumentsParams {
@@ -19,6 +20,18 @@ export function listKbDocuments(
   params: ListKbDocumentsParams = {},
 ): Promise<PaginatedResponse<KbDocumentRead>> {
   return api.get<PaginatedResponse<KbDocumentRead>>("/kb-documents", {
+    params: params as Record<string, string | number | boolean | null | undefined>,
+  });
+}
+
+export interface ListKbCategoriesParams {
+  project_id?: string | null;
+}
+
+export function listKbCategories(
+  params: ListKbCategoriesParams = {},
+): Promise<KbDocumentCategoryWithCount[]> {
+  return api.get<KbDocumentCategoryWithCount[]>("/kb-documents/categories", {
     params: params as Record<string, string | number | boolean | null | undefined>,
   });
 }

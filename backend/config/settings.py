@@ -64,6 +64,20 @@ class Settings(BaseSettings):
 
     app_version: str = "0.1.0"
 
+    # Frontend Vite build version — written to ``.env`` by the
+    # ``.githooks/post-commit`` hook so the sidebar footer reflects each
+    # commit. Consumed by Vite at frontend build time, not by the
+    # backend. Declared here so pydantic's strict ``extra='forbid'``
+    # default tolerates the ``.env`` entry without downgrading to
+    # ``extra='ignore'`` — same pattern as ``claude_code_oauth_token``.
+    vite_app_version: str = Field(
+        default="0.1.0",
+        description=(
+            "Frontend Vite build version stamped into .env by the "
+            "post-commit hook. Not consumed by the backend directly."
+        ),
+    )
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

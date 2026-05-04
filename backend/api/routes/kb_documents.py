@@ -82,6 +82,7 @@ from sqlalchemy.orm import Session
 from backend.db.session import get_db
 from backend.schemas.kb_document import (
     KbDocumentCategory,
+    KbDocumentCategoryWithCount,
     KbDocumentCreate,
     KbDocumentRead,
     KbDocumentUpdate,
@@ -183,6 +184,30 @@ def list_kb_documents(
         skip=skip,
         limit=limit,
     )
+
+
+@router.get("/categories", response_model=list[KbDocumentCategoryWithCount])
+def list_kb_categories(
+    project_id: Optional[UUID] = Query(
+        default=None,
+        description=(
+            "Optional scope filter — when supplied, counts only documents "
+            "that belong to that project. Omit for an account-wide count "
+            "across every project (including ICC-wide documents)."
+        ),
+    ),
+    db: Session = Depends(get_db),
+) -> list[KbDocumentCategoryWithCount]:
+    """Return every allowed category with its current document count.
+
+    The frontend ``KnowledgeBasePage`` sidebar consumes this endpoint as
+    its single source of truth for the category list — there is no
+    hardcoded category list on the frontend (Clean Code §2 DRY).
+    Categories with zero matching documents are included (count=0) so
+    the sidebar renders deterministically.
+    """
+    rows = kb_document_service.list_categories_with_counts(db, project_id=project_id)
+    return [KbDocumentCategoryWithCount(code=code, count=count) for code, count in rows]
 
 
 @router.get("/{document_id}", response_model=KbDocumentRead)

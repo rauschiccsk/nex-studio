@@ -79,6 +79,7 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from backend.constants.kb_categories import KB_CATEGORIES
 from backend.db.models.kb import KbDocument
 from backend.schemas.kb_document import (
     KbDocumentCategory,
@@ -182,6 +183,37 @@ def count_kb_documents(
     if qdrant_point_id is not None:
         stmt = stmt.where(KbDocument.qdrant_point_id == qdrant_point_id)
     return int(db.execute(stmt).scalar_one())
+
+
+def list_categories_with_counts(
+    db: Session,
+    *,
+    project_id: Optional[UUID] = None,
+) -> list[tuple[str, int]]:
+    """Return every allowed category and the count of documents in it.
+
+    Categories with zero matching documents are included (count=0), so
+    the frontend can render the full sidebar deterministically without
+    needing to know the master list itself.
+
+    Args:
+        db: Active SQLAlchemy session.
+        project_id: Optional scope filter — when supplied, counts only
+            documents that belong to that project. ``None`` (the
+            default) counts every row regardless of project, including
+            ICC-wide documents (``project_id IS NULL``).
+
+    Returns:
+        List of ``(category_code, count)`` tuples in the order defined
+        by :data:`backend.constants.kb_categories.KB_CATEGORIES`.
+    """
+    stmt = select(KbDocument.doc_category, func.count()).group_by(
+        KbDocument.doc_category,
+    )
+    if project_id is not None:
+        stmt = stmt.where(KbDocument.project_id == project_id)
+    counts: dict[str, int] = {row[0]: int(row[1]) for row in db.execute(stmt).all()}
+    return [(cat, counts.get(cat, 0)) for cat in KB_CATEGORIES]
 
 
 def get_by_id(db: Session, document_id: UUID) -> KbDocument:

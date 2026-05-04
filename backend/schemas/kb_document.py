@@ -28,33 +28,14 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# Mirrors the CHECK constraint on the ``kb_documents`` table.
-# Original 7 categories (NEX Studio pipeline artefacts) + filesystem-
-# derived categories added in migration 037 for the kb_sync seed.
-KbDocumentCategory = Literal[
-    # Original — NEX Studio pipeline / ICC-wide reference docs
-    "standards",
-    "decisions",
-    "lessons",
-    "patterns",
-    "design",
-    "behavior",
-    "session",
-    # Added 037 — filesystem-derived categories
-    "icc",
-    "infrastructure",
-    "customers",
-    "shuhari",
-    "templates",
-    "service-manuals",
-    "deployment",
-    "quarantine",
-    "credentials",
-    "project-status",
-    "project-history",
-    "project-architect",
-    "project-other",
-]
+from backend.constants.kb_categories import KB_CATEGORIES
+
+# Pydantic ``Literal`` of allowed ``doc_category`` values, derived from
+# the single-source-of-truth tuple in
+# :mod:`backend.constants.kb_categories`. Mirrors the
+# ``ck_kb_documents_doc_category`` CHECK constraint, which is generated
+# from the same tuple in :mod:`backend.db.models.kb`.
+KbDocumentCategory = Literal[*KB_CATEGORIES]
 
 
 class KbDocumentCreate(BaseModel):
@@ -188,3 +169,24 @@ class KbDocumentRead(BaseModel):
     indexed_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
+
+
+class KbDocumentCategoryWithCount(BaseModel):
+    """Single category entry with the count of documents in that category.
+
+    Returned by ``GET /api/v1/kb-documents/categories``. ``code`` is one
+    of the values from
+    :data:`backend.constants.kb_categories.KB_CATEGORIES`. ``count`` is
+    the number of ``kb_documents`` rows currently in that category,
+    optionally filtered by ``project_id``.
+    """
+
+    code: KbDocumentCategory = Field(
+        ...,
+        description="Category code — one of the values from KB_CATEGORIES.",
+    )
+    count: int = Field(
+        ...,
+        ge=0,
+        description="Number of kb_documents rows in this category.",
+    )

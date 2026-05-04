@@ -11,7 +11,14 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import UUID
 
+from backend.constants.kb_categories import KB_CATEGORIES
 from backend.db.models.base import Base, TimestampMixin, UUIDMixin
+
+# CHECK-constraint expression generated from the single-source-of-truth
+# tuple in :mod:`backend.constants.kb_categories`. Adding a category is
+# a one-line edit there plus an Alembic migration that ALTERs the
+# constraint to match.
+_DOC_CATEGORY_IN_LIST = ",".join(f"'{cat}'" for cat in KB_CATEGORIES)
 
 
 class KbDocument(Base, UUIDMixin, TimestampMixin):
@@ -40,12 +47,7 @@ class KbDocument(Base, UUIDMixin, TimestampMixin):
 
     __table_args__ = (
         CheckConstraint(
-            "doc_category IN ("
-            "'standards','decisions','lessons','patterns','design','behavior','session',"
-            "'icc','infrastructure','customers','shuhari','templates','service-manuals',"
-            "'deployment','quarantine','credentials','project-status','project-history',"
-            "'project-architect','project-other'"
-            ")",
+            f"doc_category IN ({_DOC_CATEGORY_IN_LIST})",
             name="ck_kb_documents_doc_category",
         ),
         Index("ix_kb_documents_doc_category", "doc_category"),
