@@ -266,7 +266,9 @@ KB je zdieľaná ICC-wide (používajú ju všetky ICC projekty, nielen NEX Stud
 ├── infrastructure/   # ANDROS, Docker, porty, siete
 ├── projects/         # Projektová dokumentácia (nex-studio.md, nex-command.md, ...)
 ├── customers/        # Zákaznícke informácie
-├── credentials/      # RESTRICTED — NEVER čítať (viď §13)
+├── credentials/      # legacy umiestnenie — od 2026-05-04 sa nepoužíva,
+                      # credentials sú v /opt/data/nex-studio/credentials/.
+                      # Stále RESTRICTED — NEVER čítať (viď §13).
 ├── templates/        # Šablóny dokumentov
 └── sessions/         # Session kontexty (ICC-wide handoffy — §11)
 ```
@@ -349,9 +351,10 @@ Default pre generované aplikácie je rovnaký ako NEX Studio (React+TS+PWA fron
 - NIKDY do `VITE_*`: API kľúče, tokeny, session secrets, DB credentials.
 - Všetky secrets patria výhradne na backend (FastAPI) a komunikujú sa cez autentifikovaný request.
 
-### 7.3 Credentials v KB — odkaz na §13
-- `/home/icc/knowledge/credentials/` — **NEVER čítať** (viď §13, porušenie = P0 incident).
-- Autentifikácia do NEX Command API (`POST /api/auth/login`) — **zakázaná** (§13). CC nemá user account a nesmie nikoho impersonovať.
+### 7.3 Credentials store — odkaz na §13
+- `/opt/data/nex-studio/credentials/` — **NEVER čítať** (viď §13, porušenie = P0 incident). Od 2026-05-04 toto je kanonické umiestnenie credentials (mimo KB scope, mimo git, mimo Docker image, mimo RAG). Spravované cez `ri`-gated REST API `/api/v1/credentials` určené pre Zoltána cez UI.
+- `/home/icc/knowledge/credentials/` — legacy cesta pred migráciou 2026-05-04; mal by byť prázdny (rmdir-nutý). Stále **NEVER čítať** ak by sa znova vytvoril.
+- Autentifikácia do NEX Command API alebo NEX Studio API (`POST /api/auth/login`, `POST /api/v1/auth/login`) — **zakázaná** (§13). CC nemá user account a nesmie nikoho impersonovať. Endpointy `/api/v1/credentials/*` vyžadujú JWT s rolou `ri` — bez user accountu sa CC k nim nikdy nedostane.
 
 ### 7.4 Čo NEX Studio nemá (vs. NEX Command dedičstvo)
 - **Žiadne čítanie `/home/icc/.github-token`** — §13 zakazuje prístup ku credentials. Keď pridáme remote repo, GitHub token prichádza cez CI secret store alebo `gh auth login` mechanizmus, nie cez priame čítanie súboru.
@@ -427,7 +430,7 @@ Výsledok zhrň Zoltánovi ako **Session Briefing** — 5-10 riadkov o tom, kde 
 ### FORBIDDEN actions (absolute, no exceptions):
 1. **NEVER read credential files** — `.env`, `*.secret`, `*.key`, vault exports, alebo akýkoľvek súbor obsahujúci heslá/tokeny/API kľúče
 2. **NEVER authenticate to NEX Command API** — `POST /api/auth/login` alebo akýkoľvek auth endpoint. CC nemá user account a NESMIE impersonovať žiadneho používateľa
-3. **NEVER use `grep` or `cat` on files known to contain credentials** — špeciálne `/opt/projects/nex-studio/.env`, `/opt/projects/nex-studio/backend/.env`, `/opt/projects/nex-studio/frontend/.env.*` a akékoľvek KB credentials (`/home/icc/knowledge/credentials/`)
+3. **NEVER use `grep` or `cat` on files known to contain credentials** — špeciálne `/opt/projects/nex-studio/.env`, `/opt/projects/nex-studio/backend/.env`, `/opt/projects/nex-studio/frontend/.env.*`, `/opt/data/nex-studio/credentials/**` (NEX Studio credentials store od 2026-05-04 — `ri`-gated REST API `/api/v1/credentials` je jediný legitímny prístup, CC ho NEPOUŽÍVA), a `/home/icc/knowledge/credentials/` (legacy umiestnenie pred migráciou; po 2026-05-04 by mal byť prázdny)
 4. **NEVER extract passwords, tokens, or secrets from any source** — environment premenné, `docker inspect`, config súbory, logy
 
 ### Knowledge Base operations:

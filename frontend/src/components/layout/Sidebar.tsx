@@ -103,6 +103,12 @@ const IconSidebarToggle = () => (
   </svg>
 );
 
+const IconKey = () => (
+  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15 7a4 4 0 11-4 4m4-4a4 4 0 00-4-4m4 4l4 4m-8 0l-6 6v3h3l6-6m-3-3l3 3" />
+  </svg>
+);
+
 // ─── NavItem ─────────────────────────────────────────────────────────────────
 
 interface NavItemProps {
@@ -263,6 +269,7 @@ export default function Sidebar() {
           />
         ))}
         <NavItem icon={<IconBook />} label="Knowledge Base" path="/kb" collapsed={collapsed} active={isActive("/kb")} />
+        <NavItem icon={<IconKey />} label="Credentials" path="/credentials" collapsed={collapsed} active={isActive("/credentials")} />
 
         <SectionLabel label="Settings" collapsed={collapsed} />
         <NavItem icon={<IconSettings />} label="Settings" path="/settings" collapsed={collapsed} active={isActive("/settings")} />

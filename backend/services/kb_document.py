@@ -90,10 +90,13 @@ from backend.schemas.kb_document import (
     KbDocumentUpdate,
 )
 
-# Subdirectory under the KB root whose files must NEVER be returned
-# via the content endpoint. Per CLAUDE.md §13: any read of a file
-# under ``credentials/`` is a P0 incident.
-_KB_CREDENTIALS_DIR_NAME = "credentials"
+# 2026-05-04: credentials moved to their own ``credentials`` table +
+# filesystem store under ``settings.credentials_storage_path``. The
+# legacy block on ``{kb_root}/credentials/`` was removed because the
+# directory is empty post-migration AND kb_sync._SKIP_TOP_DIRS now
+# refuses to register anything under that path even if it reappears.
+# The path-traversal check below still protects against arbitrary
+# paths being persisted into ``kb_documents.file_path``.
 
 
 def list_kb_documents(
@@ -230,26 +233,22 @@ def read_kb_document_content(
 ) -> KbDocumentContent:
     """Return the on-disk content of a KB document as a UTF-8 string.
 
-    Security checks (CLAUDE.md §13 + path-traversal hardening):
+    Security checks (path-traversal hardening):
 
     1. The document row must exist (else ``ValueError("not found")``).
     2. The on-disk path is resolved (``Path.resolve()`` follows
        symlinks) and must lie under
        ``settings.knowledge_base_path`` after resolution. A symlink
        pointing outside the KB therefore fails this check.
-    3. The resolved path must NOT lie under ``{kb_root}/credentials/``.
-       Reading credentials files is a P0 incident regardless of how
-       the row was created.
-    4. The file must exist on disk.
-    5. The file must not exceed ``settings.kb_content_max_bytes``.
-    6. The file must decode as UTF-8 — binary blobs are rejected.
+    3. The file must exist on disk.
+    4. The file must not exceed ``settings.kb_content_max_bytes``.
+    5. The file must decode as UTF-8 — binary blobs are rejected.
 
     Exceptions are intentionally semantic so the router can map them
     to the right HTTP status:
 
     * :class:`ValueError` (``"... not found"``) — document row missing
       → 404.
-    * :class:`PermissionError` — credentials path → 403.
     * :class:`FileNotFoundError` — file missing on disk → 404.
     * :class:`ValueError` (other) — path outside KB / binary / over
       size limit → 422.
@@ -263,15 +262,6 @@ def read_kb_document_content(
         requested.relative_to(kb_root)
     except ValueError as exc:
         raise ValueError(f"file_path resolves outside the knowledge base: {document.file_path}") from exc
-
-    credentials_root = kb_root / _KB_CREDENTIALS_DIR_NAME
-    try:
-        requested.relative_to(credentials_root)
-    except ValueError:
-        # Not under credentials/ — allowed.
-        pass
-    else:
-        raise PermissionError(f"credentials access forbidden for document {document_id}")
 
     if not requested.is_file():
         raise FileNotFoundError(f"file not found on disk: {document.file_path}")

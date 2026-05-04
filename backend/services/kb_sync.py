@@ -84,6 +84,11 @@ _PROJECT_FIXED_CATEGORIES: dict[str, str] = {
 }
 
 # Top-level directory → default category when no fixed-name match.
+# Note: ``credentials/`` directory under KB_ROOT is intentionally NOT
+# mapped — credentials live outside the KB (``settings.credentials_storage_path``)
+# managed by a dedicated ``ri``-gated API. If the legacy directory
+# still exists on disk, kb_sync skips it via the SKIP_TOP_DIRS guard
+# in ``seed_from_filesystem``.
 _DIR_CATEGORY: dict[str, str] = {
     "icc": "icc",
     "infrastructure": "infrastructure",
@@ -93,8 +98,12 @@ _DIR_CATEGORY: dict[str, str] = {
     "service-manuals": "service-manuals",
     "deployment": "deployment",
     "quarantine": "quarantine",
-    "credentials": "credentials",
 }
+
+# Top-level KB directories that kb_sync MUST NOT register as kb_documents.
+# ``credentials/`` is intentionally excluded post-2026-05-04 design — it
+# is managed by the ``credentials`` table + ``ri``-gated API.
+_SKIP_TOP_DIRS: frozenset[str] = frozenset({"credentials"})
 
 # First-Markdown-heading regex (#H1 only, optionally with leading spaces).
 _HEADING_RE = re.compile(r"^\s*#\s+(.+?)\s*$")
@@ -144,13 +153,14 @@ def _categorise(rel_path: Path) -> tuple[str, Optional[str]]:
 def _extract_title(file_path: Path, *, read_content: bool) -> str:
     """Return the document title.
 
-    For files where ``read_content=False`` (credentials/) — title is
-    derived from the filename without extension. The file is never
-    opened. Per CLAUDE.md §13.
-
-    For everything else — open the file and look for the first ``#``
-    H1 heading. Falls back to filename-without-extension when no
+    Opens the file (when ``read_content=True``) and looks for the first
+    ``#`` H1 heading. Falls back to filename-without-extension when no
     heading is present (binary-only / empty / non-conformant markdown).
+
+    The ``read_content`` flag is preserved for callers that still want
+    a no-open fallback (currently only test code); kb_sync itself
+    always passes ``True`` since the credentials/ dir — the only
+    historical no-open case — is now skipped at the directory level.
     """
     fallback = file_path.stem
     if not read_content:
@@ -229,9 +239,14 @@ def seed_from_filesystem(db: Session, *, root: Path = KB_ROOT) -> SeedResult:
                 continue
 
             rel = path.relative_to(root)
+            # Skip top-level directories that are managed outside the KB
+            # (e.g. ``credentials/`` — own table + ri-gated API since
+            # 2026-05-04).
+            if rel.parts and rel.parts[0] in _SKIP_TOP_DIRS:
+                continue
+
             category, slug = _categorise(rel)
-            read_content = category != "credentials"
-            title = _extract_title(path, read_content=read_content)
+            title = _extract_title(path, read_content=True)
             project_id = _resolve_project_id(db, slug)
 
             row = KbDocument(

@@ -703,16 +703,6 @@ class TestKbDocumentContentEndpoint:
         resp = router_client.get(f"/api/v1/kb-documents/{doc.id}/content")
         assert resp.status_code == 404
 
-    def test_content_403_for_credentials_path(self, router_client, db_session, project, kb_root):
-        secret = kb_root / "credentials" / "secret.md"
-        secret.write_text("API_KEY=should-never-be-returned", encoding="utf-8")
-        doc = self._persist(db_session, project, file_path=str(secret), doc_category="credentials")
-
-        resp = router_client.get(f"/api/v1/kb-documents/{doc.id}/content")
-        assert resp.status_code == 403
-        # Body must NOT echo the secret content.
-        assert "should-never-be-returned" not in resp.text
-
     def test_content_422_for_path_outside_kb(self, router_client, db_session, project, kb_root, tmp_path):
         # File exists but resolves outside the KB root.
         outside = tmp_path / "outside.md"

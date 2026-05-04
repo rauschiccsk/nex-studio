@@ -44,6 +44,18 @@ class Settings(BaseSettings):
     # well below the threshold where rendering becomes painful.
     kb_content_max_bytes: int = 5 * 1024 * 1024
 
+    # Filesystem location for the credentials store. Deliberately OUTSIDE
+    # the KB root (``/home/icc/knowledge/``) so credentials cannot be
+    # picked up by any RAG indexer or kb_sync seed. Mounted as a Docker
+    # volume in production. Owner = process user, mode 0700. Backup is
+    # an infrastructure-layer concern (restic include path); not handled
+    # here.
+    credentials_storage_path: str = "/opt/data/nex-studio/credentials"
+
+    # Maximum size in bytes for any single credentials file (read or write).
+    # Same rationale as ``kb_content_max_bytes``.
+    credentials_content_max_bytes: int = 5 * 1024 * 1024
+
     # Admin URL of the mockup server (``mockup_server/app.py``) that
     # hosts each project's UI design at its own ``ui_design_port``.
     # After the backend persists a new ``UIDesign.html_preview`` it

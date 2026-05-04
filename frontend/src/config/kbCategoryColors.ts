@@ -34,7 +34,6 @@ export const KB_CATEGORY_COLORS: Record<string, string> = {
   "service-manuals": "bg-emerald-500/20 border-emerald-500/30 text-emerald-400",
   deployment: "bg-orange-500/20 border-orange-500/30 text-orange-400",
   quarantine: "bg-red-500/20 border-red-500/30 text-red-400",
-  credentials: "bg-pink-500/20 border-pink-500/30 text-pink-400",
   "project-status": "bg-lime-500/20 border-lime-500/30 text-lime-400",
   "project-history": "bg-yellow-500/20 border-yellow-500/30 text-yellow-400",
   "project-architect": "bg-cyan-600/20 border-cyan-600/30 text-cyan-300",

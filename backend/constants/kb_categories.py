@@ -30,7 +30,10 @@ KB_CATEGORIES: tuple[str, ...] = (
     "design",
     "behavior",
     "session",
-    # Added in migration 037 — filesystem-derived categories from kb_sync
+    # Added in migration 037 — filesystem-derived categories from kb_sync.
+    # ``credentials`` was removed in migration 039 — credentials live in
+    # their own ``credentials`` table + filesystem store and are NOT a
+    # KB category.
     "icc",
     "infrastructure",
     "customers",
@@ -39,7 +42,6 @@ KB_CATEGORIES: tuple[str, ...] = (
     "service-manuals",
     "deployment",
     "quarantine",
-    "credentials",
     "project-status",
     "project-history",
     "project-architect",

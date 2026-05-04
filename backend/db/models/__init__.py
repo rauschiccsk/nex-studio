@@ -3,6 +3,7 @@
 from backend.db.models.architect import ArchitectMessage, ArchitectSession
 from backend.db.models.base import Base, TimestampMixin, UUIDMixin
 from backend.db.models.bugs import Bug, BugFixTask
+from backend.db.models.credentials import Credential
 from backend.db.models.delegations import AutoFixAttempt, Delegation, ExecutionLog
 from backend.db.models.foundation import User, UserSession
 from backend.db.models.guardian import GuardianPrecedent, GuardianReview
@@ -32,6 +33,7 @@ __all__ = [
     "TimestampMixin",
     "Bug",
     "BugFixTask",
+    "Credential",
     "DesignDocument",
     "GuardianPrecedent",
     "GuardianReview",

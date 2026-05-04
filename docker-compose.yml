@@ -40,6 +40,11 @@ services:
       # POST /api/v1/projects. Required write access for mkdir + git init
       # + template file copy. Per icc/STRUCTURE.md.
       - /opt/projects:/opt/projects:rw
+      # rw — backend manages credentials files (CRUD) here. Per
+      # CLAUDE.md §13 + 2026-05-04 design: credentials live OUTSIDE
+      # /home/icc/knowledge/ so no RAG indexer / kb_sync can pick them
+      # up. ri-gated REST API at /api/v1/credentials is the only way in.
+      - /opt/data/nex-studio/credentials:/opt/data/nex-studio/credentials:rw
       - uploads:/app/uploads
     environment:
       DATABASE_URL: "postgresql+pg8000://nexstudio:nexstudio@db:5432/nexstudio"

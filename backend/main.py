@@ -14,6 +14,7 @@ from backend.api.routes.auth import router as auth_router
 from backend.api.routes.auto_fix_attempts import router as auto_fix_attempts_router
 from backend.api.routes.bug_fix_tasks import router as bug_fix_tasks_router
 from backend.api.routes.bugs import router as bugs_router
+from backend.api.routes.credentials import router as credentials_router
 from backend.api.routes.delegations import router as delegations_router
 from backend.api.routes.design_documents import router as design_documents_router
 from backend.api.routes.epics import router as epics_router
@@ -143,6 +144,7 @@ app.include_router(
 )
 app.include_router(design_documents_router, prefix="/api/v1/design-documents")
 app.include_router(kb_documents_router, prefix="/api/v1/kb-documents")
+app.include_router(credentials_router, prefix="/api/v1/credentials")
 app.include_router(architect_sessions_router, prefix="/api/v1/architect-sessions")
 # The architect router spans two URL families (/projects/{id}/architect and
 # /architect/sessions/{id}) — mount at bare /api/v1 like the versions router.

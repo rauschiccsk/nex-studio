@@ -231,10 +231,8 @@ def get_kb_document_content(
 ) -> KbDocumentContent:
     """Return the on-disk content of a KB document as a UTF-8 string.
 
-    Security (CLAUDE.md §13 + path-traversal hardening):
+    Security (path-traversal hardening):
 
-    * Files under ``{knowledge_base_path}/credentials/`` are **never**
-      returned — HTTP 403.
     * The resolved on-disk path (after ``Path.resolve()``) must lie
       under ``knowledge_base_path``; symlinks pointing outside fail
       with HTTP 422.
@@ -243,11 +241,13 @@ def get_kb_document_content(
     * Binary files (UTF-8 decode failure) are rejected with HTTP 422.
     * Missing files on disk return HTTP 404 (distinct from a missing
       ``kb_documents`` row, which also returns 404).
+
+    Credentials are NOT served by this endpoint — they live in their
+    own table + ``ri``-gated ``/api/v1/credentials`` API since
+    2026-05-04.
     """
     try:
         return kb_document_service.read_kb_document_content(db, document_id)
-    except PermissionError as exc:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except ValueError as exc:
