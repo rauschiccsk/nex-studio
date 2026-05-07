@@ -663,6 +663,21 @@ Slová "kontrola", "návrh", "pozri", "prečo", "check" = diagnóza + návrh, NI
 Ak Zoltán neschváli → pokračujeme v diskusii, NIE v implementácii.
 Toto pravidlo platí vždy — aj keď je fix jednoriadkový, aj keď je problém urgentný.
 
+## QUALITY-FIRST PRINCIPLE — INVIOLABLE
+
+**Nerobíme dočasné, minimálne riešenie. Robíme výhradne najlepšie a najkvalitnejšie, profesionálne riešenia pre dlhodobé hľadisko.**
+
+Pri každom návrhu / scope rozhodnutí / architectural choice:
+
+1. **Default odporúčanie = najkvalitnejšia, plná, dlhodobá verzia** — full feature parity, complete RBAC, production-grade architecture, žiadne shortcuts.
+2. Minimal / MVP / "stub" / "out of scope" = legitimné alternatívy, ktoré Zoltán môže vybrať, NIE default odporúčanie.
+3. "Stubbed for later milestone" je akceptovateľné LEN keď je ten ďalší milestone explicitne scoped a schválený — nie ako skrytý corner-cut.
+
+❌ **ZAKÁZANÉ:** "Odporúčam (B) MVP — pragmatický minimum"
+✅ **SPRÁVNE:** "Odporúčam (A) Full — kompletná parity, dlhodobo správne. (B) MVP a (C) maximum sú alternatívy ak chceš inú time/scope trade-off."
+
+**Prečo:** Zoltán flagol toto 2026-05-07 počas M2 RBAC scope diskusie ("Do budúcna vždy ponúkať najkvalitnejšie profesionálne riešenie."). Opakovaný cyklus "MVP najprv, dokončíme neskôr" produkuje technický dlh + rework. Priama cesta na long-term-correct riešenie vyhráva. Optimalizujeme TCO, nie session-length.
+
 ## KROK-ZA-KROKOM PROTOCOL — INVIOLABLE
 
 Ak má Zoltán v jednej správe **viac otázok / požiadaviek**, riešim ich **PO JEDNEJ**. Nikdy nie paralelne v jednej odpovedi.
