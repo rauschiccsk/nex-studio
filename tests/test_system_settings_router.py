@@ -56,6 +56,7 @@ def _mount_app(db_session: Any, current: User, *, ri_allowed: bool) -> FastAPI:
     app.dependency_overrides[get_db] = _override_get_db
     app.dependency_overrides[get_current_user] = _override_current_user
     app.dependency_overrides[require_ri_role] = _override_require_ri
+
     return app
 
 

@@ -33,6 +33,43 @@ def router_client(db_session):
         yield db_session
 
     app.dependency_overrides[get_db] = _override_get_db
+    # M2.D.2 RBAC overrides — see tests/conftest.py for context.
+    import uuid as _uuid_m2
+
+    import bcrypt as _bcrypt
+
+    from backend.core.security import (
+        get_current_user as _gcu_m2,
+    )
+    from backend.core.security import (
+        require_ha_or_above as _rha_m2,
+    )
+    from backend.core.security import (
+        require_ri_role as _rri_m2,
+    )
+    from backend.core.security import (
+        require_shu_or_above as _rshu_m2,
+    )
+    from backend.db.models.foundation import User as _UserM2
+
+    _suffix_m2 = _uuid_m2.uuid4().hex[:8]
+    _ri_m2 = _UserM2(
+        username=f"ri_m2_{_suffix_m2}",
+        email=f"ri_m2_{_suffix_m2}@test.local",
+        password_hash=_bcrypt.hashpw(b"test", _bcrypt.gensalt(rounds=4)).decode(),
+        role="ri",
+        is_active=True,
+    )
+    db_session.add(_ri_m2)
+    db_session.flush()
+
+    def _override_user_m2() -> _UserM2:
+        return _ri_m2
+
+    app.dependency_overrides[_gcu_m2] = _override_user_m2
+    app.dependency_overrides[_rri_m2] = _override_user_m2
+    app.dependency_overrides[_rha_m2] = _override_user_m2
+    app.dependency_overrides[_rshu_m2] = _override_user_m2
 
     with TestClient(app) as client:
         yield client

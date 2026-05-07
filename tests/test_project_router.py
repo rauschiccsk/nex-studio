@@ -402,6 +402,43 @@ class TestProjectRouter:
 
         app.dependency_overrides[get_db] = _override_get_db
         app.dependency_overrides[get_knowledge_base_writer] = _override_kb_writer
+        # M2.D.2 RBAC overrides for inline TestClient.
+        import uuid as _uuid_inline
+
+        import bcrypt as _bcrypt_inline
+
+        from backend.core.security import (
+            get_current_user as _gcu_inline,
+        )
+        from backend.core.security import (
+            require_ha_or_above as _rha_inline,
+        )
+        from backend.core.security import (
+            require_ri_role as _rri_inline,
+        )
+        from backend.core.security import (
+            require_shu_or_above as _rshu_inline,
+        )
+        from backend.db.models.foundation import User as _UserInline
+
+        _suffix_inline = _uuid_inline.uuid4().hex[:8]
+        _ri_inline = _UserInline(
+            username=f"ri_inline_{_suffix_inline}",
+            email=f"ri_inline_{_suffix_inline}@test.local",
+            password_hash=_bcrypt_inline.hashpw(b"test", _bcrypt_inline.gensalt(rounds=4)).decode(),
+            role="ri",
+            is_active=True,
+        )
+        db_session.add(_ri_inline)
+        db_session.flush()
+
+        def _override_user_inline() -> _UserInline:
+            return _ri_inline
+
+        app.dependency_overrides[_gcu_inline] = _override_user_inline
+        app.dependency_overrides[_rri_inline] = _override_user_inline
+        app.dependency_overrides[_rha_inline] = _override_user_inline
+        app.dependency_overrides[_rshu_inline] = _override_user_inline
 
         with TestClient(app) as client:
             resp = client.post(
@@ -445,6 +482,43 @@ class TestProjectRouter:
 
         app.dependency_overrides[get_db] = _override_get_db
         app.dependency_overrides[get_knowledge_base_writer] = _override_kb_writer
+        # M2.D.2 RBAC overrides for inline TestClient.
+        import uuid as _uuid_inline
+
+        import bcrypt as _bcrypt_inline
+
+        from backend.core.security import (
+            get_current_user as _gcu_inline,
+        )
+        from backend.core.security import (
+            require_ha_or_above as _rha_inline,
+        )
+        from backend.core.security import (
+            require_ri_role as _rri_inline,
+        )
+        from backend.core.security import (
+            require_shu_or_above as _rshu_inline,
+        )
+        from backend.db.models.foundation import User as _UserInline
+
+        _suffix_inline = _uuid_inline.uuid4().hex[:8]
+        _ri_inline = _UserInline(
+            username=f"ri_inline_{_suffix_inline}",
+            email=f"ri_inline_{_suffix_inline}@test.local",
+            password_hash=_bcrypt_inline.hashpw(b"test", _bcrypt_inline.gensalt(rounds=4)).decode(),
+            role="ri",
+            is_active=True,
+        )
+        db_session.add(_ri_inline)
+        db_session.flush()
+
+        def _override_user_inline() -> _UserInline:
+            return _ri_inline
+
+        app.dependency_overrides[_gcu_inline] = _override_user_inline
+        app.dependency_overrides[_rri_inline] = _override_user_inline
+        app.dependency_overrides[_rha_inline] = _override_user_inline
+        app.dependency_overrides[_rshu_inline] = _override_user_inline
 
         with TestClient(app) as client:
             payload = _payload(
@@ -503,6 +577,43 @@ class TestProjectRouter:
 
         app.dependency_overrides[get_db] = _override_get_db
         app.dependency_overrides[get_knowledge_base_writer] = _override_kb_writer
+        # M2.D.2 RBAC overrides for inline TestClient.
+        import uuid as _uuid_inline
+
+        import bcrypt as _bcrypt_inline
+
+        from backend.core.security import (
+            get_current_user as _gcu_inline,
+        )
+        from backend.core.security import (
+            require_ha_or_above as _rha_inline,
+        )
+        from backend.core.security import (
+            require_ri_role as _rri_inline,
+        )
+        from backend.core.security import (
+            require_shu_or_above as _rshu_inline,
+        )
+        from backend.db.models.foundation import User as _UserInline
+
+        _suffix_inline = _uuid_inline.uuid4().hex[:8]
+        _ri_inline = _UserInline(
+            username=f"ri_inline_{_suffix_inline}",
+            email=f"ri_inline_{_suffix_inline}@test.local",
+            password_hash=_bcrypt_inline.hashpw(b"test", _bcrypt_inline.gensalt(rounds=4)).decode(),
+            role="ri",
+            is_active=True,
+        )
+        db_session.add(_ri_inline)
+        db_session.flush()
+
+        def _override_user_inline() -> _UserInline:
+            return _ri_inline
+
+        app.dependency_overrides[_gcu_inline] = _override_user_inline
+        app.dependency_overrides[_rri_inline] = _override_user_inline
+        app.dependency_overrides[_rha_inline] = _override_user_inline
+        app.dependency_overrides[_rshu_inline] = _override_user_inline
 
         with TestClient(app) as client:
             payload = _payload(creator.id, slug="gh-fail", repo_url="rauschiccsk/gh-fail")
@@ -602,6 +713,43 @@ class TestProjectRouter:
 
         app.dependency_overrides[get_db] = _override_get_db
         app.dependency_overrides[get_knowledge_base_writer] = _override_kb_writer
+        # M2.D.2 RBAC overrides for inline TestClient.
+        import uuid as _uuid_inline
+
+        import bcrypt as _bcrypt_inline
+
+        from backend.core.security import (
+            get_current_user as _gcu_inline,
+        )
+        from backend.core.security import (
+            require_ha_or_above as _rha_inline,
+        )
+        from backend.core.security import (
+            require_ri_role as _rri_inline,
+        )
+        from backend.core.security import (
+            require_shu_or_above as _rshu_inline,
+        )
+        from backend.db.models.foundation import User as _UserInline
+
+        _suffix_inline = _uuid_inline.uuid4().hex[:8]
+        _ri_inline = _UserInline(
+            username=f"ri_inline_{_suffix_inline}",
+            email=f"ri_inline_{_suffix_inline}@test.local",
+            password_hash=_bcrypt_inline.hashpw(b"test", _bcrypt_inline.gensalt(rounds=4)).decode(),
+            role="ri",
+            is_active=True,
+        )
+        db_session.add(_ri_inline)
+        db_session.flush()
+
+        def _override_user_inline() -> _UserInline:
+            return _ri_inline
+
+        app.dependency_overrides[_gcu_inline] = _override_user_inline
+        app.dependency_overrides[_rri_inline] = _override_user_inline
+        app.dependency_overrides[_rha_inline] = _override_user_inline
+        app.dependency_overrides[_rshu_inline] = _override_user_inline
 
         with TestClient(app) as client:
             payload = _payload(creator.id, slug="gh-no-org", repo_url="nowhere/repo")

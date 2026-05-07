@@ -65,7 +65,9 @@ class TestAuthFlow:
         )
         assert me_resp.status_code == 200
 
-        # Step 3: create project
+        # Step 3: create project — POST /api/v1/projects requires
+        # require_ha_or_above (M2.D RBAC roll-out, 2026-05-07), so we
+        # pass the Bearer token obtained in Step 1.
         project_resp = integration_client.post(
             "/api/v1/projects",
             json={
@@ -75,6 +77,7 @@ class TestAuthFlow:
                 "description": "Created during auth integration test",
                 "created_by": user_id,
             },
+            headers={"Authorization": f"Bearer {token}"},
         )
         assert project_resp.status_code == 201
         project_data = project_resp.json()
