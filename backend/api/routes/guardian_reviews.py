@@ -81,6 +81,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
+from backend.core.security import require_ha_or_above
 from backend.db.session import get_db
 from backend.schemas.guardian import (
     GuardianReviewCreate,
@@ -92,7 +93,10 @@ from backend.schemas.guardian import (
 from backend.schemas.pagination import PaginatedResponse
 from backend.services import guardian_review as guardian_review_service
 
-router = APIRouter(tags=["Guardian Reviews"])
+router = APIRouter(
+    tags=["Guardian Reviews"],
+    dependencies=[Depends(require_ha_or_above)],
+)
 
 
 def _map_value_error(exc: ValueError) -> HTTPException:

@@ -71,6 +71,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
+from backend.core.security import require_ha_or_above
 from backend.db.session import get_db
 from backend.schemas.delegation import (
     DelegationCCAgent,
@@ -82,7 +83,10 @@ from backend.schemas.delegation import (
 from backend.schemas.pagination import PaginatedResponse
 from backend.services import delegation as delegation_service
 
-router = APIRouter(tags=["Delegations"])
+router = APIRouter(
+    tags=["Delegations"],
+    dependencies=[Depends(require_ha_or_above)],
+)
 
 
 def _map_value_error(exc: ValueError) -> HTTPException:

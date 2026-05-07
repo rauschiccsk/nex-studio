@@ -62,6 +62,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
+from backend.core.security import require_ha_or_above
 from backend.db.session import get_db
 from backend.schemas.epic import (
     EpicCreate,
@@ -72,7 +73,10 @@ from backend.schemas.epic import (
 from backend.schemas.pagination import PaginatedResponse
 from backend.services import epic as epic_service
 
-router = APIRouter(tags=["Epics"])
+router = APIRouter(
+    tags=["Epics"],
+    dependencies=[Depends(require_ha_or_above)],
+)
 
 
 def _map_value_error(exc: ValueError) -> HTTPException:

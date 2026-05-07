@@ -11,9 +11,14 @@ import os
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, UploadFile
+from fastapi import APIRouter, Depends, UploadFile
 
-router = APIRouter(tags=["uploads"])
+from backend.core.security import require_ha_or_above
+
+router = APIRouter(
+    tags=["uploads"],
+    dependencies=[Depends(require_ha_or_above)],
+)
 
 UPLOAD_DIR = Path(os.environ.get("UPLOAD_DIR", "/app/uploads"))
 

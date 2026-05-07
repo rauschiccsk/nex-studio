@@ -33,6 +33,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
+from backend.core.security import require_ri_role
 from backend.db.session import get_db
 from backend.schemas.migration_category_status import (
     MigrationCategoryStatusCreate,
@@ -43,7 +44,10 @@ from backend.schemas.migration_category_status import (
 from backend.schemas.pagination import PaginatedResponse
 from backend.services import migration_category_status as migration_category_status_service
 
-router = APIRouter(tags=["Migration Category Statuses"])
+router = APIRouter(
+    tags=["Migration Category Statuses"],
+    dependencies=[Depends(require_ri_role)],
+)
 
 
 def _map_value_error(exc: ValueError) -> HTTPException:

@@ -65,6 +65,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
+from backend.core.security import require_ha_or_above
 from backend.db.session import get_db
 from backend.schemas.auto_fix_attempt import (
     AutoFixAttemptCreate,
@@ -74,7 +75,10 @@ from backend.schemas.auto_fix_attempt import (
 from backend.schemas.pagination import PaginatedResponse
 from backend.services import auto_fix_attempt as auto_fix_attempt_service
 
-router = APIRouter(tags=["Auto Fix Attempts"])
+router = APIRouter(
+    tags=["Auto Fix Attempts"],
+    dependencies=[Depends(require_ha_or_above)],
+)
 
 
 def _map_value_error(exc: ValueError) -> HTTPException:

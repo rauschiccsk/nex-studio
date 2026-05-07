@@ -67,6 +67,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.api.dependencies import get_knowledge_base_writer
+from backend.core.security import require_ha_or_above
 from backend.db.models.delegations import Delegation, ExecutionLog
 from backend.db.models.projects import Project
 from backend.db.models.tasks import Epic, Feat, Task
@@ -84,7 +85,10 @@ from backend.services import task as task_service
 from backend.services.knowledge_base_writer import KnowledgeBaseWriter
 from backend.services.live_documents import LiveDocumentService
 
-router = APIRouter(tags=["Tasks"])
+router = APIRouter(
+    tags=["Tasks"],
+    dependencies=[Depends(require_ha_or_above)],
+)
 
 
 def _task_context(db: Session, task_id: UUID) -> tuple[Task, Feat, Project] | None:

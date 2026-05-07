@@ -69,6 +69,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.api.dependencies import get_knowledge_base_writer
+from backend.core.security import require_ha_or_above
 from backend.db.models.projects import Project
 from backend.db.models.tasks import Epic, Feat, Task
 from backend.db.session import SessionLocal, get_db
@@ -87,7 +88,10 @@ from backend.services.live_documents import LiveDocumentService
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["Feats"])
+router = APIRouter(
+    tags=["Feats"],
+    dependencies=[Depends(require_ha_or_above)],
+)
 
 
 def _map_value_error(exc: ValueError) -> HTTPException:

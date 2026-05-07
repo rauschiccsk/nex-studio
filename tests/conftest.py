@@ -112,6 +112,12 @@ def client(db_session):
 
     All endpoint tests should use this fixture to ensure requests
     hit the SAVEPOINT-isolated test database, not the production DB.
+
+    Auth dependencies are NOT overridden globally here — that would
+    break tests under ``tests/api/test_auth_*.py`` which deliberately
+    assert the 401/403 paths. Per-router test files (``test_*_router.py``)
+    inline their own RBAC overrides via the auto-patch applied during
+    the M2.D RBAC roll-out (2026-05-07).
     """
 
     def _override_get_db():

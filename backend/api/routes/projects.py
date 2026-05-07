@@ -31,6 +31,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
 from backend.api.dependencies import get_knowledge_base_writer
+from backend.core.security import require_ha_or_above
 from backend.db.models.foundation import User
 from backend.db.session import get_db
 from backend.schemas.pagination import PaginatedResponse
@@ -59,7 +60,10 @@ from backend.services.template_bootstrap import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["Projects"])
+router = APIRouter(
+    tags=["Projects"],
+    dependencies=[Depends(require_ha_or_above)],
+)
 
 
 def _resolve_created_by(db: Session, created_by: Optional[UUID]) -> UUID:

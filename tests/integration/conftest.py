@@ -134,7 +134,12 @@ def _seed_admin(db_session):
 
 @pytest.fixture()
 def integration_client(db_session, _seed_admin):
-    """TestClient wired to the real app with SAVEPOINT-isolated DB."""
+    """TestClient wired to the real app with SAVEPOINT-isolated DB.
+
+    Auth dependencies are NOT overridden — integration tests use the
+    real ``/auth/login`` flow to obtain a JWT (see ``test_auth_flow.py``,
+    ``test_token_rotation.py``).
+    """
 
     def _override_get_db():
         yield db_session

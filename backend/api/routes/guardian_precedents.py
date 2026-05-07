@@ -27,6 +27,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
+from backend.core.security import require_ri_role
 from backend.db.session import get_db
 from backend.schemas.guardian import (
     GuardianPrecedentCreate,
@@ -37,7 +38,10 @@ from backend.schemas.guardian import (
 from backend.schemas.pagination import PaginatedResponse
 from backend.services import guardian_precedent as guardian_precedent_service
 
-router = APIRouter(tags=["Guardian Precedents"])
+router = APIRouter(
+    tags=["Guardian Precedents"],
+    dependencies=[Depends(require_ri_role)],
+)
 
 
 def _map_value_error(exc: ValueError) -> HTTPException:

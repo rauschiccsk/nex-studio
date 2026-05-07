@@ -73,6 +73,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
+from backend.core.security import require_ri_role
 from backend.db.session import get_db
 from backend.schemas.pagination import PaginatedResponse
 from backend.schemas.report_config import (
@@ -82,7 +83,10 @@ from backend.schemas.report_config import (
 )
 from backend.services import report_config as report_config_service
 
-router = APIRouter(tags=["Report Configs"])
+router = APIRouter(
+    tags=["Report Configs"],
+    dependencies=[Depends(require_ri_role)],
+)
 
 
 def _map_value_error(exc: ValueError) -> HTTPException:

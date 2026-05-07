@@ -77,6 +77,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
+from backend.core.security import require_ha_or_above
 from backend.db.session import get_db
 from backend.schemas.design_document import (
     DesignDocumentCreate,
@@ -87,7 +88,10 @@ from backend.schemas.design_document import (
 from backend.schemas.pagination import PaginatedResponse
 from backend.services import design_document as design_document_service
 
-router = APIRouter(tags=["Design Documents"])
+router = APIRouter(
+    tags=["Design Documents"],
+    dependencies=[Depends(require_ha_or_above)],
+)
 
 
 def _map_value_error(exc: ValueError) -> HTTPException:

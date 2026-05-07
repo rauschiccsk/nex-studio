@@ -69,6 +69,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
+from backend.core.security import require_ha_or_above
 from backend.db.session import get_db
 from backend.schemas.execution_log import (
     ExecutionLogCreate,
@@ -79,7 +80,10 @@ from backend.schemas.execution_log import (
 from backend.schemas.pagination import PaginatedResponse
 from backend.services import execution_log as execution_log_service
 
-router = APIRouter(tags=["Execution Logs"])
+router = APIRouter(
+    tags=["Execution Logs"],
+    dependencies=[Depends(require_ha_or_above)],
+)
 
 
 def _map_value_error(exc: ValueError) -> HTTPException:

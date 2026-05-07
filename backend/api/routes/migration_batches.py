@@ -32,6 +32,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
+from backend.core.security import require_ri_role
 from backend.db.session import get_db
 from backend.schemas.migration_batch import (
     MigrationBatchCreate,
@@ -43,7 +44,10 @@ from backend.schemas.migration_batch import (
 from backend.schemas.pagination import PaginatedResponse
 from backend.services import migration_batch as migration_batch_service
 
-router = APIRouter(tags=["Migration Batches"])
+router = APIRouter(
+    tags=["Migration Batches"],
+    dependencies=[Depends(require_ri_role)],
+)
 
 
 def _map_value_error(exc: ValueError) -> HTTPException:

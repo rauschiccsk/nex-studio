@@ -52,6 +52,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
 from backend.api.dependencies import get_knowledge_base_writer
+from backend.core.security import require_ha_or_above
 from backend.db.models.projects import Project
 from backend.db.session import get_db
 from backend.schemas.live_documents import ModuleEventData
@@ -73,7 +74,10 @@ def _project_slug(db: Session, project_id: UUID) -> str | None:
     return project.slug if project is not None else None
 
 
-router = APIRouter(tags=["Project Modules"])
+router = APIRouter(
+    tags=["Project Modules"],
+    dependencies=[Depends(require_ha_or_above)],
+)
 
 
 def _map_value_error(exc: ValueError) -> HTTPException:
