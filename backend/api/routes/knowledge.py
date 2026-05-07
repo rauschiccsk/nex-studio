@@ -24,9 +24,11 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from backend.core.security import get_current_user, has_full_kb_access
 from backend.db.models.foundation import User
+from backend.db.session import get_db
 from backend.services.knowledge_manager import KnowledgeManager
 from backend.utils.kb_access import (
     filter_kb_documents as _filter_documents_by_role,
@@ -90,6 +92,7 @@ def _get_manager() -> KnowledgeManager:
 def list_knowledge_documents(
     category: Optional[str] = Query(None, description="Filter by category"),
     user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """List knowledge documents on disk."""
     manager = _get_manager()
@@ -102,7 +105,7 @@ def list_knowledge_documents(
     if not _has_full_access(user):
         documents = [d for d in documents if not _is_restricted(d.get("category", ""))]
 
-    documents = _filter_documents_by_role(documents, user)
+    documents = _filter_documents_by_role(documents, user, db)
 
     return {"documents": documents, "count": len(documents)}
 
@@ -111,6 +114,7 @@ def list_knowledge_documents(
 def get_document_content(
     relative_path: str = Query(..., description="Relative path to document"),
     user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """Read raw markdown content from disk."""
     path_category = relative_path.split("/")[0] if "/" in relative_path else ""
@@ -120,7 +124,7 @@ def get_document_content(
             detail="Tento dokument je dostupný len pre oprávnených používateľov",
         )
 
-    if not _is_path_allowed(relative_path, user):
+    if not _is_path_allowed(relative_path, user, db):
         raise HTTPException(status_code=403, detail="Prístup zamietnutý na základe Shuhari role")
 
     manager = _get_manager()
@@ -189,9 +193,10 @@ def create_document(
 def update_document(
     request: UpdateDocumentRequest,
     user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """Overwrite existing markdown file content."""
-    if not _is_path_allowed(request.relative_path, user):
+    if not _is_path_allowed(request.relative_path, user, db):
         raise HTTPException(status_code=403, detail="Prístup zamietnutý na základe Shuhari role")
 
     path_category = request.relative_path.split("/")[0] if "/" in request.relative_path else ""
@@ -222,9 +227,10 @@ def update_document(
 def delete_document(
     relative_path: str = Query(..., description="Relative path to document"),
     user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """Delete markdown file from disk."""
-    if not _is_path_allowed(relative_path, user):
+    if not _is_path_allowed(relative_path, user, db):
         raise HTTPException(status_code=403, detail="Prístup zamietnutý na základe Shuhari role")
 
     path_category = relative_path.split("/")[0] if "/" in relative_path else ""

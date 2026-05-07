@@ -20,6 +20,8 @@ from __future__ import annotations
 import logging
 from typing import Iterable, Union
 
+from sqlalchemy.orm import Session
+
 from backend.config.settings import settings
 from backend.db.models.foundation import User
 
@@ -36,60 +38,56 @@ def _kb_access_for_role(role: str) -> list[str]:
     return list(settings.kb_access_shu)
 
 
-def get_allowed_kb_categories(user: User) -> list[str]:
+def get_allowed_kb_categories(user: User, db: Session) -> list[str]:
     """Return list of allowed KB category prefixes for a user.
 
     * ``ri`` users get ``["*"]`` (full access).
     * ``ha`` users get the configured ``ha`` list.
     * ``shu`` users get the configured ``shu`` baseline plus their
       assigned project paths (resolved via ``project_members``).
+
+    Args:
+        user: Authenticated user.
+        db: Active SQLAlchemy session — used to resolve ``shu`` user's
+            project memberships. Pass the request-scoped session from
+            ``Depends(get_db)`` so the lookup observes the same
+            transaction the rest of the request runs in.
     """
     role = (user.role or "shu").lower()
     allowed = _kb_access_for_role(role)
 
     if role == "shu" and "*" not in allowed:
-        _add_assigned_projects(user, allowed)
+        _add_assigned_projects(user, allowed, db)
 
     return allowed
 
 
-def _add_assigned_projects(user: User, allowed: list[str]) -> None:
-    """Append ``projects/<slug>/`` paths the user is a member of.
-
-    Resolution: ``project_members`` JOIN ``projects`` on
-    ``project_members.project_id = projects.id``, filter by
-    ``user_id = user.id``.
-    """
+def _add_assigned_projects(user: User, allowed: list[str], db: Session) -> None:
+    """Append ``projects/<slug>/`` paths the user is a member of."""
     try:
         from backend.db.models.project_member import ProjectMember
         from backend.db.models.projects import Project
-        from backend.db.session import SessionLocal
 
-        with SessionLocal() as db:
-            rows = (
-                db.query(Project.slug)
-                .join(ProjectMember, ProjectMember.project_id == Project.id)
-                .filter(ProjectMember.user_id == user.id)
-                .filter(Project.slug.isnot(None))
-                .all()
-            )
-            for (slug,) in rows:
-                if not slug:
-                    continue
-                project_path = f"projects/{slug}/"
-                if project_path not in allowed:
-                    allowed.append(project_path)
+        rows = (
+            db.query(Project.slug)
+            .join(ProjectMember, ProjectMember.project_id == Project.id)
+            .filter(ProjectMember.user_id == user.id)
+            .filter(Project.slug.isnot(None))
+            .all()
+        )
+        for (slug,) in rows:
+            if not slug:
+                continue
+            project_path = f"projects/{slug}/"
+            if project_path not in allowed:
+                allowed.append(project_path)
     except Exception as exc:
         logger.warning("Failed to load assigned projects for %s: %s", user.username, exc)
 
 
-def filter_kb_documents(documents: Iterable[dict], user: User) -> list[dict]:
-    """Filter KB documents by allowed categories for the user.
-
-    Documents are expected to be dicts with keys like ``relative_path``
-    or ``category`` indicating where the doc lives in the KB tree.
-    """
-    allowed = get_allowed_kb_categories(user)
+def filter_kb_documents(documents: Iterable[dict], user: User, db: Session) -> list[dict]:
+    """Filter KB documents by allowed categories for the user."""
+    allowed = get_allowed_kb_categories(user, db)
 
     if "*" in allowed:
         return list(documents)
@@ -104,9 +102,9 @@ def filter_kb_documents(documents: Iterable[dict], user: User) -> list[dict]:
     return filtered
 
 
-def is_path_allowed(path: str, user: User) -> bool:
+def is_path_allowed(path: str, user: User, db: Session) -> bool:
     """Check whether a specific KB path is accessible to the user."""
-    allowed = get_allowed_kb_categories(user)
+    allowed = get_allowed_kb_categories(user, db)
 
     if "*" in allowed:
         return True
