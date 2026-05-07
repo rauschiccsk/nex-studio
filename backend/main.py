@@ -23,7 +23,7 @@ from backend.api.routes.feats import router as feats_router
 from backend.api.routes.guardian_precedents import router as guardian_precedents_router
 from backend.api.routes.guardian_reviews import router as guardian_reviews_router
 from backend.api.routes.health import health_check as _health_check_handler
-from backend.api.routes.kb_documents import router as kb_documents_router
+from backend.api.routes.knowledge import router as knowledge_router
 from backend.api.routes.migration_batches import router as migration_batches_router
 from backend.api.routes.migration_category_statuses import (
     router as migration_category_statuses_router,
@@ -75,40 +75,17 @@ def _run_alembic_upgrade() -> None:
         raise
 
 
-def _run_kb_seed() -> None:
-    """Run KB filesystem → kb_documents seed on startup.
-
-    Idempotent — :func:`backend.services.kb_sync.seed_from_filesystem`
-    skips already-registered files. KB seed errors are logged but
-    NEVER abort startup (KB is a UX feature, not load-bearing for
-    the rest of the app).
-    """
-    try:
-        from backend.db.session import SessionLocal
-        from backend.services.kb_sync import seed_from_filesystem
-
-        with SessionLocal() as session:
-            result = seed_from_filesystem(session)
-            session.commit()
-            logger.info(
-                "KB seed: scanned=%d inserted=%d skipped=%d errors=%d",
-                result.scanned,
-                result.inserted,
-                result.skipped_existing,
-                result.errors,
-            )
-    except Exception:
-        logger.error(
-            "KB seed failed — UI will show 0 rows until next successful run",
-            exc_info=True,
-        )
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan: run migrations + KB seed on startup."""
+    """Application lifespan: run migrations on startup.
+
+    KB seed (kb_sync.seed_from_filesystem) was removed in M1 of the
+    feature parity audit (2026-05-07): KB is now filesystem-based via
+    :mod:`backend.services.knowledge_manager` (1:1 port from NEX
+    Command); no DB seed step is needed because the
+    ``/api/v1/knowledge`` router reads the filesystem live.
+    """
     _run_alembic_upgrade()
-    _run_kb_seed()
     yield
 
 
@@ -143,7 +120,7 @@ app.include_router(
     prefix="/api/v1/professional-specifications",
 )
 app.include_router(design_documents_router, prefix="/api/v1/design-documents")
-app.include_router(kb_documents_router, prefix="/api/v1/kb-documents")
+app.include_router(knowledge_router, prefix="/api/v1/knowledge")
 app.include_router(credentials_router, prefix="/api/v1/credentials")
 app.include_router(architect_sessions_router, prefix="/api/v1/architect-sessions")
 # The architect router spans two URL families (/projects/{id}/architect and

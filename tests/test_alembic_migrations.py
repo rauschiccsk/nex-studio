@@ -59,7 +59,6 @@ def test_expected_domain_tables_present() -> None:
         "feats",
         "guardian_precedents",
         "guardian_reviews",
-        "kb_documents",
         "migration_batches",
         "migration_category_status",
         "migration_id_map",

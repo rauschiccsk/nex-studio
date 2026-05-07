@@ -81,12 +81,6 @@ from backend.schemas.guardian import (
     GuardianReviewUpdate,
     GuardianVerdict,
 )
-from backend.schemas.kb_document import (
-    KbDocumentCategory,
-    KbDocumentCreate,
-    KbDocumentRead,
-    KbDocumentUpdate,
-)
 from backend.schemas.migration_batch import (
     MigrationBatchCreate,
     MigrationBatchDirection,
@@ -222,10 +216,6 @@ __all__ = [
     "GuardianReviewRiskLevel",
     "GuardianReviewUpdate",
     "GuardianVerdict",
-    "KbDocumentCategory",
-    "KbDocumentCreate",
-    "KbDocumentRead",
-    "KbDocumentUpdate",
     "MigrationBatchCreate",
     "MigrationBatchDirection",
     "MigrationBatchRead",

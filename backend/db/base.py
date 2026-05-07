@@ -16,7 +16,6 @@ from backend.db.models.bugs import Bug, BugFixTask
 from backend.db.models.delegations import AutoFixAttempt, Delegation, ExecutionLog
 from backend.db.models.foundation import User, UserSession
 from backend.db.models.guardian import GuardianPrecedent, GuardianReview
-from backend.db.models.kb import KbDocument
 from backend.db.models.migration import MigrationBatch, MigrationCategoryStatus, MigrationIdMap
 from backend.db.models.projects import ModuleDependency, Project, ProjectModule
 from backend.db.models.reports import ReportConfig
@@ -41,7 +40,6 @@ ALL_MODELS: tuple[type, ...] = (
     DesignDocument,
     Epic,
     Feat,
-    KbDocument,
     ModuleDependency,
     RawSpecification,
     ProfessionalSpecification,
@@ -74,7 +72,6 @@ __all__ = [
     "Feat",
     "GuardianPrecedent",
     "GuardianReview",
-    "KbDocument",
     "MigrationBatch",
     "MigrationCategoryStatus",
     "MigrationIdMap",
