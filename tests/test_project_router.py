@@ -357,8 +357,8 @@ class TestProjectRouter:
 
     # ---------------------------------------------------------------- live docs
 
-    def test_create_seeds_three_live_documents(self, router_client, creator, tmp_path):
-        """POST creates STATUS.md, HISTORY.md and ARCHITECT.md in the KB."""
+    def test_create_seeds_two_live_documents(self, router_client, creator, tmp_path):
+        """POST creates STATUS.md and HISTORY.md in the KB (no ARCHITECT.md — deprecated)."""
         payload = _payload(creator.id, name="Live Docs App", slug="live-docs-app")
         resp = router_client.post("/api/v1/projects", json=payload)
         assert resp.status_code == 201, resp.text
@@ -366,16 +366,40 @@ class TestProjectRouter:
         project_dir = tmp_path / "projects" / "live-docs-app"
         assert (project_dir / "STATUS.md").is_file()
         assert (project_dir / "HISTORY.md").is_file()
-        assert (project_dir / "ARCHITECT.md").is_file()
+        # ARCHITECT.md is deprecated — replaced by per-agent session logs
+        # in docs/session-logs/<role>/. Must NOT be created.
+        assert not (project_dir / "ARCHITECT.md").exists()
 
         # STATUS.md reflects the fresh state — no epics yet but header present.
         status_md = (project_dir / "STATUS.md").read_text(encoding="utf-8")
         assert "# Live Docs App — Status" in status_md
         assert "No epics planned yet." in status_md
 
-        # HISTORY / ARCHITECT start as bare headers.
+        # HISTORY starts as bare header.
         assert (project_dir / "HISTORY.md").read_text(encoding="utf-8") == ("# live-docs-app — History\n\n")
-        assert (project_dir / "ARCHITECT.md").read_text(encoding="utf-8") == ("# live-docs-app — Architecture Log\n\n")
+
+    def test_create_auto_creates_v0_1_0_version(self, router_client, creator, db_session):
+        """POST auto-creates initial Version v0.1.0 in planned status.
+
+        Per main CLAUDE.md §2 (three-agent architecture): every project must have
+        a target version from the moment of creation so Designer's Step 0 VERSION
+        binding finds it without manual setup.
+        """
+        from sqlalchemy import select
+
+        from backend.db.models.versions import Version
+
+        payload = _payload(creator.id, name="Versioned App", slug="versioned-app")
+        resp = router_client.post("/api/v1/projects", json=payload)
+        assert resp.status_code == 201, resp.text
+
+        project_id = resp.json()["id"]
+        versions = db_session.execute(select(Version).where(Version.project_id == project_id)).scalars().all()
+        assert len(versions) == 1, f"Expected exactly 1 version, got {len(versions)}"
+        v = versions[0]
+        assert v.version_number == "0.1.0"
+        assert v.status == "planned"
+        assert v.name == "Initial prototype"
 
     def test_create_rolls_back_when_kb_write_fails(self, db_session, creator, tmp_path, monkeypatch):
         """If KB write raises OSError, the project must not end up in the DB."""

@@ -47,10 +47,12 @@ from backend.schemas.project import (
     ProjectStatus,
     ProjectUpdate,
 )
+from backend.schemas.version import VersionCreate
 from backend.services import github_validation as github_validation_service
 from backend.services import port_registry as port_registry_service
 from backend.services import project as project_service
 from backend.services import system_setting as system_setting_service
+from backend.services import version as version_service
 from backend.services.knowledge_base_writer import KnowledgeBaseWriter
 from backend.services.live_documents import LiveDocumentService
 from backend.services.template_bootstrap import (
@@ -420,11 +422,16 @@ def create_project(
       changes. Failure → 500 and no further work is attempted. A repo
       that already exists is treated as success — reruns and
       deliberate reuse both work. Skipped when ``repo_url`` is NULL.
-    * **Seeds three live documents** (``STATUS.md`` / ``HISTORY.md`` /
-      ``ARCHITECT.md``) under ``{knowledge_base_path}/projects/{slug}/``.
-    * The DB insert, KB write and commit happen in a single
-      transaction — a KB-write failure rolls the row back. If KB
-      write fails after GitHub repo was already created, the repo
+    * **Seeds two live documents** (``STATUS.md`` / ``HISTORY.md``)
+      under ``{knowledge_base_path}/projects/{slug}/``. ARCHITECT.md
+      is no longer seeded — replaced by per-agent session logs in
+      ``docs/session-logs/<role>/`` (three-agent architecture).
+    * **Auto-creates initial version v0.1.0** in ``planned`` status —
+      per main CLAUDE.md §2 (no spec change without a version binding).
+      Designer's Step 0 VERSION binding finds this version to start work.
+    * The DB insert, KB write, version creation and commit happen in a
+      single transaction — a failure at any step rolls the row back. If
+      KB write fails after GitHub repo was already created, the repo
       stays dangling (documented known-item; manual cleanup on the
       GitHub side).
     """
@@ -466,6 +473,16 @@ def create_project(
     try:
         project = project_service.create(db, payload)
         LiveDocumentService(project.slug, writer=kb_writer).init_live_documents(db, project.id)
+        # Auto-create initial version v0.1.0 (planned) per three-agent architecture.
+        # Main CLAUDE.md §2: žiadna zmena dokumentu v docs/specs/ bez priradenia
+        # ku konkrétnej verzii. Designer's Step 0 VERSION binding finds this
+        # version to begin work; status defaults to 'planned' via DB server_default.
+        version_service.create(
+            db,
+            project.id,
+            VersionCreate(version_number="0.1.0", name="Initial prototype"),
+            user_id=payload.created_by,
+        )
         # Stage 3 — filesystem bootstrap via icc-claude-template/init.sh.
         # Runs BEFORE db.commit() so a bootstrap failure rolls back the
         # DB row cleanly. KB live docs are already on disk at this point;
@@ -547,8 +564,8 @@ def delete_project(
     Side effects on success:
 
     * The KB folder ``{knowledge_base_path}/projects/{slug}/`` with
-      its live documents (STATUS.md / HISTORY.md / ARCHITECT.md) is
-      removed — matches the rest of the live-docs hooks.
+      its live documents (STATUS.md / HISTORY.md) is removed — matches
+      the rest of the live-docs hooks.
     * If ``delete_github=true`` is passed, the backing GitHub
       repository is deleted too. Off by default — the DB row and KB
       folder go, but the repo stays in case the caller wants to

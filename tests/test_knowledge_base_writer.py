@@ -50,7 +50,7 @@ def test_save_auto_creates_parent_dir(writer: KnowledgeBaseWriter, tmp_path: Pat
     project_dir = tmp_path / "projects" / "brand-new"
     assert not project_dir.exists()
 
-    writer.save("brand-new", "ARCHITECT.md", "content")
+    writer.save("brand-new", "HISTORY.md", "content")
 
     assert project_dir.is_dir()
 

@@ -4,8 +4,8 @@ Two immutable DTOs drive the generators in
 :mod:`backend.services.live_documents`:
 
 * :class:`TaskCompletionData` — everything produced by a completed task
-  run that the ``HISTORY.md`` / ``ARCHITECT.md`` entries need (status,
-  duration, agent, commits, findings, attempt count, timestamp).
+  run that the ``HISTORY.md`` entry needs (status, duration, agent,
+  commits, findings, attempt count, timestamp).
 * :class:`FeatCompletionData` — the rolled-up feat-level outcome that
   closes out a phase in ``HISTORY.md`` (task count, duration, audit
   verdict, CI verdict).
@@ -41,8 +41,7 @@ ModuleStatus = Literal["planned", "in_design", "in_development", "done"]
 class TaskCompletionData(BaseModel):
     """Immutable record of a completed task run.
 
-    Consumed by :meth:`~backend.services.live_documents.LiveDocumentService.generate_history_entry`
-    and :meth:`~backend.services.live_documents.LiveDocumentService.generate_architect_entry`.
+    Consumed by :meth:`~backend.services.live_documents.LiveDocumentService.generate_history_entry`.
 
     Field notes:
 
@@ -50,11 +49,10 @@ class TaskCompletionData(BaseModel):
       from the NEX Command source. NEX Studio's ``execution_logs`` row
       currently stores at most one hash, so the caller passes a
       singleton list (or empty list on pure-review / audit runs).
-    * ``changed_files`` captures arch-relevant files for
-      ``ARCHITECT.md``. NEX Studio does not yet track changed files at
-      the DB level, so this list will typically be empty in production
-      — generators skip the ``Files:`` line when it is empty rather
-      than failing.
+    * ``changed_files`` is retained for forward compatibility (NEX
+      Command source used it for ARCHITECT.md generation, deprecated
+      in NEX Studio). NEX Studio does not yet track changed files at
+      the DB level, so this list will typically be empty in production.
     * ``timestamp`` defaults to "now" but is explicit in tests for
       deterministic output.
     """

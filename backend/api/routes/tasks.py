@@ -95,8 +95,8 @@ def _task_context(db: Session, task_id: UUID) -> tuple[Task, Feat, Project] | No
     """Return the ``(task, feat, project)`` triple for a task in one query.
 
     Used by the live-document hook on ``PATCH`` to resolve the slug
-    for the KB writer and the feat number for ``HISTORY.md`` / ``ARCHITECT.md``
-    entries. Returns ``None`` when the task does not exist.
+    for the KB writer and the feat number for ``HISTORY.md`` entries.
+    Returns ``None`` when the task does not exist.
     """
     row = db.execute(
         select(Task, Feat, Project)
@@ -287,11 +287,10 @@ def update_task(
 
     **Live documents side effect.** When a task transitions to
     ``status='done'`` (and was not already done), this endpoint
-    appends a ``HISTORY.md`` entry, conditionally appends an
-    ``ARCHITECT.md`` entry (only when the task produced a commit), and
-    regenerates ``STATUS.md`` for the owning project. The KB writes
-    happen before ``db.commit()`` so an I/O failure rolls the status
-    change back — the DB and the KB never disagree.
+    appends a ``HISTORY.md`` entry and regenerates ``STATUS.md`` for
+    the owning project. The KB writes happen before ``db.commit()``
+    so an I/O failure rolls the status change back — the DB and the
+    KB never disagree.
     """
     # Snapshot previous status before the update is applied — after
     # task_service.update, the in-session task object will carry the
@@ -307,7 +306,6 @@ def update_task(
             data = _build_task_completion_data(db, task, feat)
             svc = LiveDocumentService(project.slug, writer=kb_writer)
             svc.append_history(data)
-            svc.append_architect(data)
             svc.regenerate_status(db, project.id)
 
         db.commit()

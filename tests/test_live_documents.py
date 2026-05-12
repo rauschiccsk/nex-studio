@@ -3,23 +3,21 @@ persistence, and :mod:`backend.schemas.live_documents` DTOs.
 
 Covers:
 
-* ``_ordinal`` / ``_format_duration`` / ``_filter_arch_files`` helpers
-  across their numeric and pattern edge cases.
+* ``_ordinal`` / ``_format_duration`` helpers across their numeric
+  edge cases.
 * ``generate_history_entry`` for done / failed / audit-fail / multi-
   attempt task completions.
-* ``generate_architect_entry`` including the empty-string rule for
-  failed tasks without commits and the filter that drops markdown,
-  tests and caches from ``changed_files``.
 * ``generate_phase_summary_entry`` for pass / fail / NA audit and CI
   outcomes.
-* ``append_history`` / ``append_architect`` / ``append_phase_summary``
-  persistence end-to-end against a real :class:`KnowledgeBaseWriter`
-  rooted at ``tmp_path`` — no test touches the real KB.
+* ``append_history`` / ``append_phase_summary`` persistence end-to-end
+  against a real :class:`KnowledgeBaseWriter` rooted at ``tmp_path`` —
+  no test touches the real KB.
 * ``writer=None`` mode — pure generation, no I/O.
 
-No database fixture — the generators are DB-agnostic and the persistence
-tests use a filesystem-scoped writer. STATUS.md generation (the only
-DB-bound piece) ships in a follow-up step with its own DB-backed tests.
+ARCHITECT.md / ``generate_architect_entry`` / ``append_architect`` /
+``_filter_arch_files`` are deprecated as part of the three-agent
+architecture migration (Designer/Implementer/Auditor) — their tests
+were removed alongside the code.
 """
 
 from __future__ import annotations
@@ -45,7 +43,6 @@ from backend.schemas.live_documents import (
 from backend.services.knowledge_base_writer import KnowledgeBaseWriter
 from backend.services.live_documents import (
     LiveDocumentService,
-    _filter_arch_files,
     _format_duration,
     _ordinal,
 )
@@ -138,63 +135,6 @@ def test_format_duration(seconds: float, expected: str) -> None:
     assert _format_duration(seconds) == expected
 
 
-# ── _filter_arch_files ────────────────────────────────────────────────
-
-
-def test_filter_keeps_arch_extensions() -> None:
-    files = ["backend/app.py", "frontend/App.tsx", "migrations/001.sql"]
-    assert _filter_arch_files(files) == files
-
-
-def test_filter_preserves_order() -> None:
-    files = ["z.py", "a.py", "m.sql"]
-    assert _filter_arch_files(files) == files
-
-
-def test_filter_excludes_markdown() -> None:
-    assert _filter_arch_files(["README.md", "docs/arch.md", "backend/app.py"]) == [
-        "backend/app.py",
-    ]
-
-
-def test_filter_excludes_tests_by_prefix() -> None:
-    assert _filter_arch_files(["tests/test_app.py", "backend/app.py"]) == [
-        "backend/app.py",
-    ]
-
-
-def test_filter_excludes_tests_by_infix() -> None:
-    assert _filter_arch_files(["src/foo.test.ts", "src/bar_test.ts", "src/app.ts"]) == [
-        "src/app.ts",
-    ]
-
-
-def test_filter_excludes_pycache() -> None:
-    assert _filter_arch_files(["__pycache__/app.cpython-312.pyc", "backend/app.py"]) == ["backend/app.py"]
-
-
-def test_filter_excludes_node_modules() -> None:
-    assert _filter_arch_files(["node_modules/foo/index.js", "frontend/App.tsx"]) == [
-        "frontend/App.tsx",
-    ]
-
-
-def test_filter_keeps_docker_and_makefile() -> None:
-    assert _filter_arch_files(["Dockerfile", "docker-compose.yml", "Makefile", "random.txt"]) == [
-        "Dockerfile",
-        "docker-compose.yml",
-        "Makefile",
-    ]
-
-
-def test_filter_rejects_unknown_extensions() -> None:
-    assert _filter_arch_files(["README.txt", "image.png", "data.json"]) == []
-
-
-def test_filter_empty_list() -> None:
-    assert _filter_arch_files([]) == []
-
-
 # ── generate_history_entry ────────────────────────────────────────────
 
 
@@ -252,60 +192,6 @@ def test_history_entry_first_attempt_default() -> None:
     entry = svc.generate_history_entry(_task())
 
     assert "1st attempt" in entry
-
-
-# ── generate_architect_entry ──────────────────────────────────────────
-
-
-def test_architect_entry_with_files_and_commit() -> None:
-    svc = LiveDocumentService("nex-test")
-    entry = svc.generate_architect_entry(_task())
-
-    assert "### Task 1.2: Repository setup" in entry
-    assert "Files: backend/app.py, backend/config.py" in entry
-    assert "tests/test_app.py" not in entry  # test file filtered out
-    assert "Commits: b8fa302deadbeef" in entry  # full hash in architect log
-
-
-def test_architect_entry_without_changed_files() -> None:
-    svc = LiveDocumentService("nex-test")
-    entry = svc.generate_architect_entry(_task(changed_files=[]))
-
-    assert "### Task 1.2: Repository setup" in entry
-    assert "Files:" not in entry
-    assert "Commits: b8fa302deadbeef" in entry
-
-
-def test_architect_entry_failed_no_commits_returns_empty() -> None:
-    svc = LiveDocumentService("nex-test")
-    entry = svc.generate_architect_entry(_task(status="failed", commit_hashes=[]))
-
-    assert entry == ""
-
-
-def test_architect_entry_failed_with_commits_is_recorded() -> None:
-    """A failed task that committed partial work still leaves a trail."""
-    svc = LiveDocumentService("nex-test")
-    entry = svc.generate_architect_entry(_task(status="failed", commit_hashes=["abc1234"]))
-
-    assert "### Task 1.2: Repository setup" in entry
-    assert "Commits: abc1234" in entry
-
-
-def test_architect_entry_all_changed_files_filtered_out() -> None:
-    svc = LiveDocumentService("nex-test")
-    entry = svc.generate_architect_entry(_task(changed_files=["README.md", "tests/test_x.py"]))
-
-    assert "### Task 1.2: Repository setup" in entry
-    assert "Files:" not in entry
-    assert "Commits:" in entry
-
-
-def test_architect_entry_multiple_commits_joined() -> None:
-    svc = LiveDocumentService("nex-test")
-    entry = svc.generate_architect_entry(_task(commit_hashes=["aaa", "bbb", "ccc"]))
-
-    assert "Commits: aaa, bbb, ccc" in entry
 
 
 # ── generate_module_event_entry ───────────────────────────────────────
@@ -442,26 +328,6 @@ def test_append_history_writes_file_with_header(tmp_path: Path) -> None:
     assert "Code Review: PASS" in content
 
 
-def test_append_architect_writes_file_with_header(tmp_path: Path) -> None:
-    writer = KnowledgeBaseWriter(tmp_path)
-    svc = LiveDocumentService("nex-test", writer=writer)
-
-    svc.append_architect(_task())
-
-    content = writer.read("nex-test", "ARCHITECT.md")
-    assert content.startswith("# nex-test — Architecture Log")
-    assert "### Task 1.2: Repository setup" in content
-
-
-def test_append_architect_skips_when_entry_empty(tmp_path: Path) -> None:
-    writer = KnowledgeBaseWriter(tmp_path)
-    svc = LiveDocumentService("nex-test", writer=writer)
-
-    svc.append_architect(_task(status="failed", commit_hashes=[]))
-
-    assert writer.exists("nex-test", "ARCHITECT.md") is False
-
-
 def test_append_phase_summary_goes_to_history(tmp_path: Path) -> None:
     writer = KnowledgeBaseWriter(tmp_path)
     svc = LiveDocumentService("nex-test", writer=writer)
@@ -504,7 +370,6 @@ def test_writer_none_mode_does_no_io() -> None:
 
     # None of these should raise.
     svc.append_history(_task())
-    svc.append_architect(_task())
     svc.append_phase_summary(_feat())
 
 
@@ -513,7 +378,6 @@ def test_generators_do_not_require_writer() -> None:
     svc = LiveDocumentService("nex-test")
 
     assert svc.generate_history_entry(_task())
-    assert svc.generate_architect_entry(_task())
     assert svc.generate_phase_summary_entry(_feat())
 
 
@@ -1043,7 +907,7 @@ def test_regenerate_status_no_writer_is_noop(db_session: Any) -> None:
 # ── init_live_documents — project creation seed ──────────────────────
 
 
-def test_init_live_documents_creates_three_files(db_session: Any, tmp_path: Path) -> None:
+def test_init_live_documents_creates_two_files(db_session: Any, tmp_path: Path) -> None:
     project = _make_project(db_session, slug="init-test")
     writer = KnowledgeBaseWriter(tmp_path)
     svc = LiveDocumentService("init-test", writer=writer)
@@ -1052,7 +916,10 @@ def test_init_live_documents_creates_three_files(db_session: Any, tmp_path: Path
 
     assert writer.exists("init-test", "STATUS.md") is True
     assert writer.exists("init-test", "HISTORY.md") is True
-    assert writer.exists("init-test", "ARCHITECT.md") is True
+    # ARCHITECT.md is deprecated — must not be created.
+    # Check filesystem directly: writer.exists() rejects non-allowlisted filenames
+    # with ValueError, which would mask the absence-of-file assertion.
+    assert not (tmp_path / "projects" / "init-test" / "ARCHITECT.md").exists()
 
 
 def test_init_live_documents_status_shows_empty_state(db_session: Any, tmp_path: Path) -> None:
@@ -1077,16 +944,6 @@ def test_init_live_documents_history_is_header_only(db_session: Any, tmp_path: P
     assert writer.read("hist-test", "HISTORY.md") == "# hist-test — History\n\n"
 
 
-def test_init_live_documents_architect_is_header_only(db_session: Any, tmp_path: Path) -> None:
-    project = _make_project(db_session, slug="arch-test")
-    writer = KnowledgeBaseWriter(tmp_path)
-    svc = LiveDocumentService("arch-test", writer=writer)
-
-    svc.init_live_documents(db_session, project.id)
-
-    assert writer.read("arch-test", "ARCHITECT.md") == ("# arch-test — Architecture Log\n\n")
-
-
 def test_init_live_documents_raises_without_writer(db_session: Any) -> None:
     project = _make_project(db_session, slug="no-writer")
     svc = LiveDocumentService("no-writer")  # writer=None
@@ -1104,10 +961,8 @@ def test_init_live_documents_overwrites_existing_files(db_session: Any, tmp_path
     # Pre-seed STATUS.md with stale content a previous init might have left.
     writer.save("redo", "STATUS.md", "stale content\n")
     writer.save("redo", "HISTORY.md", "stale history\n")
-    writer.save("redo", "ARCHITECT.md", "stale architect\n")
 
     svc.init_live_documents(db_session, project.id)
 
     assert "stale content" not in writer.read("redo", "STATUS.md")
     assert writer.read("redo", "HISTORY.md") == "# redo — History\n\n"
-    assert writer.read("redo", "ARCHITECT.md") == "# redo — Architecture Log\n\n"

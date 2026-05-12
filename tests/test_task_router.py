@@ -570,17 +570,17 @@ class TestTaskRouter:
 
         project_dir = tmp_path / "projects" / project.slug
         history = (project_dir / "HISTORY.md").read_text(encoding="utf-8")
-        architect = (project_dir / "ARCHITECT.md").read_text(encoding="utf-8")
         status_md = (project_dir / "STATUS.md").read_text(encoding="utf-8")
 
-        # History has the short commit prefix; architect has the full hash.
+        # History has the short commit prefix.
         assert "abc1234" in history
-        assert "Commits: abc1234567890" in architect
         # STATUS renders the 7-char commit suffix on the done task line.
         assert "(abc1234)" in status_md
+        # ARCHITECT.md is deprecated — must not be created.
+        assert not (project_dir / "ARCHITECT.md").exists()
 
-    def test_patch_to_done_without_execution_log_minimal_architect(self, router_client, feat, project, tmp_path):
-        """No execution log → architect entry has the task header but no Commits / Files lines."""
+    def test_patch_to_done_without_execution_log_seeds_history_only(self, router_client, feat, project, tmp_path):
+        """No execution log → HISTORY entry created, no ARCHITECT.md (deprecated)."""
         created = router_client.post(
             "/api/v1/tasks",
             json=_payload(feat_id=feat.id, title="Docs update"),
@@ -594,13 +594,8 @@ class TestTaskRouter:
         project_dir = tmp_path / "projects" / project.slug
         assert (project_dir / "HISTORY.md").is_file()
         assert (project_dir / "STATUS.md").is_file()
-
-        arch = (project_dir / "ARCHITECT.md").read_text(encoding="utf-8")
-        # Header-level entry exists.
-        assert "### Task 1.1: Docs update" in arch
-        # Without a commit or arch files, the entry carries neither line.
-        assert "Commits:" not in arch
-        assert "Files:" not in arch
+        # ARCHITECT.md is deprecated — must not be created.
+        assert not (project_dir / "ARCHITECT.md").exists()
 
     def test_patch_status_to_in_progress_does_not_fire_hook(self, router_client, feat, project, tmp_path):
         created = router_client.post(

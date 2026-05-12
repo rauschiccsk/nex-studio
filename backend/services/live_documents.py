@@ -1,24 +1,28 @@
 """Live document service — deterministic markdown generators and
-persistence for per-project ``STATUS.md`` / ``ARCHITECT.md`` /
-``HISTORY.md``.
+persistence for per-project ``STATUS.md`` / ``HISTORY.md``.
 
 Ported from NEX Command (``backend/services/live_documents.py``, see
 ``docs/architect/live-docs-port.md``).
 
-``HISTORY.md`` / ``ARCHITECT.md`` are append-only with a first-line
-dedup guard provided by :class:`KnowledgeBaseWriter` — replaying the
-same task completion is idempotent. ``STATUS.md`` is a full rebuild
-(``save``, overwrite) from the current ``Project → Version → Epic →
-Feat → Task`` tree; :meth:`LiveDocumentService.generate_status_md`
-produces the markdown and :meth:`regenerate_status` persists it.
+``HISTORY.md`` is append-only with a first-line dedup guard provided
+by :class:`KnowledgeBaseWriter` — replaying the same task completion
+is idempotent. ``STATUS.md`` is a full rebuild (``save``, overwrite)
+from the current ``Project → Version → Epic → Feat → Task`` tree;
+:meth:`LiveDocumentService.generate_status_md` produces the markdown
+and :meth:`regenerate_status` persists it.
 
-The service keeps a thin invariant: generators for history /
-architect entries are pure functions of their input data; the STATUS
-generator is a DB-driven rebuild parameterised on ``(db, project_id)``.
-Persistence methods (``append_*`` / ``regenerate_status``) layer the
-writer on top. Pass ``writer=None`` to get string generation only
-(useful in tests and in call sites that want to preview an entry
-before commit).
+The service keeps a thin invariant: generators for history entries
+are pure functions of their input data; the STATUS generator is a
+DB-driven rebuild parameterised on ``(db, project_id)``. Persistence
+methods (``append_*`` / ``regenerate_status``) layer the writer on top.
+Pass ``writer=None`` to get string generation only (useful in tests and
+in call sites that want to preview an entry before commit).
+
+ARCHITECT.md was deprecated as part of the three-agent architecture
+migration (Designer/Implementer/Auditor) — per-agent session logs in
+``docs/session-logs/<role>/`` replace it with granular, attributable
+records. Existing ARCHITECT.md files in the KB remain as historical
+artefacts but receive no new writes from this service.
 """
 
 from __future__ import annotations
@@ -40,35 +44,6 @@ from backend.schemas.live_documents import (
 )
 from backend.services.knowledge_base_writer import KnowledgeBaseWriter
 
-# Architecture-relevant file patterns — a changed file lands in
-# ``ARCHITECT.md`` when it has one of these extensions or basenames
-# and is not inside a skip-pattern (tests, caches, node_modules).
-_ARCH_EXTENSIONS: tuple[str, ...] = (
-    ".py",
-    ".ts",
-    ".tsx",
-    ".sql",
-    ".yml",
-    ".yaml",
-    ".toml",
-    ".cfg",
-    ".sh",
-)
-_ARCH_BASENAMES: tuple[str, ...] = (
-    "Dockerfile",
-    "Makefile",
-    "docker-compose.yml",
-    "docker-compose.yaml",
-)
-_SKIP_PATTERNS: tuple[str, ...] = (
-    "__pycache__",
-    ".pyc",
-    "node_modules",
-    ".test.",
-    "_test.",
-    "test_",
-)
-
 
 class LiveDocumentService:
     """Per-project façade over the markdown generators and the KB writer.
@@ -77,9 +52,8 @@ class LiveDocumentService:
     :class:`KnowledgeBaseWriter`. Without a writer the service is
     pure string generation — useful for previewing entries or for
     testing generators in isolation. With a writer, the
-    ``append_history`` / ``append_architect`` / ``append_phase_summary``
-    methods persist the generated entry under
-    ``projects/{slug}/{FILE}.md``.
+    ``append_history`` / ``append_phase_summary`` methods persist
+    the generated entry under ``projects/{slug}/{FILE}.md``.
     """
 
     def __init__(
@@ -118,33 +92,6 @@ class LiveDocumentService:
         )
         line2 = f"  Code Review: {review} | Audit: {audit} ({attempt})"
         return f"{line1}\n{line2}\n"
-
-    def generate_architect_entry(self, data: TaskCompletionData) -> str:
-        """Return the ``ARCHITECT.md`` entry for a task completion.
-
-        Format:
-
-            ### Task F.T: {title}
-            Files: {a, b, c}           ← only if arch-relevant files present
-            Commits: {h1, h2, …}       ← only if commits present
-
-        Returns empty string when the task failed **and** produced no
-        commits — there is nothing meaningful to record. A failed task
-        that still committed (e.g. partial progress before fail) keeps
-        the commit trail.
-        """
-        if not data.commit_hashes and data.status != "done":
-            return ""
-
-        lines = [f"### Task {data.feat_number}.{data.task_number}: {data.task_title}"]
-
-        arch_files = _filter_arch_files(data.changed_files)
-        if arch_files:
-            lines.append(f"Files: {', '.join(arch_files)}")
-        if data.commit_hashes:
-            lines.append(f"Commits: {', '.join(data.commit_hashes)}")
-        lines.append("")
-        return "\n".join(lines)
 
     def generate_status_md(self, db: Session, project_id: UUID) -> str:
         """Rebuild ``STATUS.md`` markdown from the current DB state.
@@ -339,22 +286,6 @@ class LiveDocumentService:
             header_if_new=self._history_header(),
         )
 
-    def append_architect(self, data: TaskCompletionData) -> None:
-        """Persist a task completion entry to ``ARCHITECT.md``.
-
-        Skipped when the generator returns empty (failed task without
-        commits) or when the writer is not configured.
-        """
-        entry = self.generate_architect_entry(data)
-        if not entry or self._writer is None:
-            return
-        self._writer.append(
-            self._slug,
-            "ARCHITECT.md",
-            entry,
-            header_if_new=self._architect_header(),
-        )
-
     def regenerate_status(self, db: Session, project_id: UUID) -> None:
         """Rebuild ``STATUS.md`` from the DB and overwrite it in the KB.
 
@@ -368,20 +299,22 @@ class LiveDocumentService:
         self._writer.save(self._slug, "STATUS.md", content)
 
     def init_live_documents(self, db: Session, project_id: UUID) -> None:
-        """Seed the three live documents for a freshly created project.
+        """Seed the two live documents for a freshly created project.
 
         Writes ``STATUS.md`` (generated from the then-current DB state —
-        typically "no epics planned yet" right after creation),
-        ``HISTORY.md`` (header only) and ``ARCHITECT.md`` (header only)
-        under ``projects/{slug}/``. Uses
-        :meth:`KnowledgeBaseWriter.save` (overwrite) for all three so
-        the operation is idempotent across crash-restart scenarios.
+        typically "no epics planned yet" right after creation) and
+        ``HISTORY.md`` (header only) under ``projects/{slug}/``. Uses
+        :meth:`KnowledgeBaseWriter.save` (overwrite) for both so the
+        operation is idempotent across crash-restart scenarios.
 
         Unlike the other persistence wrappers this method **requires**
         a writer — the caller explicitly asked to persist. Raises
         :class:`RuntimeError` if the service was constructed without
         one, rather than silently no-op'ing; the router catches I/O
         failures as ``OSError`` and translates them into a 500.
+
+        ARCHITECT.md is no longer seeded — see module docstring for the
+        three-agent migration context.
         """
         if self._writer is None:
             raise RuntimeError(
@@ -390,7 +323,6 @@ class LiveDocumentService:
         status_md = self.generate_status_md(db, project_id)
         self._writer.save(self._slug, "STATUS.md", status_md)
         self._writer.save(self._slug, "HISTORY.md", self._history_header())
-        self._writer.save(self._slug, "ARCHITECT.md", self._architect_header())
 
     def append_module_event(self, data: ModuleEventData) -> None:
         """Persist a module-lifecycle entry to ``HISTORY.md``.
@@ -426,9 +358,6 @@ class LiveDocumentService:
 
     def _history_header(self) -> str:
         return f"# {self._slug} — History\n\n"
-
-    def _architect_header(self) -> str:
-        return f"# {self._slug} — Architecture Log\n\n"
 
 
 # ── module-level helpers ─────────────────────────────────────────────
@@ -479,29 +408,6 @@ def _latest_commit_per_task(db: Session, task_ids: list[UUID]) -> dict[UUID, str
         # First row per task_id due to DESC order — setdefault preserves it.
         commit_by_task.setdefault(task_id, commit_hash)
     return commit_by_task
-
-
-def _filter_arch_files(files: list[str]) -> list[str]:
-    """Filter changed files down to architecture-relevant ones.
-
-    Keeps files with :data:`_ARCH_EXTENSIONS` extensions and the
-    literal :data:`_ARCH_BASENAMES` (``Dockerfile`` etc.); drops
-    markdown, tests, caches, ``node_modules`` and anything else.
-    Order is preserved.
-    """
-    result: list[str] = []
-    for f in files:
-        if any(skip in f for skip in _SKIP_PATTERNS):
-            continue
-        if f.endswith(".md"):
-            continue
-        basename = f.rsplit("/", 1)[-1] if "/" in f else f
-        if basename in _ARCH_BASENAMES:
-            result.append(f)
-            continue
-        if any(f.endswith(ext) for ext in _ARCH_EXTENSIONS):
-            result.append(f)
-    return result
 
 
 def _ordinal(n: int) -> str:

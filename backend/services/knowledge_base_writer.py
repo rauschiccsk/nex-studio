@@ -1,8 +1,8 @@
 """Filesystem writer for per-project live documents in the Knowledge Base.
 
-Backs :mod:`backend.services.live_documents` (forthcoming) with the narrow
-set of I/O operations needed to maintain the three live project
-documents — ``STATUS.md``, ``ARCHITECT.md`` and ``HISTORY.md`` — under
+Backs :mod:`backend.services.live_documents` with the narrow set of
+I/O operations needed to maintain the two live project documents —
+``STATUS.md`` and ``HISTORY.md`` — under
 ``{knowledge_base_path}/projects/{slug}/``.
 
 Design notes (per ``docs/architect/live-docs-port.md``):
@@ -50,7 +50,6 @@ _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 ALLOWED_FILENAMES: frozenset[str] = frozenset(
     {
         "STATUS.md",
-        "ARCHITECT.md",
         "HISTORY.md",
     }
 )
