@@ -1,0 +1,246 @@
+/**
+ * Component tests for UserForm — single component for both create + edit
+ * flows in Settings → Users (DRY: replaces ~160 lines of duplicate JSX
+ * across two inline forms in SettingsPage.tsx).
+ *
+ * Verifies mode-specific behaviour:
+ *   - mode="create": username editable, password required, no Active checkbox
+ *   - mode="edit":   username disabled, password optional (empty=keep), Active checkbox
+ *
+ * Shared: identical layout + Tailwind, password min 5 validation, Cancel callback.
+ */
+
+import { describe, expect, it, vi } from "vitest";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import "@testing-library/jest-dom/vitest";
+
+import { UserForm } from "@/components/UserForm";
+import type { UserRead } from "@/types/user";
+
+function mkUser(overrides: Partial<UserRead> = {}): UserRead {
+  return {
+    id: "user-1",
+    username: "tibi",
+    email: "tibi@icc.sk",
+    role: "ha",
+    is_active: true,
+    first_name: "Tibor",
+    last_name: "Rausch",
+    created_at: "2026-05-13T00:00:00Z",
+    updated_at: "2026-05-13T00:00:00Z",
+    ...overrides,
+  };
+}
+
+describe("UserForm — mode='create'", () => {
+  it("renders all 6 input fields", () => {
+    render(
+      <UserForm mode="create" submitting={false} error="" onSubmit={vi.fn()} onCancel={vi.fn()} />,
+    );
+    expect(screen.getByLabelText(/first name/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/last name/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/username/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/email/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/password/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/role/i)).toBeInTheDocument();
+  });
+
+  it("does not show the Active checkbox in create mode", () => {
+    render(
+      <UserForm mode="create" submitting={false} error="" onSubmit={vi.fn()} onCancel={vi.fn()} />,
+    );
+    expect(screen.queryByLabelText(/active/i)).not.toBeInTheDocument();
+  });
+
+  it("username input is enabled (editable) in create mode", () => {
+    render(
+      <UserForm mode="create" submitting={false} error="" onSubmit={vi.fn()} onCancel={vi.fn()} />,
+    );
+    expect(screen.getByLabelText(/username/i)).not.toBeDisabled();
+  });
+
+  it("disables Create button while password < 5 chars", () => {
+    render(
+      <UserForm mode="create" submitting={false} error="" onSubmit={vi.fn()} onCancel={vi.fn()} />,
+    );
+    fireEvent.change(screen.getByLabelText(/username/i), { target: { value: "tibi" } });
+    fireEvent.change(screen.getByLabelText(/email/i), { target: { value: "tibi@icc.sk" } });
+    fireEvent.change(screen.getByLabelText(/password/i), { target: { value: "abc" } });
+    expect(screen.getByRole("button", { name: /create/i })).toBeDisabled();
+  });
+
+  it("enables Create button when all required fields valid", () => {
+    render(
+      <UserForm mode="create" submitting={false} error="" onSubmit={vi.fn()} onCancel={vi.fn()} />,
+    );
+    fireEvent.change(screen.getByLabelText(/username/i), { target: { value: "tibi" } });
+    fireEvent.change(screen.getByLabelText(/email/i), { target: { value: "tibi@icc.sk" } });
+    fireEvent.change(screen.getByLabelText(/password/i), { target: { value: "abcde" } });
+    expect(screen.getByRole("button", { name: /create/i })).toBeEnabled();
+  });
+
+  it("submits with is_active=true by default + collected form data", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(
+      <UserForm mode="create" submitting={false} error="" onSubmit={onSubmit} onCancel={vi.fn()} />,
+    );
+    fireEvent.change(screen.getByLabelText(/first name/i), { target: { value: "Tibor" } });
+    fireEvent.change(screen.getByLabelText(/last name/i), { target: { value: "Rausch" } });
+    fireEvent.change(screen.getByLabelText(/username/i), { target: { value: "tibi" } });
+    fireEvent.change(screen.getByLabelText(/email/i), { target: { value: "tibi@icc.sk" } });
+    fireEvent.change(screen.getByLabelText(/password/i), { target: { value: "abcde" } });
+    fireEvent.click(screen.getByRole("button", { name: /create/i }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit).toHaveBeenCalledWith({
+      username: "tibi",
+      email: "tibi@icc.sk",
+      password: "abcde",
+      role: "shu",
+      first_name: "Tibor",
+      last_name: "Rausch",
+      is_active: true,
+    });
+  });
+
+  it("Cancel calls onCancel", () => {
+    const onCancel = vi.fn();
+    render(
+      <UserForm mode="create" submitting={false} error="" onSubmit={vi.fn()} onCancel={onCancel} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the error message when provided", () => {
+    render(
+      <UserForm mode="create" submitting={false} error="Email already exists" onSubmit={vi.fn()} onCancel={vi.fn()} />,
+    );
+    expect(screen.getByText(/email already exists/i)).toBeInTheDocument();
+  });
+});
+
+describe("UserForm — mode='edit'", () => {
+  it("pre-fills fields from initial prop", () => {
+    render(
+      <UserForm
+        mode="edit"
+        initial={mkUser()}
+        submitting={false}
+        error=""
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(screen.getByLabelText(/first name/i)).toHaveValue("Tibor");
+    expect(screen.getByLabelText(/last name/i)).toHaveValue("Rausch");
+    expect(screen.getByLabelText(/username/i)).toHaveValue("tibi");
+    expect(screen.getByLabelText(/email/i)).toHaveValue("tibi@icc.sk");
+  });
+
+  it("username input is disabled in edit mode", () => {
+    render(
+      <UserForm
+        mode="edit"
+        initial={mkUser()}
+        submitting={false}
+        error=""
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(screen.getByLabelText(/username/i)).toBeDisabled();
+  });
+
+  it("shows Active checkbox in edit mode (reflecting initial)", () => {
+    render(
+      <UserForm
+        mode="edit"
+        initial={mkUser({ is_active: false })}
+        submitting={false}
+        error=""
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    const cb = screen.getByLabelText(/active/i) as HTMLInputElement;
+    expect(cb).toBeInTheDocument();
+    expect(cb.checked).toBe(false);
+  });
+
+  it("password is optional — submit succeeds with empty password", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(
+      <UserForm
+        mode="edit"
+        initial={mkUser()}
+        submitting={false}
+        error=""
+        onSubmit={onSubmit}
+        onCancel={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ password: "" }),
+    );
+  });
+
+  it("password validation same min 5 — disables Save when password filled but < 5", () => {
+    render(
+      <UserForm
+        mode="edit"
+        initial={mkUser()}
+        submitting={false}
+        error=""
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText(/password/i), { target: { value: "abc" } });
+    expect(screen.getByRole("button", { name: /save/i })).toBeDisabled();
+  });
+
+  it("submit button reads 'Save' in edit mode (not 'Create')", () => {
+    render(
+      <UserForm
+        mode="edit"
+        initial={mkUser()}
+        submitting={false}
+        error=""
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /save/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /create/i })).not.toBeInTheDocument();
+  });
+
+  it("submits with full payload including changed password and is_active", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(
+      <UserForm
+        mode="edit"
+        initial={mkUser()}
+        submitting={false}
+        error=""
+        onSubmit={onSubmit}
+        onCancel={vi.fn()}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText(/first name/i), { target: { value: "Tiborko" } });
+    fireEvent.change(screen.getByLabelText(/password/i), { target: { value: "newone" } });
+    fireEvent.click(screen.getByLabelText(/active/i));
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit).toHaveBeenCalledWith({
+      username: "tibi",
+      email: "tibi@icc.sk",
+      password: "newone",
+      role: "ha",
+      first_name: "Tiborko",
+      last_name: "Rausch",
+      is_active: false,
+    });
+  });
+});

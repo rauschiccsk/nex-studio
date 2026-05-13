@@ -5,7 +5,8 @@ import {
   updateSystemSettingApi,
 } from "@/services/api/systemSettings";
 import { useAuthStore } from "@/store/authStore";
-import type { UserRead, UserRole } from "@/types/user";
+import { UserForm, type UserFormData } from "@/components/UserForm";
+import type { UserRead } from "@/types/user";
 import type { SystemSettingRead } from "@/types/system_setting";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -152,27 +153,13 @@ export default function SettingsPage() {
   const [activeFilter, setActiveFilter] = useState("");
   const [showNewForm, setShowNewForm] = useState(false);
 
-  // New user form
-  const [newUsername, setNewUsername] = useState("");
-  const [newEmail, setNewEmail] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [newRole, setNewRole] = useState<UserRole>("shu");
-  const [newFirstName, setNewFirstName] = useState("");
-  const [newLastName, setNewLastName] = useState("");
+  // Create / edit / delete state. The form fields themselves live inside
+  // <UserForm /> — parent only tracks which flow is active and the
+  // in-flight + error state for the API call.
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
 
-  // Edit user form (inline expand pattern matches the create form below
-  // the table). Null = no user being edited.
   const [editingUser, setEditingUser] = useState<UserRead | null>(null);
-  const [editFirstName, setEditFirstName] = useState("");
-  const [editLastName, setEditLastName] = useState("");
-  const [editEmail, setEditEmail] = useState("");
-  const [editRole, setEditRole] = useState<UserRole>("shu");
-  const [editIsActive, setEditIsActive] = useState(true);
-  // Empty = keep current password (no rotation). Non-empty triggers a
-  // POST /users/{id}/change-password after the PATCH.
-  const [editPassword, setEditPassword] = useState("");
   const [editing, setEditing] = useState(false);
   const [editError, setEditError] = useState("");
 
@@ -180,10 +167,6 @@ export default function SettingsPage() {
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
-
-  /** Minimum password length — mirrors backend Pydantic constraint
-   *  (Director directive 2026-05-13, internal app). */
-  const PASSWORD_MIN_LENGTH = 5;
 
   useEffect(() => {
     if (tab !== "users") return;
@@ -197,35 +180,23 @@ export default function SettingsPage() {
       .finally(() => setUsersLoading(false));
   }, [tab, roleFilter, activeFilter]);
 
-  async function handleCreateUser() {
-    if (!newUsername || !newEmail || !newPassword) return;
-    if (newPassword.length < PASSWORD_MIN_LENGTH) {
-      setCreateError(`Heslo musí mať aspoň ${PASSWORD_MIN_LENGTH} znakov.`);
-      return;
-    }
+  async function handleCreateUser(data: UserFormData) {
     setCreating(true);
     setCreateError("");
     try {
       const u = await createUserApi({
-        username: newUsername,
-        email: newEmail,
-        password: newPassword,
-        role: newRole,
-        first_name: newFirstName || null,
-        last_name: newLastName || null,
+        username: data.username,
+        email: data.email,
+        password: data.password,
+        role: data.role,
+        first_name: data.first_name || null,
+        last_name: data.last_name || null,
       });
       setUsers((prev) => [u, ...prev]);
       setShowNewForm(false);
-      setNewUsername("");
-      setNewEmail("");
-      setNewPassword("");
-      setNewRole("shu");
-      setNewFirstName("");
-      setNewLastName("");
     } catch (e) {
       // Surface backend's specific error (e.g. "password too short",
       // "username already exists") instead of a generic message.
-      // ApiError has .message (string); other errors fall back.
       const msg =
         e instanceof Error && e.message
           ? `Nepodarilo sa vytvoriť používateľa: ${e.message}`
@@ -245,45 +216,33 @@ export default function SettingsPage() {
 
   function handleEditClick(u: UserRead) {
     setEditingUser(u);
-    setEditFirstName(u.first_name ?? "");
-    setEditLastName(u.last_name ?? "");
-    setEditEmail(u.email);
-    setEditRole(u.role);
-    setEditIsActive(u.is_active);
-    setEditPassword("");
     setEditError("");
     // Close the create form + delete confirm if either is open.
     setShowNewForm(false);
     setConfirmingDeleteId(null);
   }
 
-  async function handleSaveEdit() {
+  async function handleSaveEdit(data: UserFormData) {
     if (!editingUser) return;
-    // Client-side password length guard (mirrors backend min_length=5).
-    if (editPassword && editPassword.length < PASSWORD_MIN_LENGTH) {
-      setEditError(`Heslo musí mať aspoň ${PASSWORD_MIN_LENGTH} znakov.`);
-      return;
-    }
     setEditing(true);
     setEditError("");
     try {
       // PATCH first — profile fields update independently of password.
       const updated = await updateUserApi(editingUser.id, {
-        first_name: editFirstName || null,
-        last_name: editLastName || null,
-        email: editEmail,
-        role: editRole,
-        is_active: editIsActive,
+        first_name: data.first_name || null,
+        last_name: data.last_name || null,
+        email: data.email,
+        role: data.role,
+        is_active: data.is_active,
       });
       // Optional password rotation. Empty input = keep current.
       // Done after PATCH so a failing PATCH doesn't leave the user
       // with a rotated password but stale profile.
-      if (editPassword) {
-        await changePasswordApi(editingUser.id, editPassword);
+      if (data.password) {
+        await changePasswordApi(editingUser.id, data.password);
       }
       setUsers((prev) => prev.map((x) => x.id === updated.id ? updated : x));
       setEditingUser(null);
-      setEditPassword("");
     } catch (e) {
       const msg =
         e instanceof Error && e.message
@@ -660,231 +619,28 @@ export default function SettingsPage() {
               </div>
             )}
 
-            {/* Edit user form (inline expand, matches the create form pattern) */}
+            {/* Edit user form — same UserForm component as create, mode-driven. */}
             {editingUser && (
-              <div className="mt-4 rounded-xl border border-slate-700 bg-slate-900 p-4">
-                <h3 className="text-sm font-semibold text-slate-300 mb-3">
-                  Edit user · <span className="font-mono text-slate-400">{editingUser.username}</span>
-                </h3>
-                {editError && (
-                  <div className="mb-3 text-xs text-red-400 rounded bg-red-500/10 border border-red-500/20 px-3 py-2">{editError}</div>
-                )}
-                <div className="grid grid-cols-2 gap-3 mb-3">
-                  <div>
-                    <label className="block text-xs text-slate-500 mb-1">First name</label>
-                    <input
-                      type="text"
-                      value={editFirstName}
-                      onChange={(e) => setEditFirstName(e.target.value)}
-                      placeholder="e.g. Tibor"
-                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-slate-500 mb-1">Last name</label>
-                    <input
-                      type="text"
-                      value={editLastName}
-                      onChange={(e) => setEditLastName(e.target.value)}
-                      placeholder="e.g. Rausch"
-                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-slate-500 mb-1">Username</label>
-                    <input
-                      type="text"
-                      value={editingUser.username}
-                      readOnly
-                      disabled
-                      title="Username sa po vytvorení nemení (zachováva login stabilitu)."
-                      className="w-full bg-slate-800/60 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-500 font-mono cursor-not-allowed"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-slate-500 mb-1">Email *</label>
-                    <input
-                      type="email"
-                      value={editEmail}
-                      onChange={(e) => setEditEmail(e.target.value)}
-                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-slate-500 mb-1">Role</label>
-                    <select
-                      value={editRole}
-                      onChange={(e) => setEditRole(e.target.value as UserRole)}
-                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
-                    >
-                      <option value="shu">shu — Junior</option>
-                      <option value="ha">ha — Medior</option>
-                      <option value="ri">ri — Director</option>
-                    </select>
-                  </div>
-                  <div className="flex items-end">
-                    <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={editIsActive}
-                        onChange={(e) => setEditIsActive(e.target.checked)}
-                        className="rounded bg-slate-800 border-slate-700"
-                      />
-                      Active
-                    </label>
-                  </div>
-                  <div className="col-span-2">
-                    <label className="block text-xs text-slate-500 mb-1">
-                      New password{" "}
-                      <span className="text-slate-600">
-                        (nechaj prázdne ak nemeniť)
-                      </span>
-                    </label>
-                    <input
-                      type="password"
-                      value={editPassword}
-                      onChange={(e) => setEditPassword(e.target.value)}
-                      placeholder={`min ${PASSWORD_MIN_LENGTH} characters`}
-                      className={`w-full bg-slate-800 border rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500 ${
-                        editPassword && editPassword.length < PASSWORD_MIN_LENGTH
-                          ? "border-red-500"
-                          : "border-slate-700"
-                      }`}
-                    />
-                    {editPassword && editPassword.length < PASSWORD_MIN_LENGTH && (
-                      <div className="mt-1 text-[10px] text-red-400">
-                        Heslo musí mať aspoň {PASSWORD_MIN_LENGTH} znakov ({editPassword.length}/{PASSWORD_MIN_LENGTH}).
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <div className="flex gap-2 justify-end">
-                  <button
-                    onClick={() => { setEditingUser(null); setEditError(""); setEditPassword(""); }}
-                    className="px-3 py-1.5 text-xs text-slate-400 border border-slate-700 rounded-lg hover:bg-slate-800 transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleSaveEdit}
-                    disabled={
-                      editing ||
-                      !editEmail ||
-                      (editPassword !== "" && editPassword.length < PASSWORD_MIN_LENGTH)
-                    }
-                    className="px-3 py-1.5 text-xs font-medium text-white bg-primary-600 hover:bg-primary-500 disabled:opacity-40 rounded-lg transition-colors"
-                  >
-                    {editing ? "Ukladám…" : "Save"}
-                  </button>
-                </div>
-              </div>
+              <UserForm
+                key={`edit-${editingUser.id}`}
+                mode="edit"
+                initial={editingUser}
+                submitting={editing}
+                error={editError}
+                onSubmit={handleSaveEdit}
+                onCancel={() => { setEditingUser(null); setEditError(""); }}
+              />
             )}
 
             {/* New user form */}
             {showNewForm && (
-              <div className="mt-4 rounded-xl border border-slate-700 bg-slate-900 p-4">
-                <h3 className="text-sm font-semibold text-slate-300 mb-3">Create user</h3>
-                {createError && (
-                  <div className="mb-3 text-xs text-red-400 rounded bg-red-500/10 border border-red-500/20 px-3 py-2">{createError}</div>
-                )}
-                <div className="grid grid-cols-2 gap-3 mb-3">
-                  <div>
-                    <label className="block text-xs text-slate-500 mb-1">First name</label>
-                    <input
-                      type="text"
-                      value={newFirstName}
-                      onChange={(e) => setNewFirstName(e.target.value)}
-                      placeholder="e.g. Tibor"
-                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-slate-500 mb-1">Last name</label>
-                    <input
-                      type="text"
-                      value={newLastName}
-                      onChange={(e) => setNewLastName(e.target.value)}
-                      placeholder="e.g. Rausch"
-                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-slate-500 mb-1">Username *</label>
-                    <input
-                      type="text"
-                      value={newUsername}
-                      onChange={(e) => setNewUsername(e.target.value)}
-                      placeholder="e.g. tibor"
-                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-slate-500 mb-1">Email *</label>
-                    <input
-                      type="email"
-                      value={newEmail}
-                      onChange={(e) => setNewEmail(e.target.value)}
-                      placeholder="e.g. tibor@isnex.ai"
-                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-slate-500 mb-1">Password *</label>
-                    <input
-                      type="password"
-                      value={newPassword}
-                      onChange={(e) => setNewPassword(e.target.value)}
-                      placeholder={`min ${PASSWORD_MIN_LENGTH} characters`}
-                      className={`w-full bg-slate-800 border rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500 ${
-                        newPassword && newPassword.length < PASSWORD_MIN_LENGTH
-                          ? "border-red-500"
-                          : "border-slate-700"
-                      }`}
-                    />
-                    {newPassword && newPassword.length < PASSWORD_MIN_LENGTH && (
-                      <div className="mt-1 text-[10px] text-red-400">
-                        Heslo musí mať aspoň {PASSWORD_MIN_LENGTH} znakov ({newPassword.length}/{PASSWORD_MIN_LENGTH}).
-                      </div>
-                    )}
-                  </div>
-                  <div>
-                    <label className="block text-xs text-slate-500 mb-1">Role</label>
-                    <select
-                      value={newRole}
-                      onChange={(e) => setNewRole(e.target.value as UserRole)}
-                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
-                    >
-                      <option value="shu">shu — Junior</option>
-                      <option value="ha">ha — Medior</option>
-                      <option value="ri">ri — Director</option>
-                    </select>
-                  </div>
-                </div>
-                <div className="flex gap-2 justify-end">
-                  <button
-                    onClick={() => {
-                      setShowNewForm(false);
-                      setCreateError("");
-                    }}
-                    className="px-3 py-1.5 text-xs text-slate-400 border border-slate-700 rounded-lg hover:bg-slate-800 transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleCreateUser}
-                    disabled={
-                      creating ||
-                      !newUsername ||
-                      !newEmail ||
-                      !newPassword ||
-                      newPassword.length < PASSWORD_MIN_LENGTH
-                    }
-                    className="px-3 py-1.5 text-xs font-medium text-white bg-primary-600 hover:bg-primary-500 disabled:opacity-40 rounded-lg transition-colors"
-                  >
-                    {creating ? "Vytváram…" : "Create"}
-                  </button>
-                </div>
-              </div>
+              <UserForm
+                mode="create"
+                submitting={creating}
+                error={createError}
+                onSubmit={handleCreateUser}
+                onCancel={() => { setShowNewForm(false); setCreateError(""); }}
+              />
             )}
           </div>
         )}
