@@ -1,5 +1,6 @@
 """SQLAlchemy models package."""
 
+from backend.db.models.agent_terminal import AgentTerminalSession
 from backend.db.models.architect import ArchitectMessage, ArchitectSession
 from backend.db.models.base import Base, TimestampMixin, UUIDMixin
 from backend.db.models.bugs import Bug, BugFixTask
@@ -23,6 +24,7 @@ from backend.db.models.tasks import Epic, Feat, Task
 from backend.db.models.versions import Version
 
 __all__ = [
+    "AgentTerminalSession",
     "ArchitectMessage",
     "ArchitectSession",
     "AutoFixAttempt",

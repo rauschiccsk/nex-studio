@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import sys
 from contextlib import asynccontextmanager
@@ -7,6 +8,7 @@ from alembic.config import Config
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.api.routes.agent_terminal import router as agent_terminal_router
 from backend.api.routes.architect import router as architect_router
 from backend.api.routes.architect_messages import router as architect_messages_router
 from backend.api.routes.architect_sessions import router as architect_sessions_router
@@ -48,6 +50,8 @@ from backend.api.routes.user_sessions import router as user_sessions_router
 from backend.api.routes.users import router as users_router
 from backend.api.routes.versions import router as versions_router
 from backend.config.settings import settings
+from backend.db.session import SessionLocal
+from backend.services import agent_terminal as agent_terminal_service
 
 # Route application loggers at INFO to stderr so ``docker logs`` surfaces
 # request-level diagnostics (SSE state, Claude subprocess events, spec
@@ -78,18 +82,67 @@ def _run_alembic_upgrade() -> None:
         raise
 
 
+async def _agent_terminal_idle_loop() -> None:
+    """Background task: every 5 min, kill agent terminal sessions idle > TTL.
+
+    Lifecycle is tied to the FastAPI lifespan — task is created on startup
+    and cancelled on shutdown. Each pass uses its own short-lived DB
+    session (``SessionLocal()``) since the asyncio loop survives many
+    requests but a single transaction would not.
+    """
+    while True:
+        try:
+            await asyncio.sleep(300)
+            db = SessionLocal()
+            try:
+                await agent_terminal_service.idle_cleanup(db)
+            finally:
+                db.close()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("agent_terminal idle_cleanup loop iteration failed")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan: run migrations on startup.
+    """Application lifespan: migrations + agent terminal startup hooks.
 
     KB seed (kb_sync.seed_from_filesystem) was removed in M1 of the
     feature parity audit (2026-05-07): KB is now filesystem-based via
     :mod:`backend.services.knowledge_manager` (1:1 port from NEX
     Command); no DB seed step is needed because the
     ``/api/v1/knowledge`` router reads the filesystem live.
+
+    Agent terminal hooks (added 2026-05-13):
+
+    * On startup, mark every ``ended_at IS NULL`` row in
+      ``agent_terminal_sessions`` as ``server_restart`` — sessions
+      cannot survive a BE container restart.
+    * Spawn the periodic idle-cleanup task that kills sessions idle
+      beyond :data:`agent_terminal.IDLE_TTL_SECONDS`.
     """
     _run_alembic_upgrade()
-    yield
+
+    db = SessionLocal()
+    try:
+        agent_terminal_service.mark_orphaned_on_startup(db)
+    finally:
+        db.close()
+
+    idle_task = asyncio.create_task(
+        _agent_terminal_idle_loop(),
+        name="agent-terminal-idle-cleanup",
+    )
+
+    try:
+        yield
+    finally:
+        idle_task.cancel()
+        try:
+            await idle_task
+        except (asyncio.CancelledError, Exception):
+            pass
 
 
 app = FastAPI(
@@ -156,6 +209,7 @@ app.include_router(migration_id_maps_router, prefix="/api/v1/migration-id-maps")
 app.include_router(versions_router, prefix="/api/v1")
 app.include_router(uploads_router, prefix="/api/v1")
 app.include_router(system_settings_router, prefix="/api/v1/system-settings")
+app.include_router(agent_terminal_router, prefix="/api/v1/agent-terminal")
 
 
 @app.get("/health")

@@ -20,10 +20,12 @@ passlib = {version = "^1.7", extras = ["bcrypt"]}
 python-multipart = "^0.0.20"
 httpx = "^0.28.1"
 qdrant-client = "^1.12"
+ptyprocess = "^0.7"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3"
 pytest-cov = "^6.1"
+pytest-asyncio = "^0.24"
 ruff = "^0.11"
 
 [build-system]
@@ -40,9 +42,11 @@ select = ["E", "F", "I", "W"]
 [tool.pytest.ini_options]
 testpaths = ["tests", "backend/tests"]
 pythonpath = ["."]
+asyncio_mode = "auto"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests requiring external services",
+    "asyncio: marks tests as asyncio coroutines",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning:passlib",
