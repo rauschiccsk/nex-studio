@@ -220,9 +220,20 @@ export default function Sidebar() {
   const hasProject = Boolean(selectedProject);
   const hasFullContext = Boolean(selectedProject && selectedVersion);
 
-  // Fallback target when no project is pinned yet — sends the user to
-  // the project list where the Pin icon explicitly selects a project.
-  const fallbackPath = "/projects";
+  // Three-stage fallback for context-dependent links (Workflow,
+  // pipeline steps): without a verzia they cannot resolve to the
+  // workflow URL itself, so they degrade gracefully:
+  //   - project + version  → full URL with both ids
+  //   - project only       → ProjectDetailPage (versions list, where
+  //                           clicking a verzia auto-fills the
+  //                           selectedVersion slot via useActiveContextSync)
+  //   - nothing            → projects list (pin a project first)
+  // Sending to the bare ``/projects`` from Workflow felt like the link
+  // was redirecting to Projects (Director feedback 2026-05-14).
+  const projectsFallback = "/projects";
+  const versionFallback = hasProject
+    ? `/projects/${selectedProject!.slug}`
+    : projectsFallback;
 
   return (
     <aside
@@ -260,7 +271,7 @@ export default function Sidebar() {
         <NavItem
           icon={<IconVersions />}
           label="Versions"
-          path={hasProject ? `/projects/${selectedProject!.slug}` : fallbackPath}
+          path={hasProject ? `/projects/${selectedProject!.slug}` : projectsFallback}
           collapsed={collapsed}
           active={hasProject ? location.pathname === `/projects/${selectedProject!.slug}` : false}
         />
@@ -270,7 +281,7 @@ export default function Sidebar() {
           path={
             hasFullContext
               ? `/projects/${selectedProject!.slug}/versions/${selectedVersion!.versionId}`
-              : fallbackPath
+              : versionFallback
           }
           collapsed={collapsed}
           active={
@@ -323,7 +334,7 @@ export default function Sidebar() {
             path={
               hasFullContext
                 ? `/projects/${selectedProject!.slug}/versions/${selectedVersion!.versionId}/${s.step}`
-                : fallbackPath
+                : versionFallback
             }
             collapsed={collapsed}
             active={isStepActive(s.matchSteps ?? [s.step])}
