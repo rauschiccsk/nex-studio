@@ -35,6 +35,7 @@ from backend.api.routes.professional_specifications import (
 )
 from backend.api.routes.project_members import router as project_members_router
 from backend.api.routes.project_modules import router as project_modules_router
+from backend.api.routes.project_specs import router as project_specs_router
 from backend.api.routes.projects import router as projects_router
 from backend.api.routes.rag import router as rag_router
 from backend.api.routes.raw_specifications import router as raw_specifications_router
@@ -123,6 +124,7 @@ app.include_router(
 )
 app.include_router(design_documents_router, prefix="/api/v1/design-documents")
 app.include_router(knowledge_router, prefix="/api/v1/knowledge")
+app.include_router(project_specs_router, prefix="/api/v1/project-specs")
 app.include_router(rag_router, prefix="/api/v1/rag")
 app.include_router(project_members_router, prefix="/api/v1/project-members")
 app.include_router(credentials_router, prefix="/api/v1/credentials")
