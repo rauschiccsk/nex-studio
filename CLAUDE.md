@@ -269,6 +269,49 @@ Konkrétny formát reportu je per agent (Gate report pre Designera, DONE report 
 
 ---
 
+## 10.1 CI/CD MONITORING — univerzálne (po `git push`)
+
+**Po každom `git push` MUSÍM počkať na CI a reportovať výsledok.**
+Platí pre všetkých agentov a aj "obyčajné" CC sessions bez per-agent wrapperu.
+
+### Workflow
+
+```bash
+git push origin main
+# OKAMŽITE potom — žiadny ďalší commit pred CI confirmom:
+gh run watch           # alebo: gh run list --limit 1 && gh run view <id>
+```
+
+V reporte uveď run ID + stav každého jobu:
+```
+CI: <run-id> — Lint PASS, Build Frontend PASS, Test PASS,
+              Build Docker PASS, Deploy PASS
+```
+
+### Pri CI FAIL
+
+1. **Žiadny ďalší commit pred fixom** (vrátane session log commitu)
+2. Identifikuj root cause cez `gh run view <id> --log-failed`
+3. Fix root cause lokálne, verify (typecheck, ruff format --check, tests)
+4. Nový commit + push + re-monitor
+5. Žiadne výnimky, žiadny "neskôr to opravím"
+
+### Pre-commit obrana
+
+Repo má `.githooks/pre-commit` ktorý lokálne spustí Lint stage checks
+(ruff format --check + ruff check + frontend type-check) **PRED** commitom.
+Aktivácia per clone: `git config core.hooksPath .githooks`.
+
+**Žiadny `--no-verify`** bez explicit Director approval.
+
+### Anti-pattern: "push and forget"
+
+Pushneš commit a hneď začneš ďalšiu prácu bez CI confirmu. Štandardná
+chyba — vidíš email upozornenie od Directora 2 hodiny neskôr. Toto je
+**P1 process violation**.
+
+---
+
 ## 11. SESSION INIT PROTOCOL
 
 Pri každom štarte session vykonaj v poradí:

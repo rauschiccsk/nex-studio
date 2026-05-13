@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+#
+# Pre-commit hook — block the commit if local checks fail. Runs the same
+# checks CI runs in the ``Lint`` stage so we never push a build that we
+# already know will fail.
+#
+# Triggered by incident 2026-05-13: three consecutive CI fails because
+# ``ruff format --check`` was not part of the manual self-verification
+# routine (only ``ruff check`` was). The hook closes that gap.
+#
+# Enable once per clone:
+#   git config core.hooksPath .githooks
+#
+# Skips when commit affects only docs/ + KB-style files (no code changes)
+# — those don't affect lint/typecheck and waiting for poetry is overkill.
+#
+# To bypass for a known reason (rare): ``git commit --no-verify``.
+# Per CLAUDE.md, agents must NOT use --no-verify without explicit
+# Director approval.
+
+set -euo pipefail
+
+REPO_ROOT=$(git rev-parse --show-toplevel)
+cd "${REPO_ROOT}"
+
+# ─── scope detection ────────────────────────────────────────────────────
+# Skip the hook when only docs / session logs / markdown are staged.
+# Those changes can't break lint or typecheck.
+STAGED=$(git diff --cached --name-only --diff-filter=ACMR)
+if [[ -z "${STAGED}" ]]; then
+    exit 0
+fi
+
+NEEDS_BACKEND=0
+NEEDS_FRONTEND=0
+while IFS= read -r path; do
+    case "${path}" in
+        backend/*|tests/*|pyproject.toml|poetry.lock)
+            NEEDS_BACKEND=1 ;;
+        frontend/*)
+            NEEDS_FRONTEND=1 ;;
+    esac
+done <<< "${STAGED}"
+
+if [[ "${NEEDS_BACKEND}" == "0" && "${NEEDS_FRONTEND}" == "0" ]]; then
+    # Only docs / config / KB-style changes — nothing to check.
+    exit 0
+fi
+
+# ─── backend checks ────────────────────────────────────────────────────
+if [[ "${NEEDS_BACKEND}" == "1" ]]; then
+    echo "pre-commit: backend — ruff format --check"
+    if ! poetry run ruff format --check . > /tmp/pre-commit-ruff-format.log 2>&1; then
+        echo "❌ ruff format --check FAILED — files need reformat:"
+        cat /tmp/pre-commit-ruff-format.log
+        echo ""
+        echo "Run:  poetry run ruff format <files>"
+        exit 1
+    fi
+
+    echo "pre-commit: backend — ruff check"
+    if ! poetry run ruff check . > /tmp/pre-commit-ruff-check.log 2>&1; then
+        echo "❌ ruff check FAILED:"
+        cat /tmp/pre-commit-ruff-check.log
+        exit 1
+    fi
+fi
+
+# ─── frontend checks ───────────────────────────────────────────────────
+if [[ "${NEEDS_FRONTEND}" == "1" ]]; then
+    echo "pre-commit: frontend — type-check"
+    if ! (cd frontend && npm run type-check > /tmp/pre-commit-typecheck.log 2>&1); then
+        echo "❌ TypeScript type-check FAILED:"
+        cat /tmp/pre-commit-typecheck.log
+        exit 1
+    fi
+fi
+
+echo "pre-commit: ✓ all checks passed"
