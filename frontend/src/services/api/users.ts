@@ -3,10 +3,11 @@
  *
  * Maps to backend routes defined in ``backend.api.routes.users``:
  *
- *   - ``GET   /users``                    -> listUsersApi
- *   - ``POST  /users``                    -> createUserApi
- *   - ``PATCH /users/{id}``               -> updateUserApi
- *   - ``POST  /users/{id}/change-password`` -> changePasswordApi
+ *   - ``GET    /users``                       -> listUsersApi
+ *   - ``POST   /users``                       -> createUserApi
+ *   - ``PATCH  /users/{id}``                  -> updateUserApi
+ *   - ``DELETE /users/{id}``                  -> deleteUserApi
+ *   - ``POST   /users/{id}/change-password``  -> changePasswordApi
  */
 
 import api from "../api";
@@ -64,6 +65,18 @@ export function updateUserApi(
   data: UserUpdate,
 ): Promise<UserRead> {
   return api.patch<UserRead>(`/users/${id}`, data);
+}
+
+/**
+ * Hard-delete a user.
+ *
+ * Maps to ``DELETE /api/v1/users/{id}``.  The backend rejects the call
+ * with HTTP 409 when the user is referenced by other tables
+ * (RESTRICT FK to projects, bugs, architect_sessions, etc.) — surface
+ * the message to the operator and recommend deactivation instead.
+ */
+export function deleteUserApi(id: string): Promise<void> {
+  return api.delete<void>(`/users/${id}`);
 }
 
 /**

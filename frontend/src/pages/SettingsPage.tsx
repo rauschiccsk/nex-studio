@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { listUsersApi, createUserApi, updateUserApi } from "@/services/api/users";
+import { listUsersApi, createUserApi, updateUserApi, deleteUserApi } from "@/services/api/users";
 import {
   listSystemSettingsApi,
   updateSystemSettingApi,
@@ -162,6 +162,22 @@ export default function SettingsPage() {
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
 
+  // Edit user form (inline expand pattern matches the create form below
+  // the table). Null = no user being edited.
+  const [editingUser, setEditingUser] = useState<UserRead | null>(null);
+  const [editFirstName, setEditFirstName] = useState("");
+  const [editLastName, setEditLastName] = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  const [editRole, setEditRole] = useState<UserRole>("shu");
+  const [editIsActive, setEditIsActive] = useState(true);
+  const [editing, setEditing] = useState(false);
+  const [editError, setEditError] = useState("");
+
+  // Inline delete confirmation: which row is currently asking "Áno/Nie?"
+  const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+
   /** Minimum password length — mirrors backend Pydantic constraint
    *  (Director directive 2026-05-13, internal app). */
   const PASSWORD_MIN_LENGTH = 5;
@@ -222,6 +238,65 @@ export default function SettingsPage() {
       const updated = await updateUserApi(u.id, { is_active: !u.is_active });
       setUsers((prev) => prev.map((x) => x.id === u.id ? updated : x));
     } catch { /* ignore */ }
+  }
+
+  function handleEditClick(u: UserRead) {
+    setEditingUser(u);
+    setEditFirstName(u.first_name ?? "");
+    setEditLastName(u.last_name ?? "");
+    setEditEmail(u.email);
+    setEditRole(u.role);
+    setEditIsActive(u.is_active);
+    setEditError("");
+    // Close the create form + delete confirm if either is open.
+    setShowNewForm(false);
+    setConfirmingDeleteId(null);
+  }
+
+  async function handleSaveEdit() {
+    if (!editingUser) return;
+    setEditing(true);
+    setEditError("");
+    try {
+      const updated = await updateUserApi(editingUser.id, {
+        first_name: editFirstName || null,
+        last_name: editLastName || null,
+        email: editEmail,
+        role: editRole,
+        is_active: editIsActive,
+      });
+      setUsers((prev) => prev.map((x) => x.id === updated.id ? updated : x));
+      setEditingUser(null);
+    } catch (e) {
+      const msg =
+        e instanceof Error && e.message
+          ? `Nepodarilo sa uložiť zmeny: ${e.message}`
+          : "Nepodarilo sa uložiť zmeny.";
+      setEditError(msg);
+    } finally {
+      setEditing(false);
+    }
+  }
+
+  async function handleConfirmDelete(id: string) {
+    setDeleting(true);
+    setDeleteError("");
+    try {
+      await deleteUserApi(id);
+      setUsers((prev) => prev.filter((x) => x.id !== id));
+      setConfirmingDeleteId(null);
+    } catch (e) {
+      // Common case: backend returns 409 when the user is FK-referenced
+      // by projects/bugs/etc. Surface the message + soft-disable hint.
+      const msg =
+        e instanceof Error && e.message
+          ? `Nedá sa vymazať: ${e.message}. Skús miesto toho deaktivovať.`
+          : "Nedá sa vymazať. Skús miesto toho deaktivovať.";
+      setDeleteError(msg);
+      setConfirmingDeleteId(null);
+    } finally {
+      setDeleting(false);
+    }
   }
 
   const TABS: { id: SettingsTab; label: string }[] = [
@@ -425,7 +500,7 @@ export default function SettingsPage() {
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-semibold text-slate-300">User management</h2>
               <button
-                onClick={() => setShowNewForm((v) => !v)}
+                onClick={() => { setShowNewForm((v) => !v); setEditingUser(null); setConfirmingDeleteId(null); }}
                 className="flex items-center gap-1.5 bg-primary-600 hover:bg-primary-500 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors"
               >
                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -497,12 +572,55 @@ export default function SettingsPage() {
                         )}
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <button
-                          onClick={() => handleToggleActive(u)}
-                          className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
-                        >
-                          {u.is_active ? "Deaktivovať" : "Aktivovať"}
-                        </button>
+                        {confirmingDeleteId === u.id ? (
+                          <div className="flex items-center justify-end gap-2 text-xs">
+                            <span className="text-slate-400">Naozaj vymazať?</span>
+                            <button
+                              onClick={() => handleConfirmDelete(u.id)}
+                              disabled={deleting}
+                              className="px-2 py-0.5 text-red-400 border border-red-500/40 rounded hover:bg-red-500/10 disabled:opacity-40"
+                            >
+                              Áno
+                            </button>
+                            <button
+                              onClick={() => setConfirmingDeleteId(null)}
+                              disabled={deleting}
+                              className="px-2 py-0.5 text-slate-400 border border-slate-700 rounded hover:bg-slate-800"
+                            >
+                              Nie
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-end gap-3">
+                            {/* Edit (pencil) */}
+                            <button
+                              onClick={() => handleEditClick(u)}
+                              title="Upraviť"
+                              className="text-slate-500 hover:text-slate-200 transition-colors"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                              </svg>
+                            </button>
+                            {/* Delete (trash) */}
+                            <button
+                              onClick={() => { setConfirmingDeleteId(u.id); setDeleteError(""); }}
+                              title="Vymazať"
+                              className="text-slate-500 hover:text-red-400 transition-colors"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                              </svg>
+                            </button>
+                            {/* Existing toggle (preserved per Director directive) */}
+                            <button
+                              onClick={() => handleToggleActive(u)}
+                              className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
+                            >
+                              {u.is_active ? "Deaktivovať" : "Aktivovať"}
+                            </button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                     );
@@ -515,6 +633,107 @@ export default function SettingsPage() {
                 </tbody>
               </table>
             </div>
+
+            {/* Delete error banner (shown after a failed DELETE — e.g. 409
+                FK conflict). Dismiss on next action. */}
+            {deleteError && (
+              <div className="mt-3 text-xs text-red-400 rounded bg-red-500/10 border border-red-500/20 px-3 py-2 flex items-center justify-between">
+                <span>{deleteError}</span>
+                <button onClick={() => setDeleteError("")} className="text-red-400 hover:text-red-300 ml-2">×</button>
+              </div>
+            )}
+
+            {/* Edit user form (inline expand, matches the create form pattern) */}
+            {editingUser && (
+              <div className="mt-4 rounded-xl border border-slate-700 bg-slate-900 p-4">
+                <h3 className="text-sm font-semibold text-slate-300 mb-3">
+                  Edit user · <span className="font-mono text-slate-400">{editingUser.username}</span>
+                </h3>
+                {editError && (
+                  <div className="mb-3 text-xs text-red-400 rounded bg-red-500/10 border border-red-500/20 px-3 py-2">{editError}</div>
+                )}
+                <div className="grid grid-cols-2 gap-3 mb-3">
+                  <div>
+                    <label className="block text-xs text-slate-500 mb-1">First name</label>
+                    <input
+                      type="text"
+                      value={editFirstName}
+                      onChange={(e) => setEditFirstName(e.target.value)}
+                      placeholder="e.g. Tibor"
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-500 mb-1">Last name</label>
+                    <input
+                      type="text"
+                      value={editLastName}
+                      onChange={(e) => setEditLastName(e.target.value)}
+                      placeholder="e.g. Rausch"
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-500 mb-1">Username</label>
+                    <input
+                      type="text"
+                      value={editingUser.username}
+                      readOnly
+                      disabled
+                      title="Username sa po vytvorení nemení (zachováva login stabilitu)."
+                      className="w-full bg-slate-800/60 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-500 font-mono cursor-not-allowed"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-500 mb-1">Email *</label>
+                    <input
+                      type="email"
+                      value={editEmail}
+                      onChange={(e) => setEditEmail(e.target.value)}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-500 mb-1">Role</label>
+                    <select
+                      value={editRole}
+                      onChange={(e) => setEditRole(e.target.value as UserRole)}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
+                    >
+                      <option value="shu">shu — Junior</option>
+                      <option value="ha">ha — Medior</option>
+                      <option value="ri">ri — Director</option>
+                    </select>
+                  </div>
+                  <div className="flex items-end">
+                    <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={editIsActive}
+                        onChange={(e) => setEditIsActive(e.target.checked)}
+                        className="rounded bg-slate-800 border-slate-700"
+                      />
+                      Active
+                    </label>
+                  </div>
+                </div>
+                <div className="flex gap-2 justify-end">
+                  <button
+                    onClick={() => { setEditingUser(null); setEditError(""); }}
+                    className="px-3 py-1.5 text-xs text-slate-400 border border-slate-700 rounded-lg hover:bg-slate-800 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleSaveEdit}
+                    disabled={editing || !editEmail}
+                    className="px-3 py-1.5 text-xs font-medium text-white bg-primary-600 hover:bg-primary-500 disabled:opacity-40 rounded-lg transition-colors"
+                  >
+                    {editing ? "Ukladám…" : "Save"}
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* New user form */}
             {showNewForm && (
