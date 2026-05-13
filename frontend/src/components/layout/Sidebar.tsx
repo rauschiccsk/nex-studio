@@ -138,24 +138,56 @@ interface NavItemProps {
   collapsed: boolean;
   active?: boolean;
   onClick?: () => void;
+  /** When true the link is rendered greyed out and is not clickable.
+   *  Used for Workflow + pipeline-step links when no verzia is selected
+   *  yet — the link stays visible (discoverability) but cannot navigate
+   *  to a fallback page (Director directive 2026-05-14: Workflow shows
+   *  workflow content, never project content). */
+  disabled?: boolean;
+  /** Optional tooltip shown when the item is disabled — explains why
+   *  the link is unavailable + how to enable it. */
+  disabledTitle?: string;
 }
 
-function NavItem({ icon, label, path, collapsed, active, onClick }: NavItemProps) {
+function NavItem({
+  icon,
+  label,
+  path,
+  collapsed,
+  active,
+  onClick,
+  disabled,
+  disabledTitle,
+}: NavItemProps) {
   const navigate = useNavigate();
 
   const handleClick = () => {
+    if (disabled) return;
     if (onClick) { onClick(); return; }
     if (path) navigate(path);
   };
 
   const base = "flex items-center gap-2.5 py-2 rounded-lg text-sm transition-colors w-full";
   const px = collapsed ? "px-0 justify-center" : "px-3";
-  const color = active
-    ? "bg-primary-500/15 text-primary-400"
-    : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-200";
+  const color = disabled
+    ? "text-slate-600 opacity-40 cursor-not-allowed"
+    : active
+      ? "bg-primary-500/15 text-primary-400"
+      : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-200";
+
+  const tooltip = disabled
+    ? disabledTitle ?? label
+    : collapsed
+      ? label
+      : undefined;
 
   return (
-    <button className={`${base} ${px} ${color}`} onClick={handleClick} title={collapsed ? label : undefined}>
+    <button
+      className={`${base} ${px} ${color}`}
+      onClick={handleClick}
+      disabled={disabled}
+      title={tooltip}
+    >
       {icon}
       {!collapsed && <span>{label}</span>}
     </button>
@@ -220,20 +252,18 @@ export default function Sidebar() {
   const hasProject = Boolean(selectedProject);
   const hasFullContext = Boolean(selectedProject && selectedVersion);
 
-  // Three-stage fallback for context-dependent links (Workflow,
-  // pipeline steps): without a verzia they cannot resolve to the
-  // workflow URL itself, so they degrade gracefully:
-  //   - project + version  → full URL with both ids
-  //   - project only       → ProjectDetailPage (versions list, where
-  //                           clicking a verzia auto-fills the
-  //                           selectedVersion slot via useActiveContextSync)
-  //   - nothing            → projects list (pin a project first)
-  // Sending to the bare ``/projects`` from Workflow felt like the link
-  // was redirecting to Projects (Director feedback 2026-05-14).
+  // Director directive 2026-05-14: Workflow + pipeline-step links must
+  // show *workflow content*, never projekt content. When no verzia is
+  // selected yet the links can't resolve to a workflow URL — so they
+  // render in disabled state (visible for discoverability, not
+  // clickable). The Versions link is the only path that legitimately
+  // works with just a pinned projekt — that's where the user picks a
+  // verzia, which auto-fills the selectedVersion slot and re-enables
+  // the rest of the workflow group.
   const projectsFallback = "/projects";
-  const versionFallback = hasProject
-    ? `/projects/${selectedProject!.slug}`
-    : projectsFallback;
+  const noVersionTooltip = hasProject
+    ? "Otvor verziu v Versions"
+    : "Najprv pripni projekt v Projects";
 
   return (
     <aside
@@ -281,9 +311,11 @@ export default function Sidebar() {
           path={
             hasFullContext
               ? `/projects/${selectedProject!.slug}/versions/${selectedVersion!.versionId}`
-              : versionFallback
+              : undefined
           }
           collapsed={collapsed}
+          disabled={!hasFullContext}
+          disabledTitle={noVersionTooltip}
           active={
             hasFullContext
               ? location.pathname ===
@@ -334,9 +366,11 @@ export default function Sidebar() {
             path={
               hasFullContext
                 ? `/projects/${selectedProject!.slug}/versions/${selectedVersion!.versionId}/${s.step}`
-                : versionFallback
+                : undefined
             }
             collapsed={collapsed}
+            disabled={!hasFullContext}
+            disabledTitle={noVersionTooltip}
             active={isStepActive(s.matchSteps ?? [s.step])}
           />
         ))}
