@@ -81,12 +81,14 @@ class TestPasswordValidation:
     """Short password rejected by schema validation."""
 
     def test_short_password_returns_422(self, client, db_session):
+        """Password below the schema min_length (5 — Director directive
+        2026-05-13) is rejected by Pydantic with 422."""
         user = seed_user(db_session, username="admin2", password="Nex12345", role="ri")
         token = login_user(client, username="admin2", password="Nex12345")
 
         resp = client.post(
             f"/api/v1/users/{user.id}/change-password",
-            json={"new_password": "short"},
+            json={"new_password": "abc"},  # 3 chars, below min_length=5
             headers={"Authorization": f"Bearer {token}"},
         )
 

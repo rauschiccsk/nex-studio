@@ -10,6 +10,15 @@ Role values correspond to the ``ck_users_role`` CHECK constraint on the
 guarded by a DB-level CHECK rather than a Python Enum, so ``Literal`` is
 the narrowest faithful representation — consistent with the approach
 used in :mod:`backend.schemas.guardian`.
+
+``first_name`` / ``last_name`` (migration 042) are nullable on the model
+and optional on the schemas because legacy rows (Director + seed users
+created before 2026-05-13) don't carry them. UI falls back to displaying
+``username`` when both are empty.
+
+Password ``min_length=5`` follows Director directive 2026-05-13: NEX Studio
+is an internal application behind auth, bcrypt-hashed, no public exposure.
+The relaxed minimum is acceptable for internal team use.
 """
 
 from __future__ import annotations
@@ -33,9 +42,12 @@ class UserCreate(BaseModel):
     database (``server_default='true'``); we mirror that default here so
     callers may omit it.
 
-    The ``password`` field accepts a plaintext password (min 8, max 128
+    The ``password`` field accepts a plaintext password (min 5, max 128
     characters).  The service layer hashes it with bcrypt before persisting
     to the ``password_hash`` column.
+
+    ``first_name`` / ``last_name`` are optional — the UI form may submit
+    them but legacy users created via seeds/migrations may not carry them.
     """
 
     username: str = Field(
@@ -52,9 +64,12 @@ class UserCreate(BaseModel):
     )
     password: str = Field(
         ...,
-        min_length=8,
+        min_length=5,
         max_length=128,
-        description="Plaintext password (hashed with bcrypt before storage).",
+        description=(
+            "Plaintext password (hashed with bcrypt before storage). "
+            "Min 5 — Director directive 2026-05-13, NEX Studio is internal."
+        ),
     )
     role: UserRole = Field(
         ...,
@@ -63,6 +78,16 @@ class UserCreate(BaseModel):
     is_active: bool = Field(
         default=True,
         description="Soft-disable flag; False excludes the user from auth.",
+    )
+    first_name: Optional[str] = Field(
+        default=None,
+        max_length=100,
+        description="Given name. Optional — legacy users may not have it.",
+    )
+    last_name: Optional[str] = Field(
+        default=None,
+        max_length=100,
+        description="Family name. Optional — legacy users may not have it.",
     )
 
 
@@ -95,6 +120,16 @@ class UserUpdate(BaseModel):
         default=None,
         description="Updated active flag.",
     )
+    first_name: Optional[str] = Field(
+        default=None,
+        max_length=100,
+        description="Updated given name.",
+    )
+    last_name: Optional[str] = Field(
+        default=None,
+        max_length=100,
+        description="Updated family name.",
+    )
 
 
 class ChangePasswordRequest(BaseModel):
@@ -106,9 +141,12 @@ class ChangePasswordRequest(BaseModel):
 
     new_password: str = Field(
         ...,
-        min_length=8,
+        min_length=5,
         max_length=128,
-        description="New plaintext password (min 8, max 128 characters).",
+        description=(
+            "New plaintext password (min 5, max 128 characters). "
+            "Min 5 — Director directive 2026-05-13, NEX Studio is internal."
+        ),
     )
 
 
@@ -129,5 +167,7 @@ class UserRead(BaseModel):
     email: str = Field(..., min_length=1, max_length=255)
     role: UserRole
     is_active: bool
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
     created_at: datetime
     updated_at: datetime

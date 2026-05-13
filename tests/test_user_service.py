@@ -99,6 +99,41 @@ class TestUserService:
         created = service.create(db_session, payload)
         assert created.is_active is True
 
+    def test_create_with_first_last_name(self, db_session):
+        """``first_name`` / ``last_name`` persist when supplied (migration 042)."""
+        created = service.create(
+            db_session,
+            _payload(first_name="Tibor", last_name="Rausch"),
+        )
+        assert created.first_name == "Tibor"
+        assert created.last_name == "Rausch"
+
+    def test_create_without_name_fields_is_valid(self, db_session):
+        """Legacy / minimal create without name fields still works (nullable)."""
+        created = service.create(db_session, _payload())
+        # _payload doesn't set first_name / last_name → None on the ORM.
+        assert created.first_name is None
+        assert created.last_name is None
+
+    def test_create_rejects_password_under_min_length(self):
+        """Pydantic enforces min_length=5 on ``password`` (Director directive 2026-05-13)."""
+        import pytest as _pt
+        from pydantic import ValidationError
+
+        with _pt.raises(ValidationError, match="at least 5 characters"):
+            UserCreate(
+                username="tooshort",
+                email="x@y.sk",
+                password="abcd",  # 4 chars
+                role="ha",
+            )
+
+    def test_create_accepts_password_exactly_5_chars(self, db_session):
+        """``password='abcde'`` (exactly 5) is the new minimum (was 8)."""
+        created = service.create(db_session, _payload(password="abcde"))
+        # Bcrypt-hashed plaintext was 5 chars; hash itself is 60 chars.
+        assert len(created.password_hash) >= 50
+
     # ------------------------------------------------------------------- get
     def test_get_by_id(self, db_session):
         """``get_by_id`` returns the user when it exists."""

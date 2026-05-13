@@ -181,6 +181,8 @@ def create(db: Session, data: UserCreate) -> User:
         password_hash=hashed,
         role=data.role,
         is_active=data.is_active,
+        first_name=data.first_name,
+        last_name=data.last_name,
     )
     db.add(user)
     db.flush()
@@ -216,7 +218,14 @@ def update(db: Session, user_id: UUID, data: UserUpdate) -> User:
     update_data = data.model_dump(exclude_unset=True)
     # Defensive guard — the schema already excludes immutable fields, but
     # silently dropping any that slip through keeps the service honest.
-    allowed_fields = {"username", "email", "role", "is_active"}
+    allowed_fields = {
+        "username",
+        "email",
+        "role",
+        "is_active",
+        "first_name",
+        "last_name",
+    }
 
     # Uniqueness checks only for actually-changing values.
     new_username = update_data.get("username")

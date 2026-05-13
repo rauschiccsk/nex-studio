@@ -26,6 +26,8 @@ class User(Base, UUIDMixin, TimestampMixin):
     password_hash = Column(String(255), nullable=False)
     role = Column(String(10), nullable=False)
     is_active = Column(Boolean, nullable=False, server_default="true")
+    first_name = Column(String(100), nullable=True)
+    last_name = Column(String(100), nullable=True)
 
     __table_args__ = (
         UniqueConstraint("username", name="uq_users_username"),
