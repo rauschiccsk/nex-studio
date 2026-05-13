@@ -16,6 +16,7 @@ import MMOverviewPage from "./pages/MMOverviewPage";
 import MMModulePage from "./pages/MMModulePage";
 import MMDepMapPage from "./pages/MMDepMapPage";
 import KnowledgeBasePage from "./pages/KnowledgeBasePage";
+import ProjectSpecsPage from "./pages/ProjectSpecsPage";
 import CredentialsPage from "./pages/CredentialsPage";
 import SettingsPage from "./pages/SettingsPage";
 import SpecPage from "./pages/step/SpecPage";
@@ -61,6 +62,7 @@ function App() {
             <Route path="projects/:slug/mm/depmap" element={<MMDepMapPage />} />
             <Route path="projects/:slug/mm/:moduleId" element={<MMModulePage />} />
             <Route path="kb" element={<KnowledgeBasePage />} />
+            <Route path="project-specs" element={<ProjectSpecsPage />} />
             <Route path="credentials" element={<CredentialsPage />} />
             <Route path="settings" element={<SettingsPage />} />
           </Route>

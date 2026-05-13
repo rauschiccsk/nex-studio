@@ -269,6 +269,7 @@ export default function Sidebar() {
           />
         ))}
         <NavItem icon={<IconBook />} label="Knowledge Base" path="/kb" collapsed={collapsed} active={isActive("/kb")} />
+        <NavItem icon={<IconBook />} label="Project Specs" path="/project-specs" collapsed={collapsed} active={isActive("/project-specs")} />
         <NavItem icon={<IconKey />} label="Credentials" path="/credentials" collapsed={collapsed} active={isActive("/credentials")} />
 
         <SectionLabel label="Settings" collapsed={collapsed} />
