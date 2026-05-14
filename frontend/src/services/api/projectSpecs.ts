@@ -15,9 +15,12 @@ interface ListResponse {
   count: number;
 }
 
-interface ContentResponse {
+export interface ContentResponse {
   relative_path: string;
   content: string;
+  /** False for binary files — frontend renders a "cannot display"
+   *  placeholder instead of the (empty) ``content``. */
+  is_text: boolean;
 }
 
 interface UpdateResponse {
@@ -25,22 +28,25 @@ interface UpdateResponse {
   status: string;
 }
 
-/** List every ``.md`` file under /opt/projects/{slug}/docs/ (ri only). */
+/** List every file + every empty directory under
+ *  ``/opt/projects/{slug}/docs/`` (ri only). Director directive
+ *  2026-05-14: the view reflects the real filesystem — all extensions,
+ *  empty folders included. */
 export async function listProjectSpecs(): Promise<KnowledgeDoc[]> {
   const data = await api.get<ListResponse>("/project-specs/list");
   return data.documents;
 }
 
-/** Read a single ``.md`` file. ``slug`` is the project, ``path`` is
- * the part after the slug (must start with ``docs/``). */
+/** Read a single file. ``slug`` is the project, ``path`` is the part
+ *  after the slug (must start with ``docs/``). Returns the full
+ *  response so the caller can branch on ``is_text``. */
 export async function getProjectSpecContent(
   slug: string,
   path: string,
-): Promise<string> {
-  const data = await api.get<ContentResponse>("/project-specs/content", {
+): Promise<ContentResponse> {
+  return await api.get<ContentResponse>("/project-specs/content", {
     params: { slug, path },
   });
-  return data.content;
 }
 
 /** Overwrite an existing ``.md`` file (ri only). */

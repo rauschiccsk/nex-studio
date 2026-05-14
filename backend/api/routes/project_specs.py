@@ -71,9 +71,15 @@ def get_project_spec_content(
     ),
     _user: User = Depends(require_ri_role),
 ) -> ProjectSpecContent:
-    """Read a single ``.md`` file under ``/opt/projects/<slug>/``."""
+    """Read a file under ``/opt/projects/<slug>/``.
+
+    Returns text content for whitelisted text extensions (``.md``,
+    ``.txt``, ``.csv``, ``.json``, ``.yaml``, source code, etc.); for
+    binary files returns ``is_text=False`` + empty content so the
+    frontend can render a "cannot display" placeholder.
+    """
     try:
-        content = project_specs_service.read_content(slug, path)
+        content, is_text = project_specs_service.read_content(slug, path)
     except ProjectSpecsError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -82,6 +88,7 @@ def get_project_spec_content(
     return ProjectSpecContent(
         relative_path=f"{slug}/{path}",
         content=content,
+        is_text=is_text,
     )
 
 

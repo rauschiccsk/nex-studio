@@ -58,6 +58,9 @@ export default function ProjectSpecsPage() {
   // Viewer state
   const [selectedDoc, setSelectedDoc] = useState<KnowledgeDoc | null>(null);
   const [docContent, setDocContent] = useState("");
+  /** False when the backend reported a binary file — frontend shows a
+   *  "cannot display" placeholder instead of trying to render bytes. */
+  const [docIsText, setDocIsText] = useState(true);
   const [loadingContent, setLoadingContent] = useState(false);
 
   // Edit state
@@ -87,6 +90,16 @@ export default function ProjectSpecsPage() {
   }, []);
 
   const loadDocContent = useCallback(async (doc: KnowledgeDoc) => {
+    // Tree builder may pass a synthetic directory node (empty folder
+    // entry) — there is no content to load for those.
+    if (doc.is_directory) {
+      setSelectedDoc(doc);
+      setEditMode(false);
+      setDocContent("");
+      setDocIsText(true);
+      setError("");
+      return;
+    }
     const parts = splitProjectPath(doc.relative_path);
     if (!parts) {
       setError("Neplatná cesta dokumentu");
@@ -97,8 +110,9 @@ export default function ProjectSpecsPage() {
     setLoadingContent(true);
     setError("");
     try {
-      const content = await getProjectSpecContent(parts.slug, parts.path);
-      setDocContent(content);
+      const resp = await getProjectSpecContent(parts.slug, parts.path);
+      setDocContent(resp.content);
+      setDocIsText(resp.is_text);
     } catch (e) {
       setError(
         e instanceof ApiError
@@ -283,25 +297,56 @@ export default function ProjectSpecsPage() {
             <div className="flex-1 flex flex-col overflow-hidden">
               <div className="flex items-center justify-between p-3 border-b border-gray-700">
                 <div className="text-sm text-gray-300 truncate">
-                  <span className="text-gray-500">📄</span>{" "}
+                  <span className="text-gray-500">
+                    {selectedDoc.is_directory ? "📂" : "📄"}
+                  </span>{" "}
                   <span className="text-gray-100">{selectedDoc.relative_path}</span>
                 </div>
-                <button
-                  onClick={() => {
-                    setEditContent(docContent);
-                    setEditMode(true);
-                  }}
-                  className="flex items-center gap-1.5 px-2 py-1 bg-gray-700 text-gray-300 rounded hover:bg-gray-600 text-xs"
-                >
-                  <Pencil size={12} /> Upraviť
-                </button>
+                {/* Edit button — Markdown files only. Non-.md files
+                    (CSV, JSON, etc.) are read-only per service contract;
+                    binary files (is_text=false) and directory entries
+                    have no content to edit. */}
+                {selectedDoc.filename.toLowerCase().endsWith(".md") &&
+                  !selectedDoc.is_directory &&
+                  docIsText && (
+                    <button
+                      onClick={() => {
+                        setEditContent(docContent);
+                        setEditMode(true);
+                      }}
+                      className="flex items-center gap-1.5 px-2 py-1 bg-gray-700 text-gray-300 rounded hover:bg-gray-600 text-xs"
+                    >
+                      <Pencil size={12} /> Upraviť
+                    </button>
+                  )}
               </div>
               <div className="flex-1 overflow-y-auto p-6">
                 {loadingContent ? (
                   <div className="flex items-center gap-2 text-gray-400">
                     <Loader2 size={16} className="animate-spin" /> Načítavam obsah...
                   </div>
-                ) : (
+                ) : selectedDoc.is_directory ? (
+                  // Empty directory placeholder — folder exists on disk
+                  // but has no contents yet.
+                  <div className="text-sm text-gray-500 italic">
+                    Prázdny adresár ({selectedDoc.relative_path}). Pridaj
+                    sem súbory cez SSH alebo cez agentov; po obnove sa
+                    objavia v strome.
+                  </div>
+                ) : !docIsText ? (
+                  // Binary file — backend returned is_text=false. No
+                  // content payload to render; the user can SSH to view.
+                  <div className="text-sm text-gray-400">
+                    <p className="mb-2">
+                      <span className="text-gray-500">⚠️</span> Binárny
+                      súbor — obsah sa nedá zobraziť v prehliadači.
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      Veľkosť: {(selectedDoc.size_bytes / 1024).toFixed(1)} kB.
+                      Pre prezeranie použi SSH alebo lokálny prehliadač.
+                    </p>
+                  </div>
+                ) : selectedDoc.filename.toLowerCase().endsWith(".md") ? (
                   <div className="prose prose-invert prose-sm max-w-none">
                     <ReactMarkdown
                       remarkPlugins={[remarkGfm]}
@@ -343,6 +388,12 @@ export default function ProjectSpecsPage() {
                       {docContent}
                     </ReactMarkdown>
                   </div>
+                ) : (
+                  // Plain text file (CSV / JSON / YAML / source code /
+                  // shell etc.) — render verbatim in monospace.
+                  <pre className="text-xs text-gray-200 font-mono whitespace-pre-wrap break-all">
+                    {docContent}
+                  </pre>
                 )}
               </div>
             </div>

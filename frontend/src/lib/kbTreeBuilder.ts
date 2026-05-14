@@ -72,6 +72,28 @@ export function buildTree(
       parentChildren = folder.children;
     }
 
+    // Doc represents an empty directory — register it as a folder node
+    // rather than a file leaf. Project Specs sends these synthetic
+    // entries so freshly-created empty folders show up in the tree.
+    if (doc.is_directory) {
+      const fullPath = doc.relative_path;
+      let folder = folderIndex.get(fullPath);
+      if (folder === undefined) {
+        const newFolder: TreeNode = {
+          type: "folder",
+          path: fullPath,
+          name: fileName,
+          depth: folderParts.length,
+          children: [],
+        };
+        folderIndex.set(fullPath, newFolder);
+        parentChildren.push(newFolder);
+        folder = newFolder;
+      }
+      // No file leaf to push — directory itself is the node.
+      continue;
+    }
+
     // Attach the leaf file under the (possibly empty) folder parent.
     parentChildren.push({
       type: "file",

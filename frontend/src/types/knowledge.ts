@@ -11,6 +11,11 @@ export interface KnowledgeDoc {
   filename: string;
   category: string;
   size_bytes: number;
+  /** Synthetic entry for an empty directory — Project Specs uses this
+   *  so users see folders they've created (e.g. an empty ``import/``)
+   *  even before any file is added. KB list never sets this field, so
+   *  the default ``false`` keeps existing KB behaviour. */
+  is_directory?: boolean;
 }
 
 /**

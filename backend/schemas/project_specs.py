@@ -12,17 +12,26 @@ from pydantic import BaseModel, Field
 
 
 class ProjectSpecDoc(BaseModel):
-    """A single ``.md`` file under ``/opt/projects/<slug>/docs/``.
+    """A single filesystem entry under ``/opt/projects/<slug>/docs/``.
 
     Fields mirror :class:`KnowledgeDoc` in the frontend so the existing
-    KbTree builder works without changes.
+    KbTree builder works without changes. Director directive 2026-05-14:
+    Project Specs must show the **real filesystem** — all files, not just
+    ``.md`` — and empty directories that the user has created (e.g. an
+    empty ``import/`` folder still appears in the tree).
+
+    ``is_directory=True`` marks a synthetic entry for an empty directory
+    (no descendants yet); ``size_bytes`` is 0 for such entries.
+    Non-empty directories are implicit — the frontend tree builder
+    creates them when files underneath are present.
     """
 
     relative_path: str = Field(
         ...,
         description=(
             "Path relative to ``/opt/projects/``, e.g. "
-            "``nex-inbox/docs/specs/customer-requirements.md``. "
+            "``nex-inbox/docs/specs/customer-requirements.md`` for a file "
+            "or ``nex-inbox/docs/import`` for an empty directory. "
             "Top-level segment is the project slug — this is what KbTree "
             "renders as the root folder."
         ),
@@ -35,6 +44,13 @@ class ProjectSpecDoc(BaseModel):
         ),
     )
     size_bytes: int
+    is_directory: bool = Field(
+        default=False,
+        description=(
+            "True for synthetic entries representing empty directories. "
+            "Frontend tree builder renders these as leaf folders."
+        ),
+    )
 
 
 class ProjectSpecListResponse(BaseModel):
@@ -45,10 +61,21 @@ class ProjectSpecListResponse(BaseModel):
 
 
 class ProjectSpecContent(BaseModel):
-    """Response for ``GET /api/v1/project-specs/content``."""
+    """Response for ``GET /api/v1/project-specs/content``.
+
+    ``is_text=False`` indicates a binary file that the backend refused to
+    return as text — frontend should fall back to a "cannot display"
+    message instead of trying to render ``content`` (which will be
+    empty in that case). The endpoint never returns raw bytes; binary
+    download is out of scope for v1 (Director can SSH for those).
+    """
 
     relative_path: str
     content: str
+    is_text: bool = Field(
+        default=True,
+        description="False if the file is binary and cannot be rendered as text.",
+    )
 
 
 class ProjectSpecUpdate(BaseModel):
