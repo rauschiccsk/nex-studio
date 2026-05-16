@@ -48,6 +48,11 @@ class DialogueSessionRead(BaseModel):
     updated_at: datetime
     ended_at: Optional[datetime]
     terminated_by: Optional[TerminatedBy]
+    #: claude CLI session UUIDs (disk-persisted by claude itself).
+    #: Set during create_session, used for ``claude -p --resume <uuid>``
+    #: per turn. Returned for audit / debug, not directly used by FE.
+    customer_session_id: Optional[uuid.UUID] = None
+    designer_session_id: Optional[uuid.UUID] = None
 
 
 class DialogueSessionWithMessages(DialogueSessionRead):

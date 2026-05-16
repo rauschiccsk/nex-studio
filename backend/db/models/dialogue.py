@@ -68,6 +68,12 @@ class DialogueSession(Base, UUIDMixin, TimestampMixin):
     terminated_by = Column(String(20), nullable=True)
     message_count = Column(Integer, nullable=False, server_default="0")
 
+    #: claude CLI session UUIDs — claude itself persists conversation
+    #: memory on disk against these IDs (``claude -p --resume <uuid>``).
+    #: Set on create_session after the initial agent invocations.
+    customer_session_id = Column(UUID(as_uuid=True), nullable=True)
+    designer_session_id = Column(UUID(as_uuid=True), nullable=True)
+
     __table_args__ = (
         CheckConstraint(
             "status IN ('active', 'paused', 'ended')",

@@ -1,49 +1,66 @@
 """Dialogue orchestration service — Customer ↔ Designer via Director gate.
 
-Director directive 2026-05-15: 4th ICC agent (Customer) systematically
-asks Designer about application functionality; Director mediates every
-message (plný-gate mode). This service holds:
+Architecture (2026-05-16 rework)
+-------------------------------
+Replaces the original PTY-based orchestration with **claude CLI's
+non-interactive ``--print`` mode** + ``--resume <session-id>`` for
+conversation continuity. Each Gate E dialogue session holds two
+**claude CLI session UUIDs** (one per agent role) which claude itself
+persists on disk — server just invokes ``claude -p --resume <uuid>``
+per turn and gets a synchronous response.
 
-* Session lifecycle (create / pause / end / startup orphan cleanup)
-* Message lifecycle (add pending → Director approves → mark delivered
-  → forward to recipient agent via its PTY stdin)
-* PTY orchestration: spawns ``claude --append-system-prompt`` for both
-  Customer and Designer per session, owns their lifetimes, routes
-  messages between them via DB
+Why the rework: the original PTY approach spawned ``claude`` in its
+interactive TUI mode by default. The TUI doesn't process stdin as
+"submit prompt" — it expects keyboard input into an input box. Writing
+to PTY stdin sent characters into that box but they never got
+submitted; the per-message we persisted was actually claude's startup
+banner + ANSI escape sequences. See session log 2026-05-16-001 for the
+diagnosis.
 
-Architecture notes
-------------------
-Dialogue lives in **its own PTY namespace**, distinct from
-:mod:`backend.services.agent_terminal`. Reason: agent_terminal enforces
-"single active session per (user, role)" — that conflicts with a
-Director who may have a standalone Designer terminal open AND a Gate E
-dialogue (where Designer is one of the two dialogue agents). Keeping
-dialogue PTYs separate eliminates the constraint clash.
+Why ``--print`` is better:
 
-The shared low-level PTY mechanics (spawn + read pump + write +
-SIGTERM) are deliberately copy-pasted from ``agent_terminal`` rather
-than extracted to a helper module — the two services have subtly
-different invariants (agent_terminal exposes a live terminal to the
-user; dialogue uses agents headlessly and writes their stdout to DB
-messages). A future refactor can extract once both shapes stabilise.
+* One-shot per turn — no long-lived processes, no orphans, no PTY
+* claude CLI manages conversation memory itself (disk-persisted session)
+* Output is plain text (or JSON if ``--output-format=json``) — no
+  ANSI escapes, no banner pollution
+* Tools (Read/Glob/Grep) work the same way as in interactive mode
+* Errors surface as non-zero exit + stderr (catchable in subprocess)
+
+Message flow
+------------
+Each Director action triggers exactly one ``claude -p`` invocation
+which produces exactly one ``pending`` DialogueMessage. Director
+approves or rejects, the cycle continues.
+
+    Trigger Customer next question
+        → claude -p --resume <customer-uuid> "Generate next question..."
+        → save Customer's response as pending message
+
+    Approve Customer's pending message
+        → mark approved → mark delivered
+        → claude -p --resume <designer-uuid> "<customer-content>"
+        → save Designer's response as pending message
+
+    Approve Designer's pending message
+        → mark approved → mark delivered
+        → claude -p --resume <customer-uuid> "<designer-content>"
+        → save Customer's follow-up question as pending message (cycle)
+
+    Director inject (to <recipient>)
+        → save Director's message as delivered
+        → claude -p --resume <recipient-uuid> "<inject-content>"
+        → save recipient's response as pending message
 """
 
 from __future__ import annotations
 
 import asyncio
-import collections
-import errno
 import logging
-import os
 import re
-import signal
-import time
 import uuid
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-import ptyprocess
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -55,63 +72,42 @@ PROJECTS_ROOT = Path("/opt/projects")
 _SLUG_RE = re.compile(r"^[a-z][a-z0-9-]*[a-z0-9]$|^[a-z]$")
 _DIALOGUE_ROLES = frozenset({"customer", "designer"})
 
-#: PTY output ring buffer per agent (used to collect agent's stdout
-#: into a single message that gets persisted when the agent stops
-#: producing output for SETTLE_SECONDS).
-_BUFFER_MAX_BYTES = 64 * 1024
+#: Timeout per claude --print invocation (seconds). Tools-heavy turns
+#: (Read large spec docs, multiple Grep) can take longer than a plain
+#: LLM call — 180s is a safe upper bound; tighten once we see real
+#: distributions.
+CLAUDE_INVOKE_TIMEOUT = 180
 
-#: Settle window after which the accumulated agent output is treated
-#: as one complete message and persisted into ``dialogue_messages``.
-#: Agents typically write their response in one burst; this delay
-#: catches stragglers (e.g. token streaming) without waiting forever.
-SETTLE_SECONDS = 2.5
+#: Initial prompt sent to each agent on session create. Triggers claude
+#: to spawn its session-on-disk and acknowledge readiness.
+_INIT_PROMPT_CUSTOMER = (
+    "Gate E session sa práve začína. Si Customer agent. Po tomto "
+    "potvrdení čakaj na inštrukciu 'Generate next question per your "
+    "charter.' — vtedy vygeneruj prvú otázku z batch 1 svojho coverage "
+    "plánu. Odpovedz teraz iba 'Customer ready.'."
+)
+_INIT_PROMPT_DESIGNER = (
+    "Gate E session sa práve začína. Si Designer agent. Po tomto "
+    "potvrdení čakaj na otázku od Customer agenta — Director ti ju "
+    "doručí po schválení. Odpovedz teraz iba 'Designer ready.'."
+)
 
-#: SIGTERM grace before SIGKILL when ending a session.
-SIGTERM_GRACE_SECONDS = 5
+#: Prompt sent to Customer when Director clicks "Trigger Customer
+#: next question". Customer's charter §4 defines the 7-batch coverage
+#: walk-through; claude will pick the next un-covered question.
+_NEXT_QUESTION_PROMPT = (
+    "Generate the next question per your charter §4 coverage plan. "
+    "Reply with **just the question** in Slovak (1-3 sentences). "
+    "No preamble like 'OK, here is my next question:'."
+)
 
 
 class DialogueError(ValueError):
-    """Raised on invalid input (bad slug, missing project, missing
-    agent spec, malformed message state transition)."""
+    """Invalid input — bad slug, missing project, missing agent charter."""
 
 
-class DialogueSessionNotFoundError(DialogueError):
-    """No active in-memory session for the given id."""
-
-
-@dataclass
-class _AgentChannel:
-    """One side (Customer or Designer) of a dialogue session.
-
-    Holds the PTY process + a collector for in-flight stdout (so
-    multi-chunk agent responses can be assembled into a single
-    DialogueMessage row).
-    """
-
-    role: str
-    process: ptyprocess.PtyProcess
-    output_buffer: bytearray = field(default_factory=bytearray)
-    last_output_at: float = field(default=0.0)
-    reader_task: Optional[asyncio.Task] = None
-    settle_task: Optional[asyncio.Task] = None
-
-
-@dataclass
-class _RuntimeSession:
-    """In-memory runtime state for one active dialogue session."""
-
-    id: uuid.UUID
-    user_id: uuid.UUID
-    project_slug: str
-    version_id: Optional[uuid.UUID]
-    customer: _AgentChannel
-    designer: _AgentChannel
-    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    listeners: set[asyncio.Queue] = field(default_factory=set)
-
-
-_sessions: dict[uuid.UUID, _RuntimeSession] = {}
-_registry_lock = asyncio.Lock()
+class DialogueAgentError(RuntimeError):
+    """claude CLI invocation failed (non-zero exit, timeout, ...)."""
 
 
 # ---------------------------------------------------------------------------
@@ -125,7 +121,7 @@ def _validate_slug(slug: str) -> None:
 
 
 def _resolve_agent_spec(slug: str, role: str) -> Path:
-    """Return the validated path to ``.claude/agents/<role>/CLAUDE.md``."""
+    """Return the path to ``.claude/agents/<role>/CLAUDE.md`` if it exists."""
     _validate_slug(slug)
     if role not in _DIALOGUE_ROLES:
         raise DialogueError(f"Invalid dialogue role: {role!r}")
@@ -141,7 +137,91 @@ def _resolve_agent_spec(slug: str, role: str) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Public API
+# claude CLI invocation
+# ---------------------------------------------------------------------------
+
+
+async def _invoke_agent(
+    *,
+    project_slug: str,
+    claude_session_id: uuid.UUID,
+    prompt: str,
+    charter_path: Optional[Path] = None,
+) -> str:
+    """Invoke ``claude -p`` with the agent's session UUID + prompt.
+
+    Args:
+        project_slug: cwd will be ``/opt/projects/<slug>/`` so claude
+            picks up project-level settings (CLAUDE.md, .claude/settings)
+        claude_session_id: claude CLI session UUID (disk-persisted by claude)
+        prompt: user message to send
+        charter_path: only on the **first** call for this session —
+            ``--session-id <uuid>`` + ``--append-system-prompt <charter>``
+            create the session and load the agent's charter.
+            For subsequent calls pass ``None`` and we use ``--resume <uuid>``
+            which leverages claude's stored conversation memory.
+
+    Returns:
+        Plain text response from claude (stripped of trailing newline)
+
+    Raises:
+        DialogueAgentError: subprocess non-zero exit, timeout, or
+            decode failure.
+    """
+    project_root = PROJECTS_ROOT / project_slug
+
+    args = ["claude", "-p", "--output-format", "text"]
+    if charter_path is not None:
+        # First invocation for this claude session — create it.
+        charter_text = charter_path.read_text(encoding="utf-8")
+        args += [
+            "--session-id",
+            str(claude_session_id),
+            "--append-system-prompt",
+            charter_text,
+        ]
+    else:
+        # Subsequent invocation — resume existing session.
+        args += ["--resume", str(claude_session_id)]
+    args.append(prompt)
+
+    logger.info(
+        "Invoking claude agent: project=%s session=%s charter=%s prompt_len=%d",
+        project_slug,
+        claude_session_id,
+        "yes" if charter_path else "no",
+        len(prompt),
+    )
+
+    proc = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        cwd=str(project_root),
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(),
+            timeout=CLAUDE_INVOKE_TIMEOUT,
+        )
+    except asyncio.TimeoutError as exc:
+        proc.kill()
+        await proc.wait()
+        raise DialogueAgentError(
+            f"claude invocation timed out after {CLAUDE_INVOKE_TIMEOUT}s",
+        ) from exc
+
+    if proc.returncode != 0:
+        stderr_text = stderr.decode("utf-8", errors="replace").strip()
+        raise DialogueAgentError(
+            f"claude exited with code {proc.returncode}: {stderr_text[:500]}",
+        )
+
+    return stdout.decode("utf-8", errors="replace").strip()
+
+
+# ---------------------------------------------------------------------------
+# Session lifecycle
 # ---------------------------------------------------------------------------
 
 
@@ -152,88 +232,68 @@ async def create_session(
     version_id: Optional[uuid.UUID],
     db: Session,
 ) -> DialogueSession:
-    """Spawn both agents under PTY and create the DB session row.
+    """Create a Gate E session: insert DB row, init both claude sessions.
+
+    Initialisation calls claude twice (once per agent role) with the
+    agent's charter via ``--append-system-prompt``. claude persists each
+    session on disk; future turns just ``--resume <uuid>``.
 
     Raises:
-        DialogueError: invalid slug, missing project, missing charter
-            for customer or designer (both must exist).
+        DialogueError: invalid slug / missing project / missing charter
+        DialogueAgentError: claude CLI failed during init
     """
     customer_spec = _resolve_agent_spec(project_slug, "customer")
     designer_spec = _resolve_agent_spec(project_slug, "designer")
+
+    customer_uuid = uuid.uuid4()
+    designer_uuid = uuid.uuid4()
 
     row = DialogueSession(
         user_id=user_id,
         project_slug=project_slug,
         version_id=version_id,
         status="active",
+        customer_session_id=customer_uuid,
+        designer_session_id=designer_uuid,
     )
     db.add(row)
     db.commit()
     db.refresh(row)
 
-    customer_proc = _spawn_agent("customer", project_slug, customer_spec)
-    designer_proc = _spawn_agent("designer", project_slug, designer_spec)
+    # Initialise both agents with their charters. Discard their ack
+    # responses — they're just confirming readiness, not part of the
+    # user-visible dialogue.
+    try:
+        await _invoke_agent(
+            project_slug=project_slug,
+            claude_session_id=customer_uuid,
+            prompt=_INIT_PROMPT_CUSTOMER,
+            charter_path=customer_spec,
+        )
+        await _invoke_agent(
+            project_slug=project_slug,
+            claude_session_id=designer_uuid,
+            prompt=_INIT_PROMPT_DESIGNER,
+            charter_path=designer_spec,
+        )
+    except DialogueAgentError:
+        # Rollback session row — we can't recover a half-initialised dialogue.
+        row.status = "ended"
+        from sqlalchemy import func as sql_func
 
-    runtime = _RuntimeSession(
-        id=row.id,
-        user_id=user_id,
-        project_slug=project_slug,
-        version_id=version_id,
-        customer=_AgentChannel(role="customer", process=customer_proc),
-        designer=_AgentChannel(role="designer", process=designer_proc),
-    )
-
-    async with _registry_lock:
-        _sessions[row.id] = runtime
-
-    # Spawn reader tasks for both agents.
-    runtime.customer.reader_task = asyncio.create_task(
-        _pump_agent_output(runtime, "customer"),
-        name=f"dialogue-reader-customer-{row.id}",
-    )
-    runtime.designer.reader_task = asyncio.create_task(
-        _pump_agent_output(runtime, "designer"),
-        name=f"dialogue-reader-designer-{row.id}",
-    )
+        row.ended_at = sql_func.now()
+        row.terminated_by = "user"  # treat init failure as user-triggered abort
+        db.commit()
+        raise
 
     logger.info(
-        "Created dialogue session: id=%s user=%s project=%s customer_pid=%s designer_pid=%s",
+        "Dialogue session created: id=%s project=%s customer_uuid=%s designer_uuid=%s",
         row.id,
-        user_id,
         project_slug,
-        customer_proc.pid,
-        designer_proc.pid,
+        customer_uuid,
+        designer_uuid,
     )
     return row
-
-
-def _spawn_agent(role: str, project_slug: str, spec_path: Path) -> ptyprocess.PtyProcess:
-    """Spawn ``claude --append-system-prompt $(cat spec)`` for the given role."""
-    append_prompt = spec_path.read_text(encoding="utf-8")
-    env = {**os.environ, "TERM": "xterm-256color", "FORCE_COLOR": "0"}
-    project_root = PROJECTS_ROOT / project_slug
-    return ptyprocess.PtyProcess.spawn(
-        ["claude", "--append-system-prompt", append_prompt],
-        cwd=str(project_root),
-        env=env,
-        dimensions=(40, 120),
-    )
-
-
-async def send_to_agent(
-    *,
-    session_id: uuid.UUID,
-    recipient: str,
-    content: str,
-) -> None:
-    """Forward an approved message into the recipient agent's stdin."""
-    runtime = _sessions.get(session_id)
-    if runtime is None:
-        raise DialogueSessionNotFoundError(f"No active session: {session_id}")
-    channel = runtime.customer if recipient == "customer" else runtime.designer
-    loop = asyncio.get_running_loop()
-    # Append newline so the agent's input loop sees a complete prompt.
-    await loop.run_in_executor(None, channel.process.write, content.encode("utf-8") + b"\n")
 
 
 async def end_session(
@@ -242,32 +302,9 @@ async def end_session(
     terminated_by: str,
     db: Session,
 ) -> None:
-    """SIGTERM both agents → grace → SIGKILL. Finalize DB row."""
-    runtime = _sessions.get(session_id)
-    if runtime is not None:
-        for channel in (runtime.customer, runtime.designer):
-            try:
-                channel.process.kill(signal.SIGTERM)
-            except Exception:  # noqa: BLE001
-                pass
-
-        for _ in range(SIGTERM_GRACE_SECONDS * 10):
-            both_dead = all(not c.process.isalive() for c in (runtime.customer, runtime.designer))
-            if both_dead:
-                break
-            await asyncio.sleep(0.1)
-
-        for channel in (runtime.customer, runtime.designer):
-            if channel.process.isalive():
-                try:
-                    channel.process.kill(signal.SIGKILL)
-                except Exception:  # noqa: BLE001
-                    pass
-
-        async with _registry_lock:
-            _sessions.pop(session_id, None)
-
-    # Finalize DB row regardless of runtime presence.
+    """Mark session as ended — claude CLI sessions on disk are kept
+    (they're cheap, persistent, and useful for audit / debug). The
+    DB row's ``status`` flips to ``ended`` so the UI hides controls."""
     from sqlalchemy import func as sql_func
 
     row = db.get(DialogueSession, session_id)
@@ -279,11 +316,16 @@ async def end_session(
 
 
 def mark_orphaned_on_startup(db: Session) -> int:
-    """On BE startup, mark all ``status='active'`` rows from previous
-    boot as ``terminated_by='server_restart'``.
+    """On BE startup, mark all ``status='active'`` rows from prior
+    boots as ``terminated_by='server_restart'``.
 
-    Dialogue PTY processes don't survive container restart — every
-    pre-existing active row is an orphan.
+    With the rework we no longer have long-lived processes — claude
+    sessions live on disk and could in principle be resumed across
+    restarts. But because we lose the WS subscribers + the in-flight
+    "pending message awaiting Director approval" state, the safer
+    contract is: a dialogue session does not survive a BE restart.
+    Director can start a fresh Gate E session and reference the prior
+    one's ``customer-dialogue.md`` if they want to continue.
     """
     from sqlalchemy import func as sql_func
 
@@ -305,7 +347,7 @@ def mark_orphaned_on_startup(db: Session) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Message lifecycle
+# Message persistence
 # ---------------------------------------------------------------------------
 
 
@@ -333,175 +375,169 @@ def add_message(
     return msg
 
 
-def approve_message(message_id: uuid.UUID, db: Session) -> DialogueMessage:
-    """``pending → approved``. Caller then forwards content to the
-    recipient agent via :func:`send_to_agent` and marks ``delivered``."""
+def update_status(
+    *,
+    message_id: uuid.UUID,
+    expected_from: str,
+    to_status: str,
+    db: Session,
+) -> DialogueMessage:
+    """State transition with explicit precondition check."""
     msg = db.get(DialogueMessage, message_id)
     if msg is None:
         raise DialogueError(f"Message not found: {message_id}")
-    if msg.status != "pending":
+    if msg.status != expected_from:
         raise DialogueError(
-            f"Cannot approve message in status {msg.status!r} (must be 'pending')",
+            f"Cannot transition message {message_id} from {msg.status!r} (expected {expected_from!r}) to {to_status!r}",
         )
-    msg.status = "approved"
+    msg.status = to_status
     db.commit()
     db.refresh(msg)
     return msg
+
+
+def approve_message(message_id: uuid.UUID, db: Session) -> DialogueMessage:
+    """``pending → approved``. Caller then invokes the recipient
+    agent + marks ``delivered``."""
+    return update_status(
+        message_id=message_id,
+        expected_from="pending",
+        to_status="approved",
+        db=db,
+    )
 
 
 def mark_delivered(message_id: uuid.UUID, db: Session) -> DialogueMessage:
-    """``approved → delivered``. Called after :func:`send_to_agent`
-    succeeds in writing to the recipient agent's stdin."""
-    msg = db.get(DialogueMessage, message_id)
-    if msg is None:
-        raise DialogueError(f"Message not found: {message_id}")
-    if msg.status != "approved":
-        raise DialogueError(
-            f"Cannot deliver message in status {msg.status!r} (must be 'approved')",
-        )
-    msg.status = "delivered"
-    db.commit()
-    db.refresh(msg)
-    return msg
+    """``approved → delivered``. Called after the recipient claude
+    invocation succeeds."""
+    return update_status(
+        message_id=message_id,
+        expected_from="approved",
+        to_status="delivered",
+        db=db,
+    )
 
 
 def reject_message(message_id: uuid.UUID, db: Session) -> DialogueMessage:
-    """``pending → rejected``. Director rejects Customer's question
-    (e.g. ask Customer to reformulate). Caller may then trigger a
-    fresh Customer question."""
-    msg = db.get(DialogueMessage, message_id)
-    if msg is None:
-        raise DialogueError(f"Message not found: {message_id}")
-    if msg.status != "pending":
+    """``pending → rejected``. Audit trail only — no claude call."""
+    return update_status(
+        message_id=message_id,
+        expected_from="pending",
+        to_status="rejected",
+        db=db,
+    )
+
+
+# ---------------------------------------------------------------------------
+# High-level orchestration helpers (used by router)
+# ---------------------------------------------------------------------------
+
+
+async def trigger_customer_next_question(
+    *,
+    session: DialogueSession,
+    db: Session,
+) -> DialogueMessage:
+    """Ask Customer to produce the next question and persist as pending."""
+    if session.customer_session_id is None:
         raise DialogueError(
-            f"Cannot reject message in status {msg.status!r} (must be 'pending')",
+            f"Session {session.id} has no customer claude session id",
         )
-    msg.status = "rejected"
-    db.commit()
-    db.refresh(msg)
-    return msg
+    response = await _invoke_agent(
+        project_slug=session.project_slug,
+        claude_session_id=session.customer_session_id,
+        prompt=_NEXT_QUESTION_PROMPT,
+    )
+    return add_message(
+        session_id=session.id,
+        author="customer",
+        content=response,
+        status="pending",
+        db=db,
+    )
 
 
-# ---------------------------------------------------------------------------
-# Agent output collection — pump stdout, settle window, persist as message
-# ---------------------------------------------------------------------------
+async def forward_approved_message(
+    *,
+    session: DialogueSession,
+    approved_message: DialogueMessage,
+    db: Session,
+) -> DialogueMessage:
+    """Forward an approved message to the recipient agent and persist
+    the recipient's response as a new pending message.
+
+    Recipient is the **opposite** of the approved message's author:
+    Customer's question → Designer; Designer's reply → Customer.
+    """
+    if approved_message.author == "customer":
+        recipient = "designer"
+        recipient_uuid = session.designer_session_id
+    elif approved_message.author == "designer":
+        recipient = "customer"
+        recipient_uuid = session.customer_session_id
+    else:
+        raise DialogueError(
+            f"Cannot forward message from author {approved_message.author!r}",
+        )
+    if recipient_uuid is None:
+        raise DialogueError(
+            f"Session {session.id} has no {recipient} claude session id",
+        )
+
+    response = await _invoke_agent(
+        project_slug=session.project_slug,
+        claude_session_id=recipient_uuid,
+        prompt=approved_message.content,
+    )
+    return add_message(
+        session_id=session.id,
+        author=recipient,
+        content=response,
+        status="pending",
+        db=db,
+    )
 
 
-async def _pump_agent_output(runtime: _RuntimeSession, role: str) -> None:
-    """Reader task: collect PTY stdout into a settling buffer; when the
-    buffer is quiet for :data:`SETTLE_SECONDS`, flush as a pending
-    DialogueMessage authored by this role."""
-    loop = asyncio.get_running_loop()
-    channel = runtime.customer if role == "customer" else runtime.designer
-    try:
-        while True:
-            chunk = await loop.run_in_executor(None, _safe_read, channel.process)
-            if chunk is None:
-                break
-            async with runtime.lock:
-                channel.output_buffer.extend(chunk)
-                channel.last_output_at = time.time()
-                # Schedule / restart settle task — when no new chunk
-                # for SETTLE_SECONDS, flush.
-                if channel.settle_task is None or channel.settle_task.done():
-                    channel.settle_task = asyncio.create_task(
-                        _settle_and_flush(runtime, role),
-                        name=f"dialogue-settle-{role}-{runtime.id}",
-                    )
-    except Exception:
-        logger.exception("dialogue reader crashed: session=%s role=%s", runtime.id, role)
+async def director_inject(
+    *,
+    session: DialogueSession,
+    recipient: str,
+    content: str,
+    db: Session,
+) -> tuple[DialogueMessage, DialogueMessage]:
+    """Director sends own message to <recipient> agent.
 
+    Persists the Director's message as ``delivered`` (skips approval
+    gate) + invokes the recipient + persists their response as the
+    next pending message.
 
-async def _settle_and_flush(runtime: _RuntimeSession, role: str) -> None:
-    """After SETTLE_SECONDS of no new chunks, persist the buffered
-    bytes as one DialogueMessage (status=pending) and broadcast to
-    WS listeners."""
-    channel = runtime.customer if role == "customer" else runtime.designer
-    while True:
-        await asyncio.sleep(SETTLE_SECONDS)
-        async with runtime.lock:
-            now = time.time()
-            if now - channel.last_output_at >= SETTLE_SECONDS and channel.output_buffer:
-                content = channel.output_buffer.decode("utf-8", errors="replace").strip()
-                channel.output_buffer.clear()
-                if content:
-                    # Persist as pending message + broadcast.
-                    from backend.db.session import SessionLocal
+    Returns ``(director_msg, recipient_pending_msg)``.
+    """
+    if recipient not in _DIALOGUE_ROLES:
+        raise DialogueError(f"Invalid recipient: {recipient!r}")
+    recipient_uuid = session.customer_session_id if recipient == "customer" else session.designer_session_id
+    if recipient_uuid is None:
+        raise DialogueError(
+            f"Session {session.id} has no {recipient} claude session id",
+        )
 
-                    db = SessionLocal()
-                    try:
-                        msg = add_message(
-                            session_id=runtime.id,
-                            author=role,
-                            content=content,
-                            status="pending",
-                            db=db,
-                        )
-                    finally:
-                        db.close()
-                    await _broadcast(runtime, {"type": "message", "message_id": str(msg.id)})
-                return
-            # Otherwise keep waiting (new chunks arrived in the meantime).
-
-
-async def _broadcast(runtime: _RuntimeSession, payload: dict) -> None:
-    """Send a JSON-serializable payload to every WS listener of this session."""
-    async with runtime.lock:
-        for q in list(runtime.listeners):
-            try:
-                q.put_nowait(payload)
-            except asyncio.QueueFull:
-                pass
-
-
-async def subscribe(session_id: uuid.UUID) -> asyncio.Queue:
-    """WebSocket endpoint subscribes here to receive broadcast events
-    (new messages, status updates, session end). Caller must call
-    :func:`unsubscribe` when the WS disconnects."""
-    runtime = _sessions.get(session_id)
-    if runtime is None:
-        raise DialogueSessionNotFoundError(f"No active session: {session_id}")
-    q: asyncio.Queue = asyncio.Queue(maxsize=256)
-    async with runtime.lock:
-        runtime.listeners.add(q)
-    return q
-
-
-async def unsubscribe(session_id: uuid.UUID, q: asyncio.Queue) -> None:
-    runtime = _sessions.get(session_id)
-    if runtime is None:
-        return
-    async with runtime.lock:
-        runtime.listeners.discard(q)
-
-
-# ---------------------------------------------------------------------------
-# Internal PTY helpers
-# ---------------------------------------------------------------------------
-
-
-def _safe_read(proc: ptyprocess.PtyProcess) -> Optional[bytes]:
-    """Blocking PTY read. Returns ``None`` on EOF / EIO."""
-    try:
-        return proc.read(4096)
-    except EOFError:
-        return None
-    except OSError as exc:
-        if exc.errno == errno.EIO:
-            return None
-        raise
-
-
-# Test-only access.
-def _get_runtime_for_test(session_id: uuid.UUID) -> Optional[_RuntimeSession]:
-    return _sessions.get(session_id)
-
-
-# Test-only — reset registry between tests.
-def _clear_registry_for_test() -> None:
-    _sessions.clear()
-
-
-# Unused-import suppression — collections + bytes are used in
-# placeholder branches; keep for future extension.
-_ = collections
+    director_msg = add_message(
+        session_id=session.id,
+        author="director",
+        content=content,
+        status="delivered",
+        db=db,
+    )
+    response = await _invoke_agent(
+        project_slug=session.project_slug,
+        claude_session_id=recipient_uuid,
+        prompt=content,
+    )
+    recipient_msg = add_message(
+        session_id=session.id,
+        author=recipient,
+        content=response,
+        status="pending",
+        db=db,
+    )
+    return director_msg, recipient_msg

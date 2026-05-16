@@ -32,10 +32,9 @@ import {
 
 import { useAuthStore } from "@/store/authStore";
 import { useActiveContextStore } from "@/store/activeContextStore";
-import { ApiError, TOKEN_STORAGE_KEY } from "@/services/api";
+import { ApiError } from "@/services/api";
 import {
   approveDialogueMessageApi,
-  buildDialogueWsUrl,
   createDialogueSessionApi,
   directorInjectMessageApi,
   endDialogueSessionApi,
@@ -96,13 +95,7 @@ export default function DialoguePage() {
   const [injectContent, setInjectContent] = useState("");
   const [error, setError] = useState("");
 
-  const wsRef = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
-
-  const token =
-    typeof window !== "undefined"
-      ? window.localStorage.getItem(TOKEN_STORAGE_KEY)
-      : null;
 
   // --- Loaders ---
 
@@ -146,38 +139,6 @@ export default function DialoguePage() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
-
-  // --- WebSocket lifecycle ---
-
-  useEffect(() => {
-    if (!session || !token || session.status !== "active") return;
-    const ws = new WebSocket(buildDialogueWsUrl(session.id, token));
-    wsRef.current = ws;
-
-    ws.onmessage = (ev) => {
-      try {
-        const payload = JSON.parse(ev.data);
-        if (payload.type === "message" || payload.type === "message_updated") {
-          // Refetch session detail to get the new message + updated message list.
-          void fetchSessionDetail(session.id);
-        } else if (payload.type === "session_ended") {
-          void refresh();
-        }
-      } catch {
-        // ignore malformed
-      }
-    };
-
-    return () => {
-      try {
-        ws.close();
-      } catch {
-        // already closed
-      }
-      wsRef.current = null;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.id, session?.status, token]);
 
   // Auto-scroll to newest message when list grows.
   useEffect(() => {
@@ -229,7 +190,7 @@ export default function DialoguePage() {
     setActionInFlight("trigger");
     try {
       await triggerCustomerNextQuestionApi(session.id);
-      // WS will deliver the actual pending message once Customer settles.
+      await fetchSessionDetail(session.id);
     } catch (e) {
       const msg = e instanceof ApiError ? e.message : "Trigger zlyhal.";
       setError(msg);

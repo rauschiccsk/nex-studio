@@ -1,52 +1,41 @@
-"""REST + WebSocket router for ``/api/v1/dialogue/*``.
+"""REST router for ``/api/v1/dialogue/*``.
 
 Director-mediated Customer ↔ Designer dialogue (Gate E). Plný-gate
 mode: Director approves every message before it's delivered to the
 recipient agent.
 
+Architecture (2026-05-16 rework): each Director action triggers exactly
+one ``claude -p --resume <session-uuid>`` invocation which produces
+exactly one ``pending`` DialogueMessage. Synchronous request/response —
+the HTTP response carries the new message back to the FE, which
+refetches session detail to update the UI. No WebSocket / async stream
+in v1 (was originally planned for PTY streaming, no longer needed).
+
 Endpoints (all require ``ri`` role):
 
-* ``POST   /sessions``                            — create new session
-* ``GET    /sessions``                            — list user's active sessions
-* ``GET    /sessions/{id}``                       — session + all messages (rehydrate)
-* ``DELETE /sessions/{id}``                       — end session
-* ``POST   /sessions/{id}/customer-next-question`` — trigger Customer to ask next
-* ``POST   /sessions/{id}/director-inject``        — Director injects own message
-* ``POST   /messages/{id}/approve``                — Director approves pending
-* ``POST   /messages/{id}/reject``                 — Director rejects pending
-* ``WS     /sessions/{id}/stream?token=<jwt>``     — real-time event stream
-
-WS protocol (server → client):
-    ``{"type": "message", "message_id": "..."}`` — new pending message
-    ``{"type": "message_updated", "message_id": "..."}`` — status change
-    ``{"type": "session_ended"}`` — session terminated
+* ``POST   /sessions``                              — create new session
+* ``GET    /sessions``                              — list user's sessions
+* ``GET    /sessions/{id}``                         — session + all messages
+* ``DELETE /sessions/{id}``                         — end session
+* ``POST   /sessions/{id}/customer-next-question``  — trigger Customer
+* ``POST   /sessions/{id}/director-inject``         — Director injects msg
+* ``POST   /messages/{id}/approve``                 — pending → delivered
+* ``POST   /messages/{id}/reject``                  — pending → rejected
 """
 
 from __future__ import annotations
 
 import logging
 import uuid
-from typing import Optional
 
-from fastapi import (
-    APIRouter,
-    Depends,
-    HTTPException,
-    Query,
-    Response,
-    WebSocket,
-    WebSocketDisconnect,
-    status,
-)
-from jose import JWTError, jwt
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.config.settings import settings
 from backend.core.security import require_ri_role
 from backend.db.models.dialogue import DialogueMessage, DialogueSession
 from backend.db.models.foundation import User
-from backend.db.session import SessionLocal, get_db
+from backend.db.session import get_db
 from backend.schemas.dialogue import (
     DialogueMessageRead,
     DialogueSessionCreate,
@@ -55,17 +44,14 @@ from backend.schemas.dialogue import (
     DirectorInjectMessage,
 )
 from backend.services import dialogue as service
-from backend.services.dialogue import (
-    DialogueError,
-    DialogueSessionNotFoundError,
-)
+from backend.services.dialogue import DialogueAgentError, DialogueError
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Dialogue"])
 
 
 # ---------------------------------------------------------------------------
-# REST — session lifecycle
+# Session lifecycle
 # ---------------------------------------------------------------------------
 
 
@@ -79,9 +65,14 @@ async def create_session(
     current_user: User = Depends(require_ri_role),
     db: Session = Depends(get_db),
 ) -> DialogueSession:
-    """Director starts a fresh Gate E session — spawns both agents."""
+    """Director starts a fresh Gate E session.
+
+    Initialises both agents via ``claude -p --session-id <uuid>
+    --append-system-prompt <charter>``. claude persists each session
+    on disk; future turns just resume.
+    """
     try:
-        row = await service.create_session(
+        return await service.create_session(
             user_id=current_user.id,
             project_slug=payload.project_slug,
             version_id=payload.version_id,
@@ -92,7 +83,11 @@ async def create_session(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
-    return row
+    except DialogueAgentError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"claude agent init failed: {exc}",
+        ) from exc
 
 
 @router.get("/sessions", response_model=list[DialogueSessionRead])
@@ -100,7 +95,6 @@ def list_sessions(
     current_user: User = Depends(require_ri_role),
     db: Session = Depends(get_db),
 ) -> list[DialogueSession]:
-    """List sessions owned by the current user, newest first."""
     rows = (
         db.execute(
             select(DialogueSession)
@@ -113,22 +107,13 @@ def list_sessions(
     return list(rows)
 
 
-@router.get(
-    "/sessions/{session_id}",
-    response_model=DialogueSessionWithMessages,
-)
+@router.get("/sessions/{session_id}", response_model=DialogueSessionWithMessages)
 def get_session(
     session_id: uuid.UUID,
     current_user: User = Depends(require_ri_role),
     db: Session = Depends(get_db),
 ) -> DialogueSessionWithMessages:
-    """Session detail + all messages (chronological)."""
-    sess = db.get(DialogueSession, session_id)
-    if sess is None or sess.user_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Session not found",
-        )
+    sess = _verify_session_owner(session_id, current_user, db)
     messages = (
         db.execute(
             select(DialogueMessage)
@@ -154,13 +139,7 @@ async def end_session(
     current_user: User = Depends(require_ri_role),
     db: Session = Depends(get_db),
 ) -> Response:
-    """Explicit End — SIGTERM both agents + grace + SIGKILL."""
-    sess = db.get(DialogueSession, session_id)
-    if sess is None or sess.user_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Session not found",
-        )
+    sess = _verify_session_owner(session_id, current_user, db)
     if sess.status != "ended":
         await service.end_session(
             session_id=session_id,
@@ -171,7 +150,7 @@ async def end_session(
 
 
 # ---------------------------------------------------------------------------
-# REST — message lifecycle
+# Message lifecycle
 # ---------------------------------------------------------------------------
 
 
@@ -185,12 +164,10 @@ async def trigger_customer_next_question(
     current_user: User = Depends(require_ri_role),
     db: Session = Depends(get_db),
 ) -> DialogueMessage:
-    """Tell the Customer agent to produce its next question.
+    """Ask Customer to generate its next question per the coverage plan.
 
-    Sends a literal "Next question." prompt to Customer's stdin; the
-    reader task collects Customer's response, settles after
-    :data:`SETTLE_SECONDS`, and persists as a ``pending`` message
-    authored by ``customer``.
+    Synchronous — waits for claude to respond and persists Customer's
+    question as a ``pending`` message in the same HTTP request.
     """
     sess = _verify_session_owner(session_id, current_user, db)
     if sess.status != "active":
@@ -199,26 +176,15 @@ async def trigger_customer_next_question(
             detail=f"Session is {sess.status}, cannot trigger next question",
         )
     try:
-        await service.send_to_agent(
-            session_id=session_id,
-            recipient="customer",
-            content="Next question.",
+        return await service.trigger_customer_next_question(
+            session=sess,
+            db=db,
         )
-    except DialogueSessionNotFoundError as exc:
+    except DialogueAgentError as exc:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Customer agent not running",
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Customer agent failed: {exc}",
         ) from exc
-    # The reader task will eventually persist Customer's response; we
-    # return a placeholder telling the caller the prompt was sent.
-    # The frontend listens for the WS ``message`` event for the real
-    # message row.
-    return DialogueMessage(
-        session_id=session_id,
-        author="customer",
-        content="(pending — Customer is generating)",
-        status="pending",
-    )
 
 
 @router.post(
@@ -232,11 +198,11 @@ async def director_inject_message(
     current_user: User = Depends(require_ri_role),
     db: Session = Depends(get_db),
 ) -> DialogueMessage:
-    """Director sends their own message directly to one of the agents.
+    """Director sends their own message to the chosen recipient agent.
 
-    Director-authored messages skip the ``pending → approved`` gate —
-    they go straight to ``delivered``, and the content is forwarded to
-    the recipient agent's stdin.
+    Returns the **recipient's pending response message** (not the
+    Director's own delivered message). The Director's own message is
+    persisted server-side and visible on next session fetch.
     """
     sess = _verify_session_owner(session_id, current_user, db)
     if sess.status != "active":
@@ -244,25 +210,21 @@ async def director_inject_message(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Session is {sess.status}, cannot inject",
         )
-    msg = service.add_message(
-        session_id=session_id,
-        author="director",
-        content=payload.content,
-        status="delivered",
-        db=db,
-    )
     try:
-        await service.send_to_agent(
-            session_id=session_id,
+        _director_msg, recipient_msg = await service.director_inject(
+            session=sess,
             recipient=payload.recipient,
             content=payload.content,
+            db=db,
         )
-    except DialogueSessionNotFoundError as exc:
+    except DialogueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except DialogueAgentError as exc:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"{payload.recipient} agent not running",
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"{payload.recipient} agent failed: {exc}",
         ) from exc
-    return msg
+    return recipient_msg
 
 
 @router.post(
@@ -274,37 +236,36 @@ async def approve_message(
     current_user: User = Depends(require_ri_role),
     db: Session = Depends(get_db),
 ) -> DialogueMessage:
-    """Director approves a ``pending`` message → ``delivered``.
+    """Director approves a ``pending`` message → forwards to recipient
+    → recipient's response persists as the next pending message.
 
-    After approval the content is forwarded to the recipient agent
-    (the one that didn't author this message — Customer's question
-    goes to Designer; Designer's reply goes to Customer).
+    Returns the **recipient's pending response** (the original approved
+    message is already in ``delivered`` status and visible via session
+    fetch).
     """
     msg = db.get(DialogueMessage, message_id)
     if msg is None:
         raise HTTPException(404, "Message not found")
-    _verify_session_owner(msg.session_id, current_user, db)
+    sess = _verify_session_owner(msg.session_id, current_user, db)
 
     try:
         service.approve_message(message_id, db)
     except DialogueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
-    recipient = "designer" if msg.author == "customer" else "customer"
     try:
-        await service.send_to_agent(
-            session_id=msg.session_id,
-            recipient=recipient,
-            content=msg.content,
+        recipient_msg = await service.forward_approved_message(
+            session=sess,
+            approved_message=msg,
+            db=db,
         )
         service.mark_delivered(message_id, db)
-    except DialogueSessionNotFoundError as exc:
+    except DialogueAgentError as exc:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"{recipient} agent not running",
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Recipient agent failed: {exc}",
         ) from exc
-    db.refresh(msg)
-    return msg
+    return recipient_msg
 
 
 @router.post(
@@ -316,12 +277,7 @@ def reject_message(
     current_user: User = Depends(require_ri_role),
     db: Session = Depends(get_db),
 ) -> DialogueMessage:
-    """Director rejects a ``pending`` message → ``rejected``.
-
-    The recipient agent never sees the message. Frontend can then
-    trigger ``customer-next-question`` if it was Customer's question
-    that got rejected, asking Customer to reformulate.
-    """
+    """Director rejects ``pending`` — no claude call, audit trail only."""
     msg = db.get(DialogueMessage, message_id)
     if msg is None:
         raise HTTPException(404, "Message not found")
@@ -333,7 +289,7 @@ def reject_message(
 
 
 # ---------------------------------------------------------------------------
-# WebSocket — real-time event stream
+# Helpers
 # ---------------------------------------------------------------------------
 
 
@@ -349,61 +305,3 @@ def _verify_session_owner(
             detail="Session not found",
         )
     return sess
-
-
-def _verify_ws_token(token: str, db: Session) -> Optional[User]:
-    try:
-        payload = jwt.decode(
-            token,
-            settings.secret_key,
-            algorithms=["HS256"],
-        )
-        user_id = uuid.UUID(str(payload["sub"]))
-    except (JWTError, KeyError, ValueError):
-        return None
-    user = db.get(User, user_id)
-    if user is None or not user.is_active:
-        return None
-    return user
-
-
-@router.websocket("/sessions/{session_id}/stream")
-async def session_stream(
-    websocket: WebSocket,
-    session_id: uuid.UUID,
-    token: str = Query(...),
-) -> None:
-    """Real-time event stream for the /dialogue page.
-
-    Server pushes ``{"type": "message", "message_id": "..."}`` whenever
-    an agent's settled output gets persisted as a new pending message.
-    Frontend fetches the full message via REST and updates the UI.
-    """
-    db = SessionLocal()
-    try:
-        user = _verify_ws_token(token, db)
-        if user is None or user.role != "ri":
-            await websocket.close(code=4003)
-            return
-        sess = db.get(DialogueSession, session_id)
-        if sess is None or sess.user_id != user.id or sess.status == "ended":
-            await websocket.close(code=4004)
-            return
-    finally:
-        db.close()
-
-    await websocket.accept()
-    try:
-        q = await service.subscribe(session_id)
-    except DialogueSessionNotFoundError:
-        await websocket.close(code=4005)
-        return
-
-    try:
-        while True:
-            payload = await q.get()
-            await websocket.send_json(payload)
-    except WebSocketDisconnect:
-        pass
-    finally:
-        await service.unsubscribe(session_id, q)
