@@ -82,6 +82,13 @@ RUN useradd -m -u 1000 -s /bin/bash andros \
 # method check (separate pre-flight). Director directive 2026-05-19:
 # fix even cosmetic warnings, no loose ends.
 
+# Put ~/.local/bin first in PATH so claude CLI's "Native installation
+# exists but ~/.local/bin is not in your PATH" warning is silenced.
+# Both paths point to the same binary via the symlink above; PATH
+# precedence is cosmetic — the BE invokes claude via subprocess with
+# the explicit /usr/bin/claude path so functional behavior is unchanged.
+ENV PATH="/home/andros/.local/bin:${PATH}"
+
 # Copy application code with correct ownership
 COPY --chown=andros:andros backend/ ./backend/
 COPY --chown=andros:andros alembic.ini ./alembic.ini
