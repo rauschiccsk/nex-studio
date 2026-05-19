@@ -373,7 +373,10 @@ class TestOrchestration:
         call = fake_invoke_agent[0]
         assert call["session_id"] == row.customer_session_id
         assert call["is_init"] is False
-        assert "Generate the next question" in call["prompt"]
+        # Prompt was rewritten to Slovak across 2026-05-16+ iterations
+        # (persona reframe + subject-of-audit hard rules). The stable
+        # phrase "ďalšiu otázku" identifies the trigger prompt.
+        assert "ďalšiu otázku" in call["prompt"]
 
     @pytest.mark.asyncio
     async def test_forward_approved_customer_message_to_designer(
