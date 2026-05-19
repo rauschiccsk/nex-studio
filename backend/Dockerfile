@@ -71,7 +71,21 @@ COPY --from=deps /usr/local/bin /usr/local/bin
 RUN useradd -m -u 1000 -s /bin/bash andros \
     && mkdir -p /home/andros/.claude /home/andros/.local/bin /app/uploads /var/lib/nex-studio/terminal-logs \
     && ln -sf /usr/bin/claude /home/andros/.local/bin/claude \
+    && groupadd -g 110 docker \
+    && usermod -aG docker andros \
     && chown -R andros:andros /app /home/andros /var/lib/nex-studio
+# Docker group with GID 110 matching ANDROS host (`getent group docker`
+# → docker:x:110:andros). Combined with the /var/run/docker.sock bind
+# mount in docker-compose.yml (Director directive 2026-05-19, voľba A),
+# this gives AG agents inside the BE container access to the host Docker
+# daemon — needed for testcontainers-python (real Postgres integration
+# tests per L-012, real Stalwart Mail server for IMAP integration, etc).
+#
+# SECURITY NOTE: Docker socket access = effective root on host (any
+# user with docker access can mount /, spawn privileged containers,
+# etc). Acceptable for ICC internal dev environment (single trusted
+# Director); MUST NOT be enabled if NEX Studio is ever exposed to
+# untrusted users. See ICC_STANDARDS for the trust boundary policy.
 # Symlink ~/.local/bin/claude → /usr/bin/claude: the host's
 # /home/andros/.claude/.claude.json has installMethod=native (claude
 # CLI was natively installed on ANDROS host into ~/.local/bin/claude).

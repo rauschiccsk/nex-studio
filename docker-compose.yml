@@ -52,6 +52,15 @@ services:
       # Director directive 2026-05-19. Retention: 30 days, rotation
       # at 100 MB/file (in-place truncate of older half).
       - terminal_logs:/var/lib/nex-studio/terminal-logs
+      # ro — Docker socket bind mount so AG agents inside the BE
+      # container can drive the host Docker daemon (testcontainers
+      # integration tests per L-012, Stalwart Mail server for IMAP
+      # tests, etc). Director directive 2026-05-19 voľba A.
+      # SECURITY: socket access = effective root on host. Acceptable
+      # for ICC internal dev (single trusted Director); never enable
+      # if NEX Studio is exposed to untrusted users. See backend/
+      # Dockerfile comment on the matching docker group (GID 110).
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       DATABASE_URL: "postgresql+pg8000://nexstudio:nexstudio@db:5432/nexstudio"
       TEST_DATABASE_URL: "postgresql+pg8000://nexstudio:nexstudio@db:5432/nexstudio_test"
