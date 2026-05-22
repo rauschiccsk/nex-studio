@@ -5,6 +5,66 @@
 
 ---
 
+## 2026-05-22 — CR-021 F-003 §4.1 auto-detection per-projekt backend config
+
+### Kontext
+
+NEX Studio v0.2.0 Implementer round 2 fáza — real-world smoke test odhalil bug v F-003 generic compose template. Template predpokladal štandardný FastAPI backend port 8000 (matches nex-inbox), ale NEX Studio backend beží na custom port 9176 → Docker healthcheck `curl http://localhost:8000/health` zlyhal napriek tomu že backend bol skutočne up (`uvicorn running on http://0.0.0.0:9176`).
+
+### Spec design gap (Dedo acknowledgment)
+
+Toto bola **moja chyba ako spec writer** — Sub-round 4 Q1 schválil generic Jinja2 template ("per-projekt override defer to v0.3.0+"), ale ja som v generic template hardcoded port 8000 bez explicit poznámky o assumption. Per memory `feedback_read_spec_before_paraphrasing` mal som overiť target projekt assumptions cez `grep -r "port" /opt/projects/<target>/docker-compose.yml` PRED finalizáciou F-003 spec.
+
+### Zmeny
+
+**F-003-uat-environment.md §4.1 Discovery rozšírená:**
+
+Po `Check existing /opt/uat/<slug>/` doplnené:
+- Auto-detect per-projekt backend config z `<source-projekt>/docker-compose.yml` (ak existuje):
+  - Parse `services.backend.ports` mapping
+  - Parse `services.backend.healthcheck.test`
+  - Render UAT template s detected hodnotami
+- Fallback ak source neexistuje: default port 8000 + `/health` endpoint
+- Plus CLI override: `--backend-port <port>` + `--health-endpoint <path>` pre edge cases
+
+**F-003-uat-environment.md §13 acceptance #1 doplnené:**
+
+Pôvodné: "uat-deploy vie nasadiť UAT zostavu z aktuálneho kódu"
+Nové: "...s auto-detected per-projekt backend port + healthcheck per CR-021. Auto-detection verified pre nex-inbox (8000) + nex-studio (9176)"
+
+### Implications pre v0.3.0+
+
+Mimo rozsahu tohto CR (defer per Sub-round 4 Q1 + Customer Requirements §10):
+- **Per-projekt full compose customization** (volumes, env vars, custom services Ollama/Redis) — NEX Studio sám seba má 5 custom volumes (`.claude`, `knowledge`, `projects`, `credentials`, `uploads`) ktoré generic template nepokrýva. Defer to v0.3.0+ per-projekt override mechanism.
+- **Clarification "valid UAT targets":** NEX Studio sám seba je platform-level service s custom volumes — nie typický "deploy as UAT" cieľ. Validné UAT targets sú projekty deployed cez NEX Studio (nex-inbox, nex-manager, atď.). Documentation amendment defer to v0.3.0+ (low priority).
+
+### Continuous improvement notes
+
+Plus Designer charter Inbox Deda flag (Dedo's own návrh):
+
+**Problém:** Designer charter aktuálne nemá explicit "Pre-commit spec verification" pravidlo. Generic template assumptions (port 8000) som finalize bez overenia v target projektoch.
+
+**Návrh úpravy:** Doplniť do `templates/designer-charter.md` (až bude vytvorený v F-006) novú sub-sekciu "§X.Y Pre-commit spec verification":
+- Pred finalizáciou spec ktorá assume-uje per-projekt config (porty, paths, services) → grep/Read target projektov pre verification
+- Anti-pattern: "Generic template assume X" bez verifikácie že existing projects matches X
+
+**Charter ktorého agenta:** Designer
+**Posúdenie:** Všeobecný charakter — platí pre všetky Designer spec writing s cross-project assumptions
+**Pôvod:** F-003 §4.1 port 8000 assumption + real-world bug 2026-05-22 (nex-studio backend 9176 mismatch)
+
+### Implementer round 2 expected work
+
+Per Variant B schválený Direktorom 2026-05-22:
+1. Auto-detection logic v `scripts/_uat_lib.py` (parse source docker-compose.yml)
+2. Update `scripts/uat-deploy.py` — call detection + render template s detected values
+3. CLI flags `--backend-port` + `--health-endpoint` (override mechanism)
+4. Update `templates/uat/docker-compose.yml.j2` — placeholders pre auto-detected values
+5. Update tests (real I/O testing per Implementer's vlastný memory návrh + auto-detection coverage)
+
+Estimate: ~3-4 hodín Implementer práce + re-run smoke test.
+
+---
+
 ## 2026-05-21 — Spec balík v0.2.0 vytvorený (Brána A → B → C → D)
 
 ### Brána A (Customer requirements)

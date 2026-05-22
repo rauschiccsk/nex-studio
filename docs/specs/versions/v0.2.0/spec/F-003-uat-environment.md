@@ -121,9 +121,14 @@ Implementované ako bash + Python skripty v `nex-studio/scripts/`. Volajú sa ce
 nex-studio uat-deploy mager
 ```
 
-1. **Discovery:**
+1. **Discovery + auto-detection per-projekt config (CR-021):**
    - Verify `/opt/projects/<slug>/` existuje (alebo `/opt/projects/<projekt>/` ak slug ≠ projekt)
    - Check existing `/opt/uat/<slug>/` — ak existuje, signal Direktorovi pred nahradením
+   - **Auto-detect per-projekt backend config** z `<source-projekt>/docker-compose.yml` (per CR-021):
+     - Parse `services.backend.ports` mapping (napr. `9176:9176` → backend port = 9176; `8000:8000` → 8000)
+     - Parse `services.backend.healthcheck.test` (re-use ten istý `test:` v UAT template) alebo derive z detected port
+     - Fallback ak source docker-compose neexistuje: default port 8000 + `/health` endpoint (current behaviour, zachované pre projekty ktoré matches generic FastAPI assumptions)
+     - Plus override cez CLI flags: `--backend-port <port>` + `--health-endpoint <path>` (pre edge cases)
 
 2. **DB snapshot existujúceho UAT (ak relevantné):**
    ```bash
@@ -690,7 +695,7 @@ Toto deployne v0.2.0 do `/opt/customers/mager/` (mimo F-003 scope — je to prod
 
 | # | Kritérium | Verifikácia |
 |---|---|---|
-| 1 | `uat-deploy <slug>` vie nasadiť UAT zostavu z aktuálneho kódu | Spustenie príkazu → po 5-7 min stack healthy + URL dostupné |
+| 1 | `uat-deploy <slug>` vie nasadiť UAT zostavu z aktuálneho kódu (s **auto-detected** per-projekt backend port + healthcheck per CR-021) | Spustenie príkazu → po 5-7 min stack healthy + URL dostupné. Auto-detection verified pre nex-inbox (8000) + nex-studio (9176) |
 | 2 | Direktor pristúpi cez vystavené URL z Tailscale/RDP/intranetu | `curl https://uat-<slug>.isnex.eu/health` cez Tailscale → 200 |
 | 3 | `uat-teardown <slug>` zachová DB snapshot pred destrukciou | Po teardown `ls snapshots/` ukáže nový súbor `v<version>-<dátum>-teardown.sql.gz` |
 | 4 | Akceptačný zoznam zobrazený Direktorovi po deploy | Output uat-deploy obsahuje preview počet scenárov + cesta k checklist-u |
