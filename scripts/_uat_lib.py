@@ -45,6 +45,7 @@ DEFAULT_PORT_RANGE_END = 19599
 SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 console = Console()
+error_console = Console(stderr=True)
 
 
 # ---------- Slug validation ----------
