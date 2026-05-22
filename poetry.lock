@@ -1418,6 +1418,25 @@ files = [
 cli = ["click (>=5.0)"]
 
 [[package]]
+name = "python-frontmatter"
+version = "1.3.0"
+description = "Parse and manage posts with YAML (or other) frontmatter"
+optional = false
+python-versions = ">=3.10"
+files = [
+    {file = "python_frontmatter-1.3.0-py3-none-any.whl", hash = "sha256:9f7dd9260bec99044219159a329f64f039087f9d1a2124c9442556f2fe6f82ec"},
+    {file = "python_frontmatter-1.3.0.tar.gz", hash = "sha256:acc73e477a568dc2a25c9e130c6c68ae8daa8c204c8f7e813db47d6a7280dcf2"},
+]
+
+[package.dependencies]
+pyyaml = "*"
+
+[package.extras]
+docs = ["sphinx"]
+test = ["mypy", "pyaml", "pytest", "toml", "types-pyyaml", "types-toml"]
+toml = ["toml"]
+
+[[package]]
 name = "python-jose"
 version = "3.5.0"
 description = "JOSE implementation in Python"
@@ -2098,4 +2117,4 @@ files = [
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.12"
-content-hash = "aa95c6102563238a65c29a612211004afd29371e10d28c68f02420d802cbca6d"
+content-hash = "64e7962c71f10983b3acc86d37a885574c08e87ef397521b195ab3b82826bcb9"
