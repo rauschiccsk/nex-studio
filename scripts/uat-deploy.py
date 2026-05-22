@@ -70,12 +70,17 @@ DATA_ENCRYPTION_KEY={data_key}
 
 
 def write_nginx_config(slug: str, *, port: int) -> Path:
-    """Render + write NGINX vhost config. Returns path to written file."""
+    """Render + write NGINX vhost config to user-writable path.
+
+    Output: /opt/uat/<slug>/nginx-uat-vhost.conf (no sudo required).
+    Direktor manuálne `sudo cp` do /etc/nginx/sites-available/ pri aktivácii
+    (per F-003 §10 + Dedo Q4: žiadny sudo v Implementer scope).
+    """
     content = _uat_lib.render_template(
         "uat/nginx-uat-vhost.conf",
         {"SLUG": slug, "UAT_PORT": str(port)},
     )
-    config_path = NGINX_SITES_DIR / f"uat-{slug}.conf"
+    config_path = UAT_ROOT / slug / "nginx-uat-vhost.conf"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(content, encoding="utf-8")
     return config_path
@@ -122,14 +127,18 @@ def _print_summary(*, slug: str, port: int, version: str, dry_run: bool) -> None
                 "Backend port (local)": f"127.0.0.1:{port + 100}",
                 "Postgres port (local)": f"127.0.0.1:{port + 200}",
                 "Compose": str(UAT_ROOT / slug / "docker-compose.yml"),
-                "NGINX config": str(NGINX_SITES_DIR / f"uat-{slug}.conf"),
+                "NGINX config (local)": str(UAT_ROOT / slug / "nginx-uat-vhost.conf"),
+                "NGINX config (final, sudo)": str(NGINX_SITES_DIR / f"uat-{slug}.conf"),
             }
         )
     )
 
     if not dry_run:
-        _uat_lib.console.print("\n[yellow]Aktivuj NGINX manuálne:[/yellow]")
-        _uat_lib.console.print(f"  sudo ln -sf {NGINX_SITES_DIR}/uat-{slug}.conf /etc/nginx/sites-enabled/")
+        local_path = UAT_ROOT / slug / "nginx-uat-vhost.conf"
+        final_path = NGINX_SITES_DIR / f"uat-{slug}.conf"
+        _uat_lib.console.print("\n[yellow]Aktivácia NGINX (sudo required, mimo skript scope):[/yellow]")
+        _uat_lib.console.print(f"  sudo cp {local_path} {final_path}")
+        _uat_lib.console.print(f"  sudo ln -sf {final_path} /etc/nginx/sites-enabled/")
         _uat_lib.console.print("  sudo nginx -t && sudo systemctl reload nginx")
 
 
@@ -161,39 +170,49 @@ def deploy(
         _print_summary(slug=slug, port=port, version=version, dry_run=True)
         return 0
 
-    uat_dir = _write_uat_files(slug=slug, project=resolved_project, port=port, version=version)
-    write_nginx_config(slug, port=port)
-
-    # Existing snapshot (best-effort — skip if no postgres container yet)
-    container = f"uat-{slug}-postgres"
+    # Post-allocation: any failure must release the port to prevent state leak.
     try:
-        result = _uat_lib.docker_exec(container, ["pg_dump", "-U", "postgres"], capture=True)
-        snapshot_path = uat_dir / "snapshots" / _uat_lib.snapshot_filename(version=version, reason="pre-redeploy")
-        snapshot_path.write_bytes(result.stdout.encode("utf-8") if isinstance(result.stdout, str) else result.stdout)
-        snapshot_path.chmod(0o600)
-        _uat_lib.console.print(f"[cyan]Pre-deploy snapshot:[/cyan] {snapshot_path}")
-    except Exception:  # noqa: BLE001
-        # No existing container → first-time deploy.
-        pass
+        uat_dir = _write_uat_files(slug=slug, project=resolved_project, port=port, version=version)
+        write_nginx_config(slug, port=port)
 
-    # Build + start
-    _uat_lib.docker_compose(["build"], cwd=uat_dir)
-    _uat_lib.docker_compose(["up", "-d"], cwd=uat_dir)
+        # Existing snapshot (best-effort — skip if no postgres container yet)
+        container = f"uat-{slug}-postgres"
+        try:
+            result = _uat_lib.docker_exec(container, ["pg_dump", "-U", "postgres"], capture=True)
+            snapshot_path = uat_dir / "snapshots" / _uat_lib.snapshot_filename(version=version, reason="pre-redeploy")
+            snapshot_path.write_bytes(
+                result.stdout.encode("utf-8") if isinstance(result.stdout, str) else result.stdout
+            )
+            snapshot_path.chmod(0o600)
+            _uat_lib.console.print(f"[cyan]Pre-deploy snapshot:[/cyan] {snapshot_path}")
+        except Exception:  # noqa: BLE001
+            # No existing container → first-time deploy.
+            pass
 
-    # Wait healthy on backend
-    healthy = _uat_lib.wait_healthy(f"http://127.0.0.1:{port + 100}/health", timeout=120)
-    if not healthy:
-        _uat_lib.console.print(
-            "[red]ERROR:[/red] backend not healthy after 120s — check logs:\n"
-            f"  docker compose -f {uat_dir / 'docker-compose.yml'} logs"
+        # Build + start
+        _uat_lib.docker_compose(["build"], cwd=uat_dir)
+        _uat_lib.docker_compose(["up", "-d"], cwd=uat_dir)
+
+        # Wait healthy on backend
+        healthy = _uat_lib.wait_healthy(f"http://127.0.0.1:{port + 100}/health", timeout=120)
+        if not healthy:
+            _uat_lib.error_console.print(
+                "[red]ERROR:[/red] backend not healthy after 120s — check logs:\n"
+                f"  docker compose -f {uat_dir / 'docker-compose.yml'} logs"
+            )
+            _uat_lib.release_port(slug)
+            return 1
+
+        # Migrations
+        _uat_lib.docker_exec(
+            f"uat-{slug}-backend",
+            ["poetry", "run", "alembic", "upgrade", "head"],
         )
+    except Exception as exc:
+        _uat_lib.error_console.print(f"[red]ERROR:[/red] deploy failed: {exc}")
+        _uat_lib.release_port(slug)
+        _uat_lib.error_console.print(f"[yellow]Port released for slug={slug}.[/yellow]")
         return 1
-
-    # Migrations
-    _uat_lib.docker_exec(
-        f"uat-{slug}-backend",
-        ["poetry", "run", "alembic", "upgrade", "head"],
-    )
 
     _print_summary(slug=slug, port=port, version=version, dry_run=False)
     return 0

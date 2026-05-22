@@ -91,8 +91,22 @@ def uat_compose_path(slug: str) -> Path:
 
 
 def nginx_config_path(slug: str) -> Path:
+    """Final NGINX sites-available path (root-owned — sudo required to write).
+
+    Used as documentation target for Direktor manual sudo cp. Skripty NIKDY
+    nezapisujú priamo sem — používajú local_nginx_config_path() (user-writable).
+    """
     validate_slug(slug)
     return Path("/etc/nginx/sites-available") / f"uat-{slug}.conf"
+
+
+def local_nginx_config_path(slug: str) -> Path:
+    """User-writable nginx config path: /opt/uat/<slug>/nginx-uat-vhost.conf.
+
+    Skripty zapisujú sem (Implementer scope = no sudo). Direktor manuálne
+    `sudo cp` do nginx_config_path() pri NGINX aktivácii (per F-003 §10).
+    """
+    return uat_dir(slug) / "nginx-uat-vhost.conf"
 
 
 # ---------- Port allocation ----------

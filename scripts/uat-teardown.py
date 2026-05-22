@@ -85,18 +85,20 @@ def teardown(
     except Exception:  # noqa: BLE001
         pass
 
-    # 4. NGINX config cleanup
-    nginx_config = NGINX_SITES_DIR / f"uat-{slug}.conf"
-    if nginx_config.exists():
-        nginx_config.unlink()
-        _uat_lib.console.print(f"[cyan]NGINX config removed:[/cyan] {nginx_config}")
+    # 4. Local NGINX config cleanup (user-writable in /opt/uat/<slug>/)
+    local_nginx = uat_dir / "nginx-uat-vhost.conf"
+    if local_nginx.exists():
+        local_nginx.unlink()
+        _uat_lib.console.print(f"[cyan]Local NGINX config removed:[/cyan] {local_nginx}")
 
     # 5. Port release
     _uat_lib.release_port(slug)
 
-    # 6. Print NGINX reload reminder
-    _uat_lib.console.print("\n[yellow]Aktivuj NGINX manuálne:[/yellow]")
+    # 6. Print NGINX deactivation reminder (sudo, mimo skript scope)
+    final_path = NGINX_SITES_DIR / f"uat-{slug}.conf"
+    _uat_lib.console.print("\n[yellow]NGINX deaktivácia (sudo, mimo skript):[/yellow]")
     _uat_lib.console.print(f"  sudo rm -f /etc/nginx/sites-enabled/uat-{slug}.conf")
+    _uat_lib.console.print(f"  sudo rm -f {final_path}")
     _uat_lib.console.print("  sudo systemctl reload nginx")
 
     _uat_lib.console.print(

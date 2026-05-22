@@ -181,8 +181,8 @@ def test_explicit_project_overrides_slug(monkeypatch, tmp_path):
 # ---------- NGINX config write (dry-run path) ----------
 
 
-def test_deploy_writes_nginx_config_path(monkeypatch, tmp_path):
-    """uat-deploy writes nginx config to <fake-nginx-dir>/uat-<slug>.conf."""
+def test_nginx_config_writes_to_user_writable_path(monkeypatch, tmp_path):
+    """Real I/O — write_nginx_config writes to /opt/uat/<slug>/, NOT /etc/."""
     import importlib.util
 
     spec = importlib.util.spec_from_file_location("uat_deploy", SCRIPT)
@@ -190,16 +190,33 @@ def test_deploy_writes_nginx_config_path(monkeypatch, tmp_path):
     monkeypatch.setattr("sys.path", [str(SCRIPT.parent), *sys.path])
     spec.loader.exec_module(mod)
 
-    fake_nginx_dir = tmp_path / "nginx-sites-available"
-    fake_nginx_dir.mkdir()
-    monkeypatch.setattr(mod, "NGINX_SITES_DIR", fake_nginx_dir)
+    fake_uat_root = tmp_path / "uat"
+    (fake_uat_root / "dev").mkdir(parents=True)
+    monkeypatch.setattr(mod, "UAT_ROOT", fake_uat_root)
 
     config_path = mod.write_nginx_config("dev", port=19500)
-    assert config_path == fake_nginx_dir / "uat-dev.conf"
     assert config_path.exists()
+    assert config_path == fake_uat_root / "dev" / "nginx-uat-vhost.conf"
     content = config_path.read_text()
     assert "uat-dev.isnex.eu" in content
     assert "127.0.0.1:19500" in content
+
+
+def test_nginx_config_does_not_target_etc(monkeypatch, tmp_path):
+    """Anti-regression — config path MUST NOT contain /etc/ (would need sudo)."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("uat_deploy", SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    monkeypatch.setattr("sys.path", [str(SCRIPT.parent), *sys.path])
+    spec.loader.exec_module(mod)
+
+    fake_uat_root = tmp_path / "uat"
+    (fake_uat_root / "dev").mkdir(parents=True)
+    monkeypatch.setattr(mod, "UAT_ROOT", fake_uat_root)
+
+    result_path = mod.write_nginx_config("dev", port=19500)
+    assert "/etc/" not in str(result_path), f"NGINX config musí byť user-writable, NIE v /etc/. Got: {result_path}"
 
 
 # ---------- Credentials generation ----------
@@ -241,6 +258,37 @@ def test_generate_env_credentials_are_unique(monkeypatch, tmp_path):
 
 
 # ---------- Summary output ----------
+
+
+def test_deploy_releases_port_on_post_allocation_failure(monkeypatch, tmp_path):
+    """Per Dedo fix request — if deploy fails AFTER port allocation, release_port must run.
+
+    Prevents port leak in .uat-ports.json when downstream step (build/up/etc.) fails.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("uat_deploy", SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    monkeypatch.setattr("sys.path", [str(SCRIPT.parent), *sys.path])
+    spec.loader.exec_module(mod)
+
+    fake_uat_root = tmp_path / "uat"
+    fake_uat_root.mkdir()
+    (tmp_path / "projects" / "dev").mkdir(parents=True)
+    monkeypatch.setattr(mod, "UAT_ROOT", fake_uat_root)
+    monkeypatch.setattr(mod, "PROJECTS_ROOT", tmp_path / "projects")
+    monkeypatch.setattr(mod._uat_lib, "PORT_STATE_FILE", tmp_path / ".uat-ports.json")
+
+    # Force write_nginx_config to raise — simulates any post-allocation failure
+    def boom(*a, **kw):
+        raise RuntimeError("simulated failure")
+
+    monkeypatch.setattr(mod, "write_nginx_config", boom)
+
+    rc = mod.deploy("dev", project=None, dry_run=False, version="v0.0.0")
+    assert rc == 1
+    # Port must be released
+    assert mod._uat_lib.get_allocated_port("dev") is None
 
 
 def test_dry_run_prints_summary(monkeypatch, tmp_path, capsys):

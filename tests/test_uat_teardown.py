@@ -215,23 +215,32 @@ def test_teardown_releases_port(monkeypatch, tmp_path):
 # ---------- NGINX config cleanup ----------
 
 
-def test_teardown_removes_nginx_config(monkeypatch, tmp_path):
+def test_teardown_removes_local_nginx_config(monkeypatch, tmp_path):
+    """Teardown removes /opt/uat/<slug>/nginx-uat-vhost.conf (user-writable).
+
+    The /etc/nginx/sites-available/ removal is sudo Direktor activity per Q4.
+    """
     mod = _import_module(monkeypatch)
 
     fake_uat_root = tmp_path / "uat"
-    (fake_uat_root / "dev").mkdir(parents=True)
-    (fake_uat_root / "dev" / "docker-compose.yml").write_text("# stub")
-    (fake_uat_root / "dev" / "snapshots").mkdir()
+    slug_dir = fake_uat_root / "dev"
+    slug_dir.mkdir(parents=True)
+    (slug_dir / "docker-compose.yml").write_text("# stub")
+    (slug_dir / "snapshots").mkdir()
+    local_nginx = slug_dir / "nginx-uat-vhost.conf"
+    local_nginx.write_text("# stub local nginx config")
     monkeypatch.setattr(mod, "UAT_ROOT", fake_uat_root)
     monkeypatch.setattr(mod._uat_lib, "PORT_STATE_FILE", tmp_path / ".uat-ports.json")
 
-    fake_nginx_dir = tmp_path / "nginx-sites-available"
-    fake_nginx_dir.mkdir()
-    nginx_config = fake_nginx_dir / "uat-dev.conf"
-    nginx_config.write_text("# stub config")
-    monkeypatch.setattr(mod, "NGINX_SITES_DIR", fake_nginx_dir)
+    # Anti-regression: /etc/ path MUST NOT be touched by the script.
+    fake_etc = tmp_path / "nginx-sites-available"
+    fake_etc.mkdir()
+    etc_marker = fake_etc / "uat-dev.conf"
+    etc_marker.write_text("# stub — must NOT be deleted")
+    monkeypatch.setattr(mod, "NGINX_SITES_DIR", fake_etc)
 
     with patch.object(mod._uat_lib, "docker_exec"), patch.object(mod._uat_lib, "docker_compose"):
         mod.teardown("dev", skip_confirm=True, version="v0.2.0")
 
-    assert not nginx_config.exists()
+    assert not local_nginx.exists(), "local nginx config (in /opt/uat/<slug>/) must be removed"
+    assert etc_marker.exists(), "/etc/ marker must NOT be touched (sudo mimo skript)"
