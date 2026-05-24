@@ -419,3 +419,156 @@ def test_dry_run_prints_summary(monkeypatch, tmp_path, capsys):
     assert rc == 0
     captured = capsys.readouterr()
     assert "uat-dev.isnex.eu" in captured.out or "uat-dev" in captured.out
+
+
+# ---------- CR-022 integration tests ----------
+
+
+def _import_deploy_module(monkeypatch):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("uat_deploy", SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    monkeypatch.setattr("sys.path", [str(SCRIPT.parent), *sys.path])
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _setup_uat_with_source_compose(monkeypatch, tmp_path, *, source_compose_yaml: str, project_name: str = "dev"):
+    """Helper — set up fake UAT root + projects + source compose, return module."""
+    mod = _import_deploy_module(monkeypatch)
+    fake_uat_root = tmp_path / "uat"
+    fake_uat_root.mkdir()
+    project_path = tmp_path / "projects" / project_name
+    project_path.mkdir(parents=True)
+    (project_path / "docker-compose.yml").write_text(source_compose_yaml)
+    monkeypatch.setattr(mod, "UAT_ROOT", fake_uat_root)
+    monkeypatch.setattr(mod, "PROJECTS_ROOT", tmp_path / "projects")
+    monkeypatch.setattr(mod._uat_lib, "PORT_STATE_FILE", tmp_path / ".uat-ports.json")
+    return mod, fake_uat_root, project_path
+
+
+def test_deploy_writes_synthetic_env_file(monkeypatch, tmp_path):
+    """CR-022 §C-1 — generated .env contains detected DB creds + synthetic secrets."""
+    from unittest.mock import patch
+
+    source_compose = (
+        "services:\n"
+        "  db:\n"
+        "    environment:\n"
+        "      POSTGRES_USER: testuser\n"
+        "      POSTGRES_DB: testdb\n"
+        "  backend:\n"
+        "    ports:\n"
+        '      - "8000:8000"\n'
+        "    environment:\n"
+        "      DATABASE_URL: postgresql://testuser:plain@db:5432/testdb\n"
+        "      SECRET_KEY: change-me\n"
+        "      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN}\n"
+    )
+    mod, fake_uat_root, project_path = _setup_uat_with_source_compose(
+        monkeypatch, tmp_path, source_compose_yaml=source_compose
+    )
+
+    with (
+        patch.object(mod._uat_lib, "docker_compose"),
+        patch.object(mod._uat_lib, "docker_exec"),
+        patch.object(mod._uat_lib, "wait_healthy", return_value=True),
+    ):
+        rc = mod.deploy("dev", project=None, dry_run=False, version="v0.2.0")
+        assert rc == 0
+
+    env_file = fake_uat_root / "dev" / ".env"
+    assert env_file.exists()
+    content = env_file.read_text()
+    assert "POSTGRES_USER=testuser" in content
+    assert "POSTGRES_DB=testdb" in content
+    # Synthetic SECRET_KEY (not original plain value)
+    assert "SECRET_KEY=change-me" not in content
+    # __UAT_SYNTHETIC__ placeholder for ${VAR} expansion
+    assert "CLAUDE_CODE_OAUTH_TOKEN=__UAT_SYNTHETIC__" in content
+
+
+def test_deploy_alembic_self_bootstrap_skips_step_8(monkeypatch, tmp_path):
+    """Source backend/main.py with command.upgrade → deploy skips external alembic call."""
+    from unittest.mock import patch
+
+    mod, _, project_path = _setup_uat_with_source_compose(
+        monkeypatch,
+        tmp_path,
+        source_compose_yaml='services:\n  backend:\n    ports:\n      - "8000:8000"\n',
+    )
+    # Create self-bootstrap pattern in backend/main.py
+    (project_path / "backend").mkdir()
+    (project_path / "backend" / "main.py").write_text('from alembic import command\ncommand.upgrade(cfg, "head")\n')
+    (project_path / "backend" / "alembic").mkdir()
+
+    with (
+        patch.object(mod._uat_lib, "docker_compose"),
+        patch.object(mod._uat_lib, "docker_exec") as mock_exec,
+        patch.object(mod._uat_lib, "wait_healthy", return_value=True),
+    ):
+        rc = mod.deploy("dev", project=None, dry_run=False, version="v0.2.0")
+        assert rc == 0
+
+    # docker_exec must NOT be called with alembic args (self-bootstrap skips step 8)
+    alembic_calls = [call for call in mock_exec.call_args_list if any("alembic" in str(arg) for arg in call.args)]
+    assert not alembic_calls, f"Expected no alembic call, got: {alembic_calls}"
+
+
+def test_deploy_alembic_external_uses_python_m_alembic_first(monkeypatch, tmp_path):
+    """External strategy: try `python -m alembic` first."""
+    from unittest.mock import patch
+
+    mod, _, project_path = _setup_uat_with_source_compose(
+        monkeypatch,
+        tmp_path,
+        source_compose_yaml='services:\n  backend:\n    ports:\n      - "8000:8000"\n',
+    )
+    # External strategy: backend/alembic exists, no self-bootstrap pattern
+    (project_path / "backend").mkdir()
+    (project_path / "backend" / "main.py").write_text("from fastapi import FastAPI\n")
+    (project_path / "backend" / "alembic").mkdir()
+
+    with (
+        patch.object(mod._uat_lib, "docker_compose"),
+        patch.object(mod._uat_lib, "docker_exec") as mock_exec,
+        patch.object(mod._uat_lib, "wait_healthy", return_value=True),
+    ):
+        rc = mod.deploy("dev", project=None, dry_run=False, version="v0.2.0")
+        assert rc == 0
+
+    # docker_exec must be called with ["python", "-m", "alembic", "upgrade", "head"]
+    alembic_calls = [call for call in mock_exec.call_args_list if list(call.args[1])[:3] == ["python", "-m", "alembic"]]
+    assert len(alembic_calls) == 1, f"Expected exactly 1 python -m alembic call, got: {mock_exec.call_args_list}"
+
+
+def test_deploy_cli_alembic_strategy_override(monkeypatch, tmp_path):
+    """--alembic-strategy skip → no alembic call even when detection suggests external."""
+    from unittest.mock import patch
+
+    mod, _, project_path = _setup_uat_with_source_compose(
+        monkeypatch,
+        tmp_path,
+        source_compose_yaml='services:\n  backend:\n    ports:\n      - "8000:8000"\n',
+    )
+    (project_path / "backend").mkdir()
+    (project_path / "backend" / "main.py").write_text("from fastapi import FastAPI\n")
+    (project_path / "backend" / "alembic").mkdir()  # detected = external
+
+    with (
+        patch.object(mod._uat_lib, "docker_compose"),
+        patch.object(mod._uat_lib, "docker_exec") as mock_exec,
+        patch.object(mod._uat_lib, "wait_healthy", return_value=True),
+    ):
+        rc = mod.deploy(
+            "dev",
+            project=None,
+            dry_run=False,
+            version="v0.2.0",
+            alembic_strategy_override="skip",
+        )
+        assert rc == 0
+
+    alembic_calls = [call for call in mock_exec.call_args_list if any("alembic" in str(arg) for arg in call.args)]
+    assert not alembic_calls, f"Expected no alembic call (CLI override skip), got: {alembic_calls}"
