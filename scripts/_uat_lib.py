@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import re
+import secrets
 import subprocess
 import sys
 import time
@@ -110,20 +111,27 @@ def local_nginx_config_path(slug: str) -> Path:
     return uat_dir(slug) / "nginx-uat-vhost.conf"
 
 
-# ---------- CR-021: per-projekt backend config auto-detection ----------
+# ---------- Per-projekt auto-detection helpers (CR-021 + CR-022) ----------
+
+
+def _load_source_compose(source_project_path: Path) -> dict[str, Any] | None:
+    """Load source docker-compose.yml. Returns None ak missing alebo parse error.
+
+    Shared utility for all detect_* helpers (DRY pattern).
+    """
+    compose_path = source_project_path / "docker-compose.yml"
+    if not compose_path.exists():
+        return None
+    try:
+        return yaml.safe_load(compose_path.read_text(encoding="utf-8")) or None
+    except yaml.YAMLError:
+        return None
 
 
 def detect_backend_config(source_project_path: Path) -> dict[str, Any]:
     """Auto-detect backend port + healthcheck + dockerfile from source compose.
 
-    Per F-003 §4.1 + CR-021 amendment: parse `<source>/docker-compose.yml`
-    services.backend section to drive UAT compose rendering. Fallback when
-    source compose is missing or has no backend service.
-
-    Returns dict with keys:
-        backend_port: int (container port — last segment in host:container mapping)
-        healthcheck_test: list[str] | None (None → caller derives default)
-        dockerfile: str (relative path to Dockerfile, default "Dockerfile")
+    Per F-003 §4.1 + CR-021 amendment.
 
     Defaults: {"backend_port": 8000, "healthcheck_test": None, "dockerfile": "Dockerfile"}
     """
@@ -133,13 +141,8 @@ def detect_backend_config(source_project_path: Path) -> dict[str, Any]:
         "dockerfile": "Dockerfile",
     }
 
-    compose_path = source_project_path / "docker-compose.yml"
-    if not compose_path.exists():
-        return defaults
-
-    try:
-        data = yaml.safe_load(compose_path.read_text(encoding="utf-8")) or {}
-    except yaml.YAMLError:
+    data = _load_source_compose(source_project_path)
+    if data is None:
         return defaults
 
     backend = data.get("services", {}).get("backend") or {}
@@ -167,6 +170,192 @@ def detect_backend_config(source_project_path: Path) -> dict[str, Any]:
         "healthcheck_test": healthcheck_test,
         "dockerfile": dockerfile,
     }
+
+
+# ---------- CR-022: DB credentials, env vars, frontend, alembic ----------
+
+
+def detect_db_credentials(source_project_path: Path) -> dict[str, Any]:
+    """Parse services.db.environment from source compose.
+
+    Returns dict with keys POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB.
+    Defaults: {"postgres", None, None} (None means caller derives).
+    """
+    defaults: dict[str, Any] = {
+        "POSTGRES_USER": "postgres",
+        "POSTGRES_PASSWORD": None,
+        "POSTGRES_DB": None,
+    }
+
+    data = _load_source_compose(source_project_path)
+    if data is None:
+        return defaults
+
+    db = data.get("services", {}).get("db") or {}
+    env = db.get("environment") or {}
+    if not isinstance(env, dict):
+        return defaults
+
+    return {
+        "POSTGRES_USER": env.get("POSTGRES_USER", defaults["POSTGRES_USER"]),
+        "POSTGRES_PASSWORD": env.get("POSTGRES_PASSWORD"),
+        "POSTGRES_DB": env.get("POSTGRES_DB"),
+    }
+
+
+# Synthetic secret detection (case-insensitive suffix match).
+SECRET_SUFFIXES = ("_password", "_secret", "_key", "_token")
+
+# DB connection vars — explicit whitelist (per Dedo Q4 drobnosť).
+# Pattern matching would catch false positives like PRODUCTION_DB_BACKUP_URL.
+DB_CONNECTION_VARS = {
+    "DATABASE_URL",
+    "DB_HOST",
+    "DB_PORT",
+    "DB_NAME",
+    "DB_USER",
+    "DB_PASSWORD",
+    "POSTGRES_HOST",
+    "POSTGRES_PORT",
+    "POSTGRES_DB",
+    "POSTGRES_USER",
+    "POSTGRES_PASSWORD",
+}
+
+# Host UAT-internal hostname for postgres service (matches UAT compose template service name).
+UAT_DB_HOSTNAME = "postgres"
+UAT_DB_PORT = "5432"
+
+USER_SECRET_PLACEHOLDER = "__UAT_SYNTHETIC__"
+
+
+def _is_var_expansion(value: Any) -> bool:
+    """Return True for ${VAR} or ${VAR:-default} env-var expansion notation."""
+    return isinstance(value, str) and value.startswith("${") and value.endswith("}")
+
+
+def _rewrite_db_connection_var(key: str, value: Any, *, db_creds: dict[str, Any], db_name: str) -> str:
+    """Rewrite DB connection env vars to UAT db hostname + detected/derived creds."""
+    if key in {"DB_HOST", "POSTGRES_HOST"}:
+        return UAT_DB_HOSTNAME
+    if key in {"DB_PORT", "POSTGRES_PORT"}:
+        return UAT_DB_PORT
+    if key in {"DB_NAME", "POSTGRES_DB"}:
+        return db_name
+    if key in {"DB_USER", "POSTGRES_USER"}:
+        return db_creds["POSTGRES_USER"]
+    if key in {"DB_PASSWORD", "POSTGRES_PASSWORD"}:
+        # Synthetic random (caller writes same value to .env POSTGRES_PASSWORD).
+        return secrets.token_hex(32)
+    if key == "DATABASE_URL":
+        user = db_creds["POSTGRES_USER"]
+        # Use synthetic password (matches what _PASSWORD suffix would generate).
+        password = secrets.token_hex(32)
+        return f"postgresql://{user}:{password}@{UAT_DB_HOSTNAME}:{UAT_DB_PORT}/{db_name}"
+    return str(value)
+
+
+def detect_backend_env_vars(source_project_path: Path) -> dict[str, str]:
+    """Parse services.backend.environment and produce synthetic UAT env map.
+
+    Per F-003 §11 + CR-022 §C-1 (synthetic credentials generation):
+    - Keys ending _PASSWORD/_SECRET/_KEY/_TOKEN (case-insensitive) → random hex32
+    - DB connection vars (explicit whitelist) → rewritten to UAT container hostname
+    - Values with ${VAR} expansion notation → __UAT_SYNTHETIC__ placeholder
+    - Other plain vars → copy as-is (string-ified)
+
+    Returns empty dict if no source compose or no backend service.
+    """
+    data = _load_source_compose(source_project_path)
+    if data is None:
+        return {}
+
+    backend = data.get("services", {}).get("backend") or {}
+    env = backend.get("environment") or {}
+    if not isinstance(env, dict):
+        return {}
+
+    # Derive DB credentials + db name (used for DB connection rewrite)
+    db_creds = detect_db_credentials(source_project_path)
+    db_name = db_creds["POSTGRES_DB"] or "uat_db"
+
+    out: dict[str, str] = {}
+    for key, value in env.items():
+        key_str = str(key)
+
+        # Priority 1: ${VAR} expansion → placeholder (cannot read host env per §4)
+        if _is_var_expansion(value):
+            out[key_str] = USER_SECRET_PLACEHOLDER
+            continue
+
+        # Priority 2: DB connection rewrite (explicit whitelist)
+        if key_str in DB_CONNECTION_VARS:
+            out[key_str] = _rewrite_db_connection_var(key_str, value, db_creds=db_creds, db_name=db_name)
+            continue
+
+        # Priority 3: Synthetic secret suffix match
+        if key_str.lower().endswith(SECRET_SUFFIXES):
+            out[key_str] = secrets.token_hex(32)
+            continue
+
+        # Priority 4: plain value (string-ified for .env file compatibility)
+        out[key_str] = str(value)
+
+    return out
+
+
+def detect_frontend_config(source_project_path: Path) -> dict[str, Any] | None:
+    """Parse services.frontend.build from source compose.
+
+    Returns dict {context, dockerfile, build_args} alebo None ak no frontend service.
+    """
+    data = _load_source_compose(source_project_path)
+    if data is None:
+        return None
+
+    frontend = data.get("services", {}).get("frontend")
+    if not frontend:
+        return None
+
+    build = frontend.get("build") or {}
+    if not isinstance(build, dict):
+        return None
+
+    args = build.get("args") or {}
+    if not isinstance(args, dict):
+        args = {}
+
+    return {
+        "context": build.get("context", "."),
+        "dockerfile": build.get("dockerfile", "Dockerfile"),
+        "build_args": {str(k): str(v) for k, v in args.items()},
+    }
+
+
+# Alembic command.upgrade detection patterns (covers both `command.upgrade(...)`
+# and fully-qualified `alembic.command.upgrade(...)`).
+_ALEMBIC_UPGRADE_PATTERN = re.compile(r"(?:alembic\.)?command\.upgrade\s*\(")
+
+
+def detect_alembic_strategy(source_project_path: Path) -> str:
+    """Detect alembic invocation mode for the source project.
+
+    Returns "self-bootstrap" | "external" | "skip".
+
+    Logic:
+    1. Read backend/main.py — grep `command.upgrade` pattern → "self-bootstrap"
+    2. backend/alembic/ exists + no self-bootstrap → "external"
+    3. No backend/alembic/ → "skip" (graceful degradation)
+    """
+    main_py = source_project_path / "backend" / "main.py"
+    if main_py.exists():
+        if _ALEMBIC_UPGRADE_PATTERN.search(main_py.read_text(encoding="utf-8")):
+            return "self-bootstrap"
+
+    if (source_project_path / "backend" / "alembic").is_dir():
+        return "external"
+
+    return "skip"
 
 
 # ---------- Port allocation ----------

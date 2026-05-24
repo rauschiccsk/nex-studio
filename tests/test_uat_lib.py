@@ -371,3 +371,200 @@ def test_detect_backend_config_dockerfile_falls_back_when_missing(tmp_path):
     (tmp_path / "docker-compose.yml").write_text('services:\n  backend:\n    ports:\n      - "8000:8000"\n')
     cfg = _uat_lib.detect_backend_config(tmp_path)
     assert cfg["dockerfile"] == "Dockerfile"
+
+
+# ---------- CR-022: detect_db_credentials ----------
+
+
+def test_detect_db_credentials_parses_nex_studio_style(tmp_path):
+    """nex-studio uses 'nexstudio' as user + db."""
+    (tmp_path / "docker-compose.yml").write_text(
+        "services:\n"
+        "  db:\n"
+        "    environment:\n"
+        "      POSTGRES_USER: nexstudio\n"
+        "      POSTGRES_PASSWORD: nexstudio\n"
+        "      POSTGRES_DB: nexstudio\n"
+    )
+    creds = _uat_lib.detect_db_credentials(tmp_path)
+    assert creds["POSTGRES_USER"] == "nexstudio"
+    assert creds["POSTGRES_DB"] == "nexstudio"
+
+
+def test_detect_db_credentials_parses_nex_inbox_style(tmp_path):
+    """nex-inbox uses 'nex_inbox' as user + 'nex_inbox_dev' as db."""
+    (tmp_path / "docker-compose.yml").write_text(
+        "services:\n"
+        "  db:\n"
+        "    environment:\n"
+        "      POSTGRES_DB: nex_inbox_dev\n"
+        "      POSTGRES_USER: nex_inbox\n"
+        "      POSTGRES_PASSWORD: dev_password_change_me\n"
+    )
+    creds = _uat_lib.detect_db_credentials(tmp_path)
+    assert creds["POSTGRES_USER"] == "nex_inbox"
+    assert creds["POSTGRES_DB"] == "nex_inbox_dev"
+
+
+def test_detect_db_credentials_defaults_when_no_compose(tmp_path):
+    """No source compose → safe defaults (None for db name = caller derives)."""
+    creds = _uat_lib.detect_db_credentials(tmp_path)
+    assert creds["POSTGRES_USER"] == "postgres"
+    assert creds["POSTGRES_DB"] is None
+    assert creds["POSTGRES_PASSWORD"] is None
+
+
+# ---------- CR-022: detect_backend_env_vars ----------
+
+
+def test_detect_backend_env_vars_parses_nex_studio_complex(tmp_path):
+    """nex-studio backend has 12 env vars including ${VAR} expansion + plain SECRET_KEY."""
+    (tmp_path / "docker-compose.yml").write_text(
+        "services:\n"
+        "  backend:\n"
+        "    environment:\n"
+        "      DATABASE_URL: postgresql+pg8000://nexstudio:nexstudio@db:5432/nexstudio\n"
+        "      SECRET_KEY: change-me-in-production\n"
+        "      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN}\n"
+        "      GITHUB_TOKEN: ${GITHUB_TOKEN}\n"
+        "      DISABLE_AUTOUPDATER: 1\n"
+    )
+    env = _uat_lib.detect_backend_env_vars(tmp_path)
+    # ${VAR} expansion → placeholder
+    assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "__UAT_SYNTHETIC__"
+    assert env["GITHUB_TOKEN"] == "__UAT_SYNTHETIC__"
+    # _KEY suffix → synthetic random
+    assert env["SECRET_KEY"] != "change-me-in-production"
+    assert len(env["SECRET_KEY"]) >= 32
+    # Plain value → copy as-is (string-ified)
+    assert str(env["DISABLE_AUTOUPDATER"]) == "1"
+
+
+def test_detect_backend_env_vars_parses_nex_inbox_split(tmp_path):
+    """nex-inbox split DB_HOST/PORT/NAME/USER/PASSWORD. DB connection vars rewritten."""
+    (tmp_path / "docker-compose.yml").write_text(
+        "services:\n"
+        "  db:\n"
+        "    environment:\n"
+        "      POSTGRES_USER: nex_inbox\n"
+        "      POSTGRES_DB: nex_inbox_dev\n"
+        "  backend:\n"
+        "    environment:\n"
+        "      DB_HOST: db\n"
+        '      DB_PORT: "5432"\n'
+        "      DB_NAME: nex_inbox_dev\n"
+        "      DB_USER: nex_inbox\n"
+        "      DB_PASSWORD: dev_password_change_me\n"
+        "      TENANT_SLUG: dev\n"
+    )
+    env = _uat_lib.detect_backend_env_vars(tmp_path)
+    # DB connection vars rewritten to UAT db hostname
+    assert env["DB_HOST"] == "postgres"
+    assert env["DB_NAME"] == "nex_inbox_dev"
+    assert env["DB_USER"] == "nex_inbox"
+    # DB_PASSWORD matches _PASSWORD suffix → synthetic
+    assert env["DB_PASSWORD"] != "dev_password_change_me"
+    assert len(env["DB_PASSWORD"]) >= 32
+    # Plain non-secret var → copy as-is
+    assert env["TENANT_SLUG"] == "dev"
+
+
+def test_detect_backend_env_vars_generates_synthetic_secrets(tmp_path):
+    """All keys matching _PASSWORD/_SECRET/_KEY/_TOKEN suffix → random hex32."""
+    (tmp_path / "docker-compose.yml").write_text(
+        "services:\n"
+        "  backend:\n"
+        "    environment:\n"
+        "      MY_PASSWORD: original_password\n"
+        "      OAUTH_TOKEN: original_token\n"
+        "      JWT_SECRET: original_secret\n"
+        "      API_KEY: original_key\n"
+    )
+    env = _uat_lib.detect_backend_env_vars(tmp_path)
+    for key in ("MY_PASSWORD", "OAUTH_TOKEN", "JWT_SECRET", "API_KEY"):
+        assert len(env[key]) >= 32, f"{key} not synthetic"
+        assert "original_" not in env[key], f"{key} retains original value"
+
+
+def test_detect_backend_env_vars_marks_user_secret_as_placeholder(tmp_path):
+    """${VAR} env-var expansion → __UAT_SYNTHETIC__ placeholder (cannot read host env)."""
+    (tmp_path / "docker-compose.yml").write_text(
+        "services:\n"
+        "  backend:\n"
+        "    environment:\n"
+        "      EXTERNAL_TOKEN: ${EXTERNAL_TOKEN}\n"
+        "      MY_PLAIN: plain_value\n"
+    )
+    env = _uat_lib.detect_backend_env_vars(tmp_path)
+    assert env["EXTERNAL_TOKEN"] == "__UAT_SYNTHETIC__"
+    assert env["MY_PLAIN"] == "plain_value"
+
+
+# ---------- CR-022: detect_frontend_config ----------
+
+
+def test_detect_frontend_config_parses_nex_studio_subdir(tmp_path):
+    """nex-studio frontend: context = './frontend', dockerfile = 'Dockerfile'."""
+    (tmp_path / "docker-compose.yml").write_text(
+        "services:\n  frontend:\n    build:\n      context: ./frontend\n      dockerfile: Dockerfile\n"
+    )
+    cfg = _uat_lib.detect_frontend_config(tmp_path)
+    assert cfg is not None
+    assert cfg["context"] == "./frontend"
+    assert cfg["dockerfile"] == "Dockerfile"
+
+
+def test_detect_frontend_config_parses_nex_inbox_repo_root(tmp_path):
+    """nex-inbox frontend: context = '.', dockerfile = 'frontend/Dockerfile'."""
+    (tmp_path / "docker-compose.yml").write_text(
+        "services:\n"
+        "  frontend:\n"
+        "    build:\n"
+        "      context: .\n"
+        "      dockerfile: frontend/Dockerfile\n"
+        "      args:\n"
+        "        VITE_API_BASE_URL: /api/v1\n"
+    )
+    cfg = _uat_lib.detect_frontend_config(tmp_path)
+    assert cfg is not None
+    assert cfg["context"] == "."
+    assert cfg["dockerfile"] == "frontend/Dockerfile"
+    assert cfg["build_args"] == {"VITE_API_BASE_URL": "/api/v1"}
+
+
+def test_detect_frontend_config_returns_none_when_no_frontend_service(tmp_path):
+    """Backend-only projekt → no frontend config detected."""
+    (tmp_path / "docker-compose.yml").write_text("services:\n  backend:\n    image: foo\n")
+    cfg = _uat_lib.detect_frontend_config(tmp_path)
+    assert cfg is None
+
+
+# ---------- CR-022: detect_alembic_strategy ----------
+
+
+def test_detect_alembic_strategy_self_bootstrap_nex_studio_style(tmp_path):
+    """backend/main.py contains 'command.upgrade' → self-bootstrap mode."""
+    (tmp_path / "backend").mkdir()
+    (tmp_path / "backend" / "main.py").write_text(
+        "from alembic import command\n"
+        "from alembic.config import Config\n"
+        "\n"
+        "def _run_alembic_upgrade():\n"
+        "    alembic_cfg = Config('alembic.ini')\n"
+        '    command.upgrade(alembic_cfg, "head")\n'
+    )
+    (tmp_path / "backend" / "alembic").mkdir()
+    assert _uat_lib.detect_alembic_strategy(tmp_path) == "self-bootstrap"
+
+
+def test_detect_alembic_strategy_external_nex_inbox_style(tmp_path):
+    """backend/alembic exists but main.py has no command.upgrade → external."""
+    (tmp_path / "backend").mkdir()
+    (tmp_path / "backend" / "main.py").write_text("from fastapi import FastAPI\napp = FastAPI()\n")
+    (tmp_path / "backend" / "alembic").mkdir()
+    assert _uat_lib.detect_alembic_strategy(tmp_path) == "external"
+
+
+def test_detect_alembic_strategy_skip_when_no_alembic_dir(tmp_path):
+    """No backend/alembic/ dir → skip (graceful degradation pre frontend-only project)."""
+    assert _uat_lib.detect_alembic_strategy(tmp_path) == "skip"
