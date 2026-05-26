@@ -5,6 +5,62 @@
 
 ---
 
+## 2026-05-26 — CR-028 External alembic init container (Bug #14 fix)
+
+### Kontext
+
+Krok 10 retry po CR-027 hotfix — backend exited (3) s:
+```
+asyncpg.exceptions.UndefinedTableError: relation "invoices" does not exist
+```
+
+### Root cause
+
+nex-inbox backend `main.py` lifespan queries `invoices` table at startup (`recover_in_flight_invoices`). Schema neexistuje keď alembic nikdy nezbehol.
+
+Per nex-inbox normal dev workflow (compose comment):
+```
+# Usage:
+#   docker compose up -d db
+#   cd backend && poetry run alembic upgrade head    ← MANUAL STEP
+#   docker compose up -d
+```
+
+Manual 2-stage. UAT current flow (CR-022c) bol single-stage: `compose up -d` (all parallel), wait backend healthy, then external alembic. Backend exits at startup → never healthy → alembic never runs → infinite loop.
+
+### Spec design root cause (Dedo acknowledgment)
+
+CR-022 §C-3 (alembic strategy detection) zaviedol `external` mode s post-deploy `docker exec python -m alembic upgrade head`. Predpoklad: backend startup neprerušuje pri missing schema (môže tolerovať empty DB cez retry). Pre nex-studio (self-bootstrap, internal alembic v lifespan) tento predpoklad nebol relevantný. Pre nex-inbox je zákaznícke: lifespan strict-checkuje schema → fast-fail bez retry → never reaches healthy.
+
+### Spec amendment
+
+- **F-003 §11** — pridaný nový row "External alembic init container (CR-028)" defining 2-stage compose:
+  - `alembic_strategy == "external"` → render `alembic-init` service (depends_on: postgres healthy, runs migrations, exits 0)
+  - Backend gets `depends_on: alembic-init.service_completed_successfully`
+  - Self-bootstrap + skip strategies unchanged
+
+### Implementer impl
+
+- `templates/uat/docker-compose.yml.j2`: conditional jinja2 block pre `alembic-init` service + conditional backend `depends_on` clause when `ALEMBIC_STRATEGY == "external"`.
+- `uat-deploy.py`:
+  - `_write_uat_files`: nový required kwarg `alembic_strategy`, threaded do template render context (`ALEMBIC_STRATEGY` template var)
+  - Post-deploy alembic step for `external`: replaced docker exec block s diagnostic log message (alembic-init ran during compose up)
+- Self-bootstrap + skip paths unchanged.
+
+### Tests
+
+- `test_render_compose_includes_alembic_init_for_external_strategy` — template render generuje `alembic-init:` block keď ALEMBIC_STRATEGY="external"
+- `test_render_compose_omits_alembic_init_for_self_bootstrap` — no alembic-init when "self-bootstrap"
+- `test_render_compose_omits_alembic_init_for_skip` — no alembic-init when "skip"
+- `test_render_compose_backend_depends_on_alembic_init_when_external` — backend's depends_on includes alembic-init for external strategy
+
+### Acceptance
+
+- Smoke Krok 10 (re-run): nex-inbox full healthy stack (alembic-init runs migrations → backend startup PASS → /health 200)
+- Plus full backend test suite GREEN
+
+---
+
 ## 2026-05-26 — CR-027 Synthetic secret format heuristic per suffix (Bug #12 fix)
 
 ### Kontext
