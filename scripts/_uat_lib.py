@@ -269,11 +269,12 @@ def _synthetic_secret(key: str) -> str:
 
     Suffix-based dispatch:
 
-    - ``_KEY`` (case-insensitive) → ``base64.urlsafe_b64encode(secrets.token_bytes(32))``.
-      Matches the most common encryption-key convention (Fernet, NaCl,
-      cryptography library). Decoded length = 32 bytes; encoded length =
-      44 ASCII chars. Compatible as a plain string for non-decoding readers
-      (JWT HS256, FastAPI SECRET_KEY).
+    - ``_KEY`` (case-insensitive) → ``base64.b64encode(secrets.token_bytes(32))``.
+      Standard base64 alphabet (``+/``), 44 ASCII chars, decodes to 32 bytes.
+      Compatible with ``base64.b64decode(..., validate=True)`` strict readers
+      (e.g. nex-inbox ``CredsCipher`` AES-256-GCM key) AND urlsafe decoders
+      (``urlsafe_b64decode`` accepts standard alphabet too — see Python docs).
+      Avoid urlsafe encoding here: strict standard decoders reject ``-_``.
     - All other suffixes (``_PASSWORD``, ``_SECRET``, ``_TOKEN``) →
       ``secrets.token_hex(32)``. 64 hex chars; never decoded; safe for
       password / API-token / random-secret usage.
@@ -281,7 +282,7 @@ def _synthetic_secret(key: str) -> str:
     Per-project format overrides deferred to CR-028+ (no universal standard).
     """
     if key.lower().endswith("_key"):
-        return base64.urlsafe_b64encode(secrets.token_bytes(32)).decode("ascii")
+        return base64.b64encode(secrets.token_bytes(32)).decode("ascii")
     return secrets.token_hex(32)
 
 

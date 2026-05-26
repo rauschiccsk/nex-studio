@@ -598,7 +598,7 @@ def test_synthetic_secret_key_suffix_returns_base64_32_bytes(tmp_path):
 
     val = _uat_lib._synthetic_secret("EMAIL_CREDS_ENCRYPTION_KEY")
     assert len(val) == 44, f"base64(32 bytes) should be 44 chars, got {len(val)}"
-    decoded = base64.urlsafe_b64decode(val)
+    decoded = base64.b64decode(val, validate=True)
     assert len(decoded) == 32, f"decoded length should be 32 bytes, got {len(decoded)}"
 
 
@@ -623,7 +623,7 @@ def test_synthetic_secret_case_insensitive_key_suffix(tmp_path):
 
     for key in ("encryption_key", "API_Key", "FOO_KEY"):
         val = _uat_lib._synthetic_secret(key)
-        decoded = base64.urlsafe_b64decode(val)
+        decoded = base64.b64decode(val, validate=True)
         assert len(decoded) == 32, f"{key} should produce base64(32), got {len(decoded)} bytes decoded"
 
 
@@ -634,8 +634,8 @@ def test_detect_backend_env_vars_encryption_key_is_base64_decodable_32_bytes(tmp
     (tmp_path / ".env.example").write_text("EMAIL_CREDS_ENCRYPTION_KEY=replace-with-real-key\n")
     (tmp_path / "docker-compose.yml").write_text("services:\n  backend:\n    environment: {}\n")
     env = _uat_lib.detect_backend_env_vars(tmp_path)
-    decoded = base64.urlsafe_b64decode(env["EMAIL_CREDS_ENCRYPTION_KEY"])
-    assert len(decoded) == 32  # nex-inbox CredsCipher strict requirement
+    decoded = base64.b64decode(env["EMAIL_CREDS_ENCRYPTION_KEY"], validate=True)
+    assert len(decoded) == 32  # nex-inbox CredsCipher strict requirement (validate=True)
 
 
 def test_detect_backend_env_vars_marks_user_secret_as_placeholder(tmp_path):
