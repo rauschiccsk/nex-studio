@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import argparse
 import secrets
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -133,6 +132,7 @@ def _write_uat_files(
     backend_env_vars: dict[str, str],
     frontend_cfg: dict[str, Any] | None,
     shared_db_password: str,
+    alembic_strategy: str,
 ) -> Path:
     """Write docker-compose.yml + .env into /opt/uat/<slug>/. Returns uat dir.
 
@@ -183,6 +183,7 @@ def _write_uat_files(
             "FRONTEND_DOCKERFILE": frontend_dockerfile,
             "FRONTEND_BUILD_ARGS": frontend_build_args,
             "FRONTEND_CONTAINER_PORT": str(frontend_container_port),
+            "ALEMBIC_STRATEGY": alembic_strategy,
         },
     )
     (uat_dir / "docker-compose.yml").write_text(compose, encoding="utf-8")
@@ -349,6 +350,7 @@ def deploy(
             backend_env_vars=backend_env_vars,
             frontend_cfg=frontend_cfg,
             shared_db_password=shared_db_password,
+            alembic_strategy=alembic_strategy,
         )
         write_nginx_config(slug, port=port)
 
@@ -386,20 +388,19 @@ def deploy(
             return 1
 
         # CR-022: Conditional Step 8 alembic
-        backend_container = f"uat-{slug}-backend"
+        # CR-028: external strategy now uses compose-level alembic-init container
+        # (depends_on: postgres healthy, runs BEFORE backend startup) — no
+        # post-deploy docker exec needed; migrations applied during `compose up`.
         if alembic_strategy == "self-bootstrap":
             _uat_lib.console.print(
                 "[yellow]Alembic: self-bootstrap mode — skipping external step "
                 "(backend internal lifespan handler runs migrations)[/yellow]"
             )
         elif alembic_strategy == "external":
-            try:
-                _uat_lib.docker_exec(backend_container, ["python", "-m", "alembic", "upgrade", "head"])
-                _uat_lib.console.print("[cyan]Alembic: external migrations applied (python -m alembic)[/cyan]")
-            except subprocess.CalledProcessError:
-                _uat_lib.console.print("[yellow]python -m alembic failed, retry s poetry run...[/yellow]")
-                _uat_lib.docker_exec(backend_container, ["poetry", "run", "alembic", "upgrade", "head"])
-                _uat_lib.console.print("[cyan]Alembic: external migrations applied (poetry run)[/cyan]")
+            _uat_lib.console.print(
+                "[cyan]Alembic: external migrations applied via alembic-init container "
+                "(CR-028, ran during compose up before backend startup)[/cyan]"
+            )
         elif alembic_strategy == "skip":
             _uat_lib.console.print("[yellow]Alembic: skipped per strategy=skip[/yellow]")
     except Exception as exc:

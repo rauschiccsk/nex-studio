@@ -13,7 +13,11 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
-SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "uat-deploy.py"
+SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+SCRIPT = SCRIPTS_DIR / "uat-deploy.py"
 
 
 def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
@@ -138,6 +142,8 @@ def test_render_compose_substitutes_slug_and_port(monkeypatch, tmp_path):
             "FRONTEND_CONTEXT": "/opt/projects/nex-inbox",
             "FRONTEND_DOCKERFILE": "frontend/Dockerfile",
             "FRONTEND_BUILD_ARGS": {"VITE_API_BASE_URL": "/api/v1"},
+            "FRONTEND_CONTAINER_PORT": "80",
+            "ALEMBIC_STRATEGY": "self-bootstrap",  # CR-028: required template var
         },
     )
     assert "uat-dev-postgres" in out
@@ -160,6 +166,70 @@ def test_render_compose_substitutes_slug_and_port(monkeypatch, tmp_path):
     # CR-022 — frontend dynamic context + build args
     assert "frontend/Dockerfile" in out
     assert "VITE_API_BASE_URL" in out
+
+
+def _render_compose(alembic_strategy: str) -> str:
+    """Helper — render docker-compose template with a given ALEMBIC_STRATEGY."""
+    import _uat_lib
+
+    return _uat_lib.render_template(
+        "uat/docker-compose.yml.j2",
+        {
+            "SLUG": "dev",
+            "UAT_PORT": "19500",
+            "BACKEND_HOST_PORT": "19600",
+            "BACKEND_PORT": "8000",
+            "BACKEND_HEALTHCHECK_TEST": ["CMD", "curl", "-sf", "http://localhost:8000/health"],
+            "BACKEND_DOCKERFILE": "backend/Dockerfile",
+            "DB_PORT": "19700",
+            "PROJECT_PATH": "/opt/projects/nex-inbox",
+            "PROJECT_NAME": "nex-inbox",
+            "POSTGRES_USER": "nex_inbox",
+            "POSTGRES_DB": "nex_inbox_dev",
+            "FRONTEND_CONTEXT": "/opt/projects/nex-inbox",
+            "FRONTEND_DOCKERFILE": "frontend/Dockerfile",
+            "FRONTEND_BUILD_ARGS": {},
+            "FRONTEND_CONTAINER_PORT": "80",
+            "ALEMBIC_STRATEGY": alembic_strategy,
+        },
+    )
+
+
+def test_render_compose_includes_alembic_init_for_external_strategy():
+    """CR-028: alembic-init service rendered when ALEMBIC_STRATEGY='external'."""
+    out = _render_compose("external")
+    assert "uat-dev-alembic-init" in out
+    assert "alembic-init:" in out
+    assert "alembic" in out and "upgrade" in out  # command
+
+
+def test_render_compose_omits_alembic_init_for_self_bootstrap():
+    """CR-028: no alembic-init service for self-bootstrap (backend lifespan handles)."""
+    out = _render_compose("self-bootstrap")
+    assert "uat-dev-alembic-init" not in out
+    assert "alembic-init:" not in out
+
+
+def test_render_compose_omits_alembic_init_for_skip():
+    """CR-028: no alembic-init service for skip strategy."""
+    out = _render_compose("skip")
+    assert "uat-dev-alembic-init" not in out
+
+
+def test_render_compose_backend_depends_on_alembic_init_for_external():
+    """CR-028: backend depends_on includes alembic-init.service_completed_successfully."""
+    out = _render_compose("external")
+    # Backend block must reference alembic-init in depends_on
+    backend_block = out.split("backend:", 1)[1].split("frontend:", 1)[0]
+    assert "alembic-init:" in backend_block
+    assert "service_completed_successfully" in backend_block
+
+
+def test_render_compose_backend_no_alembic_dependency_for_self_bootstrap():
+    """CR-028: backend depends_on does NOT include alembic-init for self-bootstrap."""
+    out = _render_compose("self-bootstrap")
+    backend_block = out.split("backend:", 1)[1].split("frontend:", 1)[0]
+    assert "alembic-init" not in backend_block
 
 
 def test_render_nginx_substitutes_slug_and_port(monkeypatch, tmp_path):
@@ -516,8 +586,13 @@ def test_deploy_alembic_self_bootstrap_skips_step_8(monkeypatch, tmp_path):
     assert not alembic_calls, f"Expected no alembic call, got: {alembic_calls}"
 
 
-def test_deploy_alembic_external_uses_python_m_alembic_first(monkeypatch, tmp_path):
-    """External strategy: try `python -m alembic` first."""
+def test_deploy_alembic_external_uses_compose_init_container(monkeypatch, tmp_path):
+    """CR-028: External strategy uses compose-level alembic-init container.
+
+    No post-deploy docker_exec alembic call — migrations run during
+    `docker compose up` via the alembic-init service (rendered conditionally
+    in the compose template).
+    """
     from unittest.mock import patch
 
     mod, _, project_path = _setup_uat_with_source_compose(
@@ -538,9 +613,15 @@ def test_deploy_alembic_external_uses_python_m_alembic_first(monkeypatch, tmp_pa
         rc = mod.deploy("dev", project=None, dry_run=False, version="v0.2.0")
         assert rc == 0
 
-    # docker_exec must be called with ["python", "-m", "alembic", "upgrade", "head"]
+    # No post-deploy docker_exec alembic call — alembic-init container handled it.
     alembic_calls = [call for call in mock_exec.call_args_list if list(call.args[1])[:3] == ["python", "-m", "alembic"]]
-    assert len(alembic_calls) == 1, f"Expected exactly 1 python -m alembic call, got: {mock_exec.call_args_list}"
+    assert len(alembic_calls) == 0, (
+        f"Expected NO post-deploy alembic exec (compose handled it), got: {mock_exec.call_args_list}"
+    )
+
+    # Verify alembic-init service rendered into compose
+    compose_path = mod.UAT_ROOT / "dev" / "docker-compose.yml"
+    assert "alembic-init:" in compose_path.read_text()
 
 
 def test_deploy_cli_alembic_strategy_override(monkeypatch, tmp_path):
