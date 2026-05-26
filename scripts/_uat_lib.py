@@ -336,10 +336,42 @@ def detect_backend_env_vars(
     return out
 
 
-def detect_frontend_config(source_project_path: Path) -> dict[str, Any] | None:
-    """Parse services.frontend.build from source compose.
+def _parse_compose_port_container_side(port_entry: Any) -> int | None:
+    """Extract the container-side port from a compose ``ports`` entry.
 
-    Returns dict {context, dockerfile, build_args} alebo None ak no frontend service.
+    Compose port syntax (per spec):
+    - Short ``"HOST:CONTAINER"`` (e.g. ``"9177:9177"``)
+    - Short ``"IP:HOST:CONTAINER"`` (e.g. ``"127.0.0.1:5173:80"``)
+    - Short with protocol suffix ``"8080:80/tcp"`` — strip the ``/...`` tail
+    - Long-form dict ``{"target": 80, "published": 5173, ...}`` — take ``target``
+    - Single ``"CONTAINER"`` (random host port) — take the value
+
+    Returns ``None`` on parse failure (caller falls back to default 80).
+    """
+    if isinstance(port_entry, dict):
+        target = port_entry.get("target")
+        if isinstance(target, int):
+            return target
+        if isinstance(target, str) and target.isdigit():
+            return int(target)
+        return None
+    if isinstance(port_entry, int):
+        return port_entry
+    if not isinstance(port_entry, str):
+        return None
+    spec = port_entry.split("/", 1)[0]  # strip "/tcp" or "/udp" protocol suffix
+    last_segment = spec.rsplit(":", 1)[-1].strip()
+    if last_segment.isdigit():
+        return int(last_segment)
+    return None
+
+
+def detect_frontend_config(source_project_path: Path) -> dict[str, Any] | None:
+    """Parse services.frontend.{build,ports} from source compose.
+
+    Returns dict {context, dockerfile, build_args, container_port} alebo None
+    ak no frontend service. ``container_port`` (CR-024) — detected z prvého
+    ``services.frontend.ports`` entry; default 80 ak chýba alebo neparseable.
     """
     data = _load_source_compose(source_project_path)
     if data is None:
@@ -357,10 +389,19 @@ def detect_frontend_config(source_project_path: Path) -> dict[str, Any] | None:
     if not isinstance(args, dict):
         args = {}
 
+    # CR-024: container port detection from ports[0]; fallback 80
+    container_port = 80
+    ports = frontend.get("ports") or []
+    if isinstance(ports, list) and ports:
+        detected = _parse_compose_port_container_side(ports[0])
+        if detected is not None:
+            container_port = detected
+
     return {
         "context": build.get("context", "."),
         "dockerfile": build.get("dockerfile", "Dockerfile"),
         "build_args": {str(k): str(v) for k, v in args.items()},
+        "container_port": container_port,
     }
 
 

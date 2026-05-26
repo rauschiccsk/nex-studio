@@ -592,6 +592,65 @@ def test_detect_frontend_config_returns_none_when_no_frontend_service(tmp_path):
     assert cfg is None
 
 
+def test_detect_frontend_config_extracts_container_port_short_form(tmp_path):
+    """CR-024: nex-studio short port form '9177:9177' → container_port = 9177.
+
+    Bug #7 root: UAT template hardcoded ':80' but nex-studio frontend nginx
+    listens on 9177 — docker-proxy forward to wrong port caused HTTP 502.
+    """
+    (tmp_path / "docker-compose.yml").write_text(
+        'services:\n  frontend:\n    build:\n      context: ./frontend\n    ports:\n      - "9177:9177"\n'
+    )
+    cfg = _uat_lib.detect_frontend_config(tmp_path)
+    assert cfg is not None
+    assert cfg["container_port"] == 9177
+
+
+def test_detect_frontend_config_extracts_container_port_with_ip_prefix(tmp_path):
+    """CR-024: nex-inbox extended form '127.0.0.1:5173:80' → container_port = 80."""
+    (tmp_path / "docker-compose.yml").write_text(
+        'services:\n  frontend:\n    build:\n      context: .\n    ports:\n      - "127.0.0.1:5173:80"\n'
+    )
+    cfg = _uat_lib.detect_frontend_config(tmp_path)
+    assert cfg is not None
+    assert cfg["container_port"] == 80
+
+
+def test_detect_frontend_config_defaults_container_port_to_80(tmp_path):
+    """CR-024: no ports entry → container_port falls back to 80 (Docker default)."""
+    (tmp_path / "docker-compose.yml").write_text("services:\n  frontend:\n    build:\n      context: ./frontend\n")
+    cfg = _uat_lib.detect_frontend_config(tmp_path)
+    assert cfg is not None
+    assert cfg["container_port"] == 80
+
+
+def test_detect_frontend_config_supports_dict_target(tmp_path):
+    """CR-024: long-form ports dict {target: 8080, published: 80} → 8080."""
+    (tmp_path / "docker-compose.yml").write_text(
+        "services:\n"
+        "  frontend:\n"
+        "    build:\n"
+        "      context: ./frontend\n"
+        "    ports:\n"
+        "      - target: 8080\n"
+        "        published: 80\n"
+        "        protocol: tcp\n"
+    )
+    cfg = _uat_lib.detect_frontend_config(tmp_path)
+    assert cfg is not None
+    assert cfg["container_port"] == 8080
+
+
+def test_detect_frontend_config_strips_protocol_suffix(tmp_path):
+    """CR-024: '8080:80/tcp' protocol suffix stripped → container_port = 80."""
+    (tmp_path / "docker-compose.yml").write_text(
+        'services:\n  frontend:\n    build:\n      context: ./frontend\n    ports:\n      - "8080:80/tcp"\n'
+    )
+    cfg = _uat_lib.detect_frontend_config(tmp_path)
+    assert cfg is not None
+    assert cfg["container_port"] == 80
+
+
 # ---------- CR-022: detect_alembic_strategy ----------
 
 

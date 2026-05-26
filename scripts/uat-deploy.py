@@ -158,10 +158,12 @@ def _write_uat_files(
         frontend_context = str(project_path / ctx.lstrip("./")) if ctx.startswith(".") else ctx
         frontend_dockerfile = frontend_cfg["dockerfile"]
         frontend_build_args = frontend_cfg["build_args"]
+        frontend_container_port = frontend_cfg.get("container_port", 80)
     else:
         frontend_context = str(project_path / "frontend")
         frontend_dockerfile = "Dockerfile"
         frontend_build_args = {}
+        frontend_container_port = 80
 
     compose = _uat_lib.render_template(
         "uat/docker-compose.yml.j2",
@@ -180,6 +182,7 @@ def _write_uat_files(
             "FRONTEND_CONTEXT": frontend_context,
             "FRONTEND_DOCKERFILE": frontend_dockerfile,
             "FRONTEND_BUILD_ARGS": frontend_build_args,
+            "FRONTEND_CONTAINER_PORT": str(frontend_container_port),
         },
     )
     (uat_dir / "docker-compose.yml").write_text(compose, encoding="utf-8")
