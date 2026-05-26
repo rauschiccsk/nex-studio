@@ -5,6 +5,48 @@
 
 ---
 
+## 2026-05-26 — CR-026 `.env.example` parse + compose union (Bug #11 fix)
+
+### Kontext
+
+Krok 10 F-003 §13 #1 acceptance (cross-project verification nex-inbox UAT deploy) odhalil **Bug #11**: backend container exited (1) s pydantic `ValidationError: 3 validation errors for Settings — LAUNCH_TOKEN/JWT_SECRET_KEY/EMAIL_CREDS_ENCRYPTION_KEY Field required`.
+
+### Root cause
+
+CR-022 §C-1 spec row **explicitly hovorí**: *"uat-deploy parse-uje `<source-projekt>/.env.example` + `services.backend.environment` z source compose"*.
+
+Implementácia `_uat_lib.detect_backend_env_vars` parsuje **iba `services.backend.environment`**. `.env.example` sa nikdy nečíta. Spec-impl gap.
+
+nex-inbox má 3 mandatory secrets (`LAUNCH_TOKEN`, `JWT_SECRET_KEY`, `EMAIL_CREDS_ENCRYPTION_KEY`) iba v `.env.example` (compose má len DB + tenant overrides, real secrets ide cez `env_file: - .env`). UAT generated `.env` ich vynechal → backend startup FAIL.
+
+### Spec design root cause (Dedo acknowledgment)
+
+CR-022 spec ho **správne identifikoval** (sub-agent comprehensive design audit), ale Implementer round CR-022a implementoval len compose-side detection. Spec-impl gap, ktorý zachytil až cross-project smoke. nex-studio compose má všetky env vars v `environment:` block (žiadny env_file dependence) → spec-impl gap sa neprejavil na nex-studio side smoke.
+
+### Spec amendment
+
+- **F-003 §11** — pridaný nový row "`.env.example` parse + compose union (CR-026)" requiring obojstrannú detection s compose precedence.
+
+### Implementer impl
+
+- `_uat_lib.detect_env_example(source_project_path) → dict[str, str]` — nový helper, parse `<source>/.env.example` (same parser ako `read_uat_env` z CR-025 — `KEY=value` lines, # comments + blanks ignored, no `${VAR}` expansion)
+- `_uat_lib.detect_backend_env_vars`: refactor — baseline z `.env.example`, then `update()` s compose.environment (compose wins for overlapping keys). Existing logic (synthetic gen, DB rewrite, ${VAR} placeholder, shared DB password CR-023) aplikuje na union dict bez ďalších zmien.
+
+### Tests
+
+- `test_detect_env_example_parses_basic` — KEY=value parsing
+- `test_detect_env_example_missing_file_returns_empty` — graceful degradation
+- `test_detect_backend_env_vars_unions_env_example_with_compose` — keys from both sources present in output
+- `test_detect_backend_env_vars_compose_overrides_env_example` — same key in both → compose value wins
+- `test_detect_backend_env_vars_env_example_secret_gets_synthetic` — `_TOKEN`-suffix key from .env.example gets random hex32 (synthetic) not original "change-me" string
+
+### Acceptance
+
+- Smoke Krok 10 (re-run): nex-inbox backend startup PASS (no Field required error), full healthy stack via NGINX
+- Plus full backend test suite GREEN
+
+---
+
 ## 2026-05-26 — CR-025 Snapshot/teardown DB credentials propagation (Bug #8 fix)
 
 ### Kontext
