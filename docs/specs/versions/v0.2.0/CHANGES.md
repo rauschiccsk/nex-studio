@@ -5,6 +5,51 @@
 
 ---
 
+## 2026-05-26 — CR-024 Frontend container port auto-detection (Bug #7 fix)
+
+### Kontext
+
+Po CR-023 fix (DB password sharing) smoke retry pokračoval Krok 5 (NGINX activation PASS) + Krok 6 (URL test). Backend `/health` cez nginx → HTTP 200 ✓. Frontend `/` cez nginx → **HTTP 502** (Bug #7).
+
+### Root cause
+
+- **NEX Studio `frontend/Dockerfile`**: `EXPOSE 9177` + nginx `listen 9177` (production convention)
+- **UAT compose template `templates/uat/docker-compose.yml.j2`**: ports mapping hardcoded `"127.0.0.1:{{ UAT_PORT }}:80"`
+- Docker-proxy forwards host:UAT_PORT → container:80, ale container nginx listens na 9177 → connection reset
+
+CR-022 §C-5 (frontend build context + args) detegoval kontext/Dockerfile/args, ale **NIE container port**. F-003 generic template predpokladal port 80 (Docker default), ale nex-studio listens na 9177. nex-inbox má `"127.0.0.1:5173:80"` (rôzny formát) → 80 OK, ale obecná detection chýba.
+
+### Spec design root cause (Dedo acknowledgment)
+
+CR-022 §C-5 row addresoval frontend build configuration ale **vynechal port mapping**. Rovnaký pattern ako C-2 (DB creds) — template hardcoded jeden konvenciu pre vlastnosť, ktorá je per-project variable. Comprehensive design review (CR-022 sub-agents) **mal** zachytiť aj toto, ale fokus bol na build context + args, port mapping zostal "default = 80" predpoklad.
+
+### Spec amendment
+
+- **F-003 §11** — pridaný nový row "Frontend container port auto-detection (CR-024)" requiring detection z `services.frontend.ports` source compose.
+
+### Implementer impl
+
+- `_uat_lib.detect_frontend_config(...)` rozšírený o `container_port: int` (default 80) — parse `services.frontend.ports[0]`:
+  - Support string formats `"HOST:CONTAINER"`, `"IP:HOST:CONTAINER"`, optional `/protocol` suffix
+  - Support dict format (Docker compose extended): `{"target": int, "published": int, ...}` → take `target`
+  - Take rightmost numeric segment per Docker spec
+- `templates/uat/docker-compose.yml.j2`: ports mapping `"127.0.0.1:{{ UAT_PORT }}:{{ FRONTEND_CONTAINER_PORT }}"` placeholder
+- `uat-deploy.py`: thread `container_port` z detected frontend_cfg → `FRONTEND_CONTAINER_PORT` template var (fallback 80)
+
+### Tests
+
+- `test_detect_frontend_config_extracts_container_port_short_form` — nex-studio "9177:9177" → 9177
+- `test_detect_frontend_config_extracts_container_port_with_ip_prefix` — nex-inbox "127.0.0.1:5173:80" → 80
+- `test_detect_frontend_config_defaults_container_port_to_80` — no ports → 80
+- `test_detect_frontend_config_supports_dict_target` — `{target: 8080, published: 80}` → 8080
+
+### Acceptance
+
+- Smoke Krok 6 (re-run): frontend `/` cez NGINX → HTTP 200 (Vite bundle HTML)
+- Plus full backend test suite GREEN
+
+---
+
 ## 2026-05-26 — CR-023 Shared synthetic DB password (Bug #5 fix)
 
 ### Kontext
