@@ -139,6 +139,99 @@ Koordinátor potom posúdi a (ak akceptuje) napíše žiadosť do
   nie improvizujem
 ```
 
+#### §Z Pre-commit cross-project verification + dimensional audit (per CR-029)
+
+> Per CR-029 amendment (post-CR-022..CR-028 batch dnes 2026-05-26 odhalil
+> 8 bugov v F-003 UAT impl — väčšina pre-detectable dimensional gaps).
+> Koalescencia 2 Inbox Deda návrhov:
+> - Návrh #1 (2026-05-22) — Pre-commit cross-project verification
+> - Návrh #3 (2026-05-24) — Dimensional audit pred commit
+
+```markdown
+## §Z. PRE-COMMIT CROSS-PROJECT VERIFICATION + DIMENSIONAL AUDIT (MANDATORY)
+
+### §Z.1 Princíp
+
+Pri spec authoringu Designer NIKDY nereferuje skripty/paths/symboly
+v target projekte bez ich verifikácie. Plus pri spec pokrývajúcom
+target-projekt-specific behavior (template generation, deploy
+orchestration, acceptance criteria) Designer MUSÍ pokryť **všetky
+dimenzie** kde projekty môžu líšiť — nie len happy-path generic skeleton.
+
+### §Z.2 Cross-project reference verification (per Návrh #1)
+
+Mandatory check pred commit pre každý spec dokument s cross-project
+odkazom:
+
+1. Identifikovať všetky **cross-project odkazy** v spec:
+   - File paths v target repo (`/opt/projects/<slug>/...`)
+   - Script/command names (predpokladá existenciu)
+   - Function/class names v target source code
+   - Config keys v compose/yaml/env
+   - DB table names, REST endpoint paths
+2. Pre každý overiť cez `ls` / `find` / `grep` že existuje v target repo
+3. Ak existuje s expected signature → pokračovať
+4. Ak neexistuje → spec amendment ALEBO flag inconsistency pred commit
+
+### §Z.3 Dimensional audit (per Návrh #3)
+
+Pri spec ktorá popisuje per-project-variable behavior (UAT template,
+deploy orchestration, acceptance criteria) MUSÍ Designer pokryť celú
+**dimenziu** kde projekty môžu líšiť:
+
+| Dimension | Príklady variability |
+|---|---|
+| **DB credentials** | POSTGRES_USER (postgres vs nexstudio vs nex_inbox), DB name, password format |
+| **Backend env passthrough** | environment block, env_file, .env.example references |
+| **Frontend build config** | context path, dockerfile location, container port |
+| **Alembic strategy** | self-bootstrap (lifespan) vs external (post-deploy init container) vs skip |
+| **NGINX routing** | health endpoint path (/health vs /api/v1/health), API prefix |
+| **Crypto formats** | secret encoding (hex vs base64 standard vs urlsafe), strict validation |
+
+### §Z.4 Trigger pre sub-agent dimensional audit
+
+Pre spec ktorá spĺňa aspoň jednu podmienku:
+- ≥ 5 cross-project odkazov (paths/scripts/configs)
+- spec >300 LOC
+- popisuje template/orchestration code (UAT, CI, deploy)
+
+Designer dispatched **sub-agent** s explicit "verify ALL references +
+audit dimensional coverage" task pred Designer commit.
+
+Sub-agent prompt template:
+
+```
+Audit spec docs/specs/<version>/<F-XXX>.md proti target project repos
+(/opt/projects/<projekt>/...).
+
+1. Verify every file path / script name / function ref / config key
+   reálne existuje v target repos (use ls/find/grep). Report any
+   missing reference s exact path.
+
+2. For each dimension kde target projects líšia (DB, env, frontend
+   ports, alembic, NGINX, crypto formats), check že spec pokrýva
+   project-A AND project-B realities. Compare actual source
+   compose/Dockerfile/.env.example.
+
+3. Report findings — list every gap (missing ref, dimensional blind
+   spot) with concrete fix proposal (spec amendment text).
+```
+
+### §Z.5 Anti-pattern: "happy-path generic skeleton"
+
+CR-022..CR-028 batch (2026-05-26) odhalil že F-003 mal happy-path
+skeleton ktoré nesurvives kontakt ani s jedným z dvoch target
+projektov. Per-project heterogeneity je norm, NIE edge case.
+Comprehensive review po prvom failure je vždy lacnejší ako reactive
+bug-by-bug discovery cycle.
+
+### §Z.6 Hodnota pravidla
+
+8 bugov v F-003 UAT impl (CR-022..CR-028) zachytených AŽ Implementer
+smoke testom. Dimensional audit pred commit by zachytil >5 z 8
+v Designer round (lacnejšie + faster cycle).
+```
+
 ---
 
 ## 3. Auditor charter rozšírenie
@@ -235,9 +328,63 @@ PASS bez Activity X PASS je INVALID.
 
 ### F-006 scope pre Implementer
 
-Žiadne nové sekcie potrebné. Existing charter (po `934fd0b`) je production-ready pre NEX Studio v0.2.0 ekosystém.
+Existing charter (po `934fd0b`) je production-ready pre NEX Studio v0.2.0
+ekosystém. CR-029 (2026-05-26) pridáva jednu novú sekciu §10 (d) — Test
+Approach Verification.
 
 **Sync command:** pri F-001 implementácii `nex-studio sync-implementer-charter <projekt>` aktualizuje per-projekt kópiu z aktuálnej autoritatívnej šablóny.
+
+### Pridané sekcie (per CR-029 Inbox Deda Návrh #2)
+
+#### §10 (d) Test Approach Verification (per CR-029)
+
+> Per CR-029 amendment z Bug #1 (NGINX permission, 2026-05-22 smoke test).
+> Mocking systematicky maskuje real-world constraints (permission, locking,
+> encoding). Default real I/O preferred per code typ matrix.
+
+```markdown
+## §10 (d). TEST APPROACH VERIFICATION (mandatory dimension v §10)
+
+### §10.d.1 Princíp
+
+Pri písaní testov volíš real I/O vs mock per code typ. Default = **real I/O
+preferred for filesystem/integration scope**; mocking tolerated len pre
+explicit dôvody (network latency, side-effects mimo scope, external services).
+
+### §10.d.2 Test approach matrix
+
+| Code typ | Test approach |
+|---|---|
+| **Filesystem** (open/read/write/mkdir/chmod/rename/symlink) | **Real I/O cez `tmp_path` pytest fixture** — mock len absolute path constants cez `monkeypatch.setattr(module, "CONST", tmp_path / ...)` ako re-routing, NIE ako virtualization |
+| **Subprocess** (subprocess.run, ptyprocess.spawn) | **Real subprocess** preferenced pre integration scope; mock cez `MagicMock` OK pre unit scope ak side-effects nie sú v scope testu |
+| **Network — outbound HTTP** | Mocking OK (httpx mock, respx) — sieťová latencia + flakiness nevhodné pre unit. Real call v integration test if applicable |
+| **Network — inbound HTTP (FastAPI)** | `TestClient` + real ASGI ↔ real handler — žiadny mock route. Mock cez `dependency_overrides` pre external services |
+| **Database** | Real testcontainer alebo aiosqlite in-memory; **mocking ORM = anti-pattern** |
+| **External services (Ollama, IMAP, SMB)** | Mocking pre unit (cez `httpx.AsyncMock` / `respx`); integration test cez testcontainer ak realistic mock infeasible |
+
+### §10.d.3 Mandatory negative test
+
+Pre code ktorý zapisuje do filesystem (resource s permission/locking
+constraints), MUSÍ existovať test ktorý verifikuje **graceful error**
+pri reálnom failure scenári:
+- chmod 0444 + write → expected PermissionError handled
+- file locked by other process → expected resource error
+- disk full simulation → expected OSError handled
+
+### §10.d.4 Rationale
+
+Bug #1 (NGINX permission, 2026-05-22 smoke test):
+- Test `test_deploy_writes_nginx_config_path` mockoval `NGINX_SITES_DIR`
+  cez `monkeypatch.setattr(mod, "NGINX_SITES_DIR", fake_nginx_dir)` (fake `tmp_path`)
+- Real path `/etc/nginx/sites-available/` je root-owned → non-writable
+- Test PASS, real deploy FAIL s `PermissionError`
+- Real I/O test (vrátane negative PermissionError handler) by zachytil v unit teste
+
+### §10.d.5 Hodnota pravidla
+
+Real I/O test cost: +5-10s suite time per 100 testov. Bug class catched:
+permission, locking, encoding, atomic ops — všetky non-mockable.
+```
 
 ---
 

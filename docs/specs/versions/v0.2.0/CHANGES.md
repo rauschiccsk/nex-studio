@@ -5,6 +5,44 @@
 
 ---
 
+## 2026-05-26 — CR-029 F-006 charter updates per 3 Inbox Deda návrhy
+
+### Kontext
+
+Po CR-022..CR-028 batch (8 bugov v F-003 UAT impl odhalených cross-project smoke testom) Tibor schválil posúdenie 3 Inbox Deda návrhov ktoré boli pending od 2026-05-22 + 2026-05-24:
+
+1. Designer charter — Pre-commit cross-project verification (z Fáza 2 DONE 2026-05-22)
+2. Implementer charter §10 (d) — Test Approach Verification real I/O > mocking (z bug-fix DONE 2026-05-22)
+3. Designer charter — Dimensional audit pred commit (z CR-022 retrospective 2026-05-24)
+
+### Decisions
+
+**Návrh #1 + #3 koalescencia → Designer charter §Z (single section):**
+
+Pre-commit cross-project verification + dimensional audit, MANDATORY pre spec authoring s cross-project odkazmi OR per-project-variable behavior. Sub-agent dispatch trigger pri ≥5 cross-project refs / >300 LOC spec / template-orchestration code. Anti-pattern: "happy-path generic skeleton" (F-003 ako lesson).
+
+**Návrh #2 → Implementer charter §10 (d):**
+
+Test Approach Verification — real I/O preferred per code typ matrix (filesystem, subprocess, network, FastAPI, database, external services). Mandatory negative test pre filesystem-touching write code. Rationale z Bug #1 (NGINX permission masking 2026-05-22 smoke).
+
+### Spec amendment
+
+- **F-006 §2 §Z** (new section) — Designer Pre-commit cross-project verification + dimensional audit
+- **F-006 §4** (new section §10 (d)) — Implementer Test Approach Verification
+
+### Implementer downstream impact
+
+F-006 spec amendment NESPUSTÍ priamy edit do `/home/icc/knowledge/icc/CLAUDE_DESIGNER.md` + `CLAUDE_IMPLEMENTER.md`. To je dedicated Implementer round (per F-006 production application) — kickoff prompt nasleduje po commit-e tejto amendment.
+
+### Acceptance
+
+- F-006 spec amendment committed + push + CI PASS
+- Implementer round kickoff prompt v `.dedo-channel/inbox/`
+- Implementer apply changes do `/home/icc/knowledge/icc/CLAUDE_DESIGNER.md` + `CLAUDE_IMPLEMENTER.md`
+- Charter docs verified post-Implementer-DONE
+
+---
+
 ## 2026-05-26 — CR-028 External alembic init container (Bug #14 fix)
 
 ### Kontext
