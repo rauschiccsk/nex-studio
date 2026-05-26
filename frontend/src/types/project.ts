@@ -42,6 +42,15 @@ export interface ProjectCreate {
   guardian_enabled?: boolean;
   /** User who created the project. */
   created_by: string;
+  // F-004 setup flags
+  /** F-004 K-003: bootstrap Koordinátor agent. Default true. */
+  enable_coordinator?: boolean;
+  /** F-004 K-005: copy github-actions-workflow.yml + commit + push. Default false. */
+  enable_cicd?: boolean;
+  /** F-004 K-004: full smoke (build + up + health) instead of minimal (build only). Default false. */
+  full_smoke?: boolean;
+  /** F-004 O-3: GitHub branch protection (require PR, no force push). Default false. */
+  enable_branch_protection?: boolean;
 }
 
 /**

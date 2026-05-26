@@ -66,6 +66,12 @@ export default function NewProjectPage() {
   const [dbPort, setDbPort] = useState<string>("");
   const [uiDesignPort, setUiDesignPort] = useState<string>("");
 
+  // F-004 flags
+  const [enableCoordinator, setEnableCoordinator] = useState(true);
+  const [enableCicd, setEnableCicd] = useState(false);
+  const [fullSmoke, setFullSmoke] = useState(false);
+  const [enableBranchProtection, setEnableBranchProtection] = useState(false);
+
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -154,6 +160,11 @@ export default function NewProjectPage() {
         db_port: dbPort ? Number(dbPort) : null,
         ui_design_port: uiDesignPort ? Number(uiDesignPort) : null,
         created_by: user?.id ?? "",
+        // F-004 flags
+        enable_coordinator: enableCoordinator,
+        enable_cicd: enableCicd,
+        full_smoke: fullSmoke,
+        enable_branch_protection: enableBranchProtection,
       });
       navigate(`/projects/${project.slug}`, {
         state: {
@@ -325,6 +336,50 @@ export default function NewProjectPage() {
                   </div>
                 ))}
               </div>
+            </div>
+
+            {/* F-004 Setup options */}
+            <div className="space-y-2 rounded-lg border border-slate-800 p-4">
+              <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wide">
+                Setup options
+              </h3>
+              <label className="flex items-center gap-3 text-sm text-slate-200 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={enableCoordinator}
+                  onChange={(e) => setEnableCoordinator(e.target.checked)}
+                  className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-primary-500 focus:ring-primary-500"
+                />
+                <span>Enable Koordinátor agent</span>
+                <span className="text-xs text-slate-500">(default ON)</span>
+              </label>
+              <label className="flex items-center gap-3 text-sm text-slate-200 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={enableCicd}
+                  onChange={(e) => setEnableCicd(e.target.checked)}
+                  className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-primary-500 focus:ring-primary-500"
+                />
+                <span>Enable CI/CD (GitHub Actions)</span>
+              </label>
+              <label className="flex items-center gap-3 text-sm text-slate-200 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={fullSmoke}
+                  onChange={(e) => setFullSmoke(e.target.checked)}
+                  className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-primary-500 focus:ring-primary-500"
+                />
+                <span>Full smoke test (build + up + /health, ~5-7 min)</span>
+              </label>
+              <label className="flex items-center gap-3 text-sm text-slate-200 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={enableBranchProtection}
+                  onChange={(e) => setEnableBranchProtection(e.target.checked)}
+                  className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-primary-500 focus:ring-primary-500"
+                />
+                <span>Enable branch protection (require PR, no force push)</span>
+              </label>
             </div>
 
             {/* Error banner */}
