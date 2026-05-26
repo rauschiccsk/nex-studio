@@ -43,6 +43,13 @@ class TemplateBootstrapError(RuntimeError):
     """Raised when init.sh subprocess fails or pre-conditions are unmet."""
 
 
+class GitPushVerificationError(TemplateBootstrapError):
+    """Raised by K-001 verify_push() when local HEAD != remote HEAD or remote not registered.
+
+    Triggers K-002 rollback path in the caller.
+    """
+
+
 @dataclass(frozen=True)
 class BootstrapResult:
     """Captures the outcome of a successful init.sh run.
@@ -236,3 +243,185 @@ def invoke_init_script(db: Session, project: Project, *, dry_run: bool = False) 
         init_script=str(script),
         stdout_tail=stdout_tail,
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# F-004 Stage 4 — Remote setup + K-001 verify + K-002 rollback (per spec §3.1/§3.2)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _run_git(args: list[str], *, cwd: str, timeout: int = 60) -> subprocess.CompletedProcess:
+    """Run a git command in ``cwd``. Captures stdout+stderr; returns CompletedProcess."""
+    return subprocess.run(
+        ["git", "-C", cwd, *args],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
+
+
+def push_and_verify(
+    *,
+    target: str,
+    repo_full_name: str,
+    remote_url: str | None = None,
+    push_retry_attempts: int = 1,
+    timeout: int = 60,
+) -> None:
+    """Configure origin + push initial commit + verify (K-001).
+
+    Args:
+        target: Local project directory (must already be a git repo after init.sh).
+        repo_full_name: ``owner/name`` form (e.g. ``rauschiccsk/nex-foo``).
+        remote_url: Full git URL. Defaults to ``git@github.com:<repo_full_name>.git``.
+        push_retry_attempts: How many transient-failure retries to attempt
+            (default 1 = one retry on top of initial attempt per spec §3.2).
+        timeout: Per-subprocess timeout in seconds.
+
+    Raises:
+        GitPushVerificationError: If remote add, push, or HEAD-equality verify
+            fails after all retries. Caller invokes :func:`rollback_partial_state`.
+        TemplateBootstrapError: For non-recoverable conditions (target missing,
+            git not initialized).
+    """
+    target_path = Path(target)
+    if not (target_path / ".git").is_dir():
+        raise TemplateBootstrapError(f"push_and_verify: {target} is not a git repository (init.sh did not run?)")
+
+    final_url = remote_url or f"git@github.com:{repo_full_name}.git"
+
+    # Step 1: Add origin remote (idempotent — replace if already exists)
+    existing = _run_git(["remote", "get-url", "origin"], cwd=target, timeout=timeout)
+    if existing.returncode == 0:
+        # Remote already exists — update URL to be safe
+        result = _run_git(["remote", "set-url", "origin", final_url], cwd=target, timeout=timeout)
+    else:
+        result = _run_git(["remote", "add", "origin", final_url], cwd=target, timeout=timeout)
+    if result.returncode != 0:
+        raise GitPushVerificationError(
+            f"git remote add/set-url failed (exit {result.returncode}): {result.stderr.strip()}"
+        )
+
+    # Step 2: Push (with retry on transient failure)
+    push_attempts = 0
+    max_attempts = push_retry_attempts + 1
+    last_err = ""
+    while push_attempts < max_attempts:
+        push_attempts += 1
+        result = _run_git(["push", "-u", "origin", "main"], cwd=target, timeout=timeout)
+        if result.returncode == 0:
+            logger.info(
+                "git push -u origin main succeeded on attempt %d/%d (repo=%s)",
+                push_attempts,
+                max_attempts,
+                repo_full_name,
+            )
+            break
+        last_err = result.stderr.strip()
+        logger.warning(
+            "git push attempt %d/%d failed (repo=%s): %s",
+            push_attempts,
+            max_attempts,
+            repo_full_name,
+            last_err,
+        )
+    else:
+        raise GitPushVerificationError(f"git push failed after {max_attempts} attempts: {last_err}")
+
+    # Step 3: K-001 verification — local HEAD == remote HEAD
+    local = _run_git(["rev-parse", "HEAD"], cwd=target, timeout=timeout)
+    if local.returncode != 0:
+        raise GitPushVerificationError(f"K-001 verify: cannot read local HEAD ({local.stderr.strip()})")
+    local_head = local.stdout.strip()
+
+    remote_ls = _run_git(["ls-remote", "origin", "HEAD"], cwd=target, timeout=timeout)
+    if remote_ls.returncode != 0:
+        raise GitPushVerificationError(f"K-001 verify: ls-remote origin failed ({remote_ls.stderr.strip()})")
+    # ls-remote output: "<sha>\tHEAD"
+    remote_head_line = remote_ls.stdout.strip().splitlines()[0] if remote_ls.stdout.strip() else ""
+    remote_head = remote_head_line.split("\t")[0] if remote_head_line else ""
+
+    if not remote_head:
+        raise GitPushVerificationError("K-001 verify: ls-remote returned empty (remote HEAD missing)")
+    if local_head != remote_head:
+        raise GitPushVerificationError(
+            f"K-001 verify: local HEAD ({local_head[:12]}) != remote HEAD ({remote_head[:12]})"
+        )
+
+    logger.info(
+        "K-001 push verification PASSED (repo=%s, HEAD=%s)",
+        repo_full_name,
+        local_head[:12],
+    )
+
+
+def rollback_partial_state(
+    *,
+    target: str,
+    repo_full_name: str,
+    delete_github_repo: bool = False,
+    timeout: int = 30,
+) -> None:
+    """K-002: cleanup partial scaffold after push failure.
+
+    Removes the local ``.git`` directory (project files stay so the next
+    create-project re-run can resume idempotently). Optionally deletes the
+    GitHub repo if ``delete_github_repo=True`` — caller responsibility to
+    confirm with Director before passing this flag.
+
+    Args:
+        target: Local project directory.
+        repo_full_name: ``owner/name`` of the GitHub repo.
+        delete_github_repo: If True, runs ``gh repo delete --yes``. Must be
+            explicitly opted-in (Director confirmation) — never default.
+        timeout: Per-subprocess timeout.
+
+    Raises:
+        TemplateBootstrapError: If cleanup itself fails (rare — logged for
+            manual investigation).
+    """
+    target_path = Path(target)
+    git_dir = target_path / ".git"
+
+    if git_dir.is_dir():
+        logger.warning(
+            "K-002 rollback: removing local .git at %s (idempotent re-run safe)",
+            git_dir,
+        )
+        # Use subprocess rm -rf — Path.rmtree would need walk + handle errors
+        result = subprocess.run(
+            ["rm", "-rf", str(git_dir)],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise TemplateBootstrapError(
+                f"K-002 rollback: rm -rf {git_dir} failed (exit {result.returncode}): {result.stderr.strip()}"
+            )
+
+    if delete_github_repo:
+        logger.warning(
+            "K-002 rollback: deleting GitHub repo %s (Director confirmation required)",
+            repo_full_name,
+        )
+        result = subprocess.run(
+            ["gh", "repo", "delete", repo_full_name, "--yes"],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+        if result.returncode != 0:
+            # Non-fatal — repo may already be deleted, or gh auth missing.
+            # Log + continue; admin can do manual cleanup if needed.
+            logger.warning(
+                "K-002 rollback: gh repo delete %s exit=%d (stderr=%s) — manual cleanup may be needed",
+                repo_full_name,
+                result.returncode,
+                result.stderr.strip(),
+            )
+
+    logger.info("K-002 rollback complete (target=%s, repo=%s)", target, repo_full_name)
