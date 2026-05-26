@@ -58,14 +58,24 @@ def generate_uat_env(
     postgres_user: str = "postgres",
     postgres_db: str | None = None,
     backend_env_vars: dict[str, str] | None = None,
+    postgres_password: str | None = None,
 ) -> str:
     """Generate UAT .env content with detected + synthetic vars (CR-022 §C-1).
 
     Per F-003 §11: UAT credentials oddelené od produkcie.
     Backend env vars detected from source compose (priority: secrets randomised,
     DB connection rewritten, ${VAR} expansions → __UAT_SYNTHETIC__).
+
+    Per F-003 §11 CR-023: ``postgres_password`` (if provided) is reused for the
+    top-level ``POSTGRES_PASSWORD`` line, the ``DB_PASSWORD`` overlap (if
+    present in ``backend_env_vars``), and any DB-credential-bearing entry
+    inside ``backend_env_vars`` (the caller is responsible for having threaded
+    the same value into ``detect_backend_env_vars(synthetic_db_password=...)``).
+    Defaults to a fresh ``secrets.token_hex(32)`` when ``None`` for backward
+    compatibility with tests that don't care about cross-service agreement.
     """
-    postgres_password = secrets.token_hex(32)
+    if postgres_password is None:
+        postgres_password = secrets.token_hex(32)
     postgres_db = postgres_db or f"{project}_uat"
     backend_env_vars = backend_env_vars or {}
 
@@ -122,6 +132,7 @@ def _write_uat_files(
     db_creds: dict[str, Any],
     backend_env_vars: dict[str, str],
     frontend_cfg: dict[str, Any] | None,
+    shared_db_password: str,
 ) -> Path:
     """Write docker-compose.yml + .env into /opt/uat/<slug>/. Returns uat dir.
 
@@ -180,6 +191,7 @@ def _write_uat_files(
         postgres_user=postgres_user,
         postgres_db=postgres_db,
         backend_env_vars=backend_env_vars,
+        postgres_password=shared_db_password,
     )
     (uat_dir / ".env").write_text(env_content, encoding="utf-8")
     (uat_dir / ".env").chmod(0o600)
@@ -269,7 +281,15 @@ def deploy(
     if db_name_override:
         db_creds["POSTGRES_DB"] = db_name_override
 
-    backend_env_vars = {} if skip_env_detection else _uat_lib.detect_backend_env_vars(project_path)
+    # CR-023: precompute shared synthetic DB password before backend env detection
+    # so POSTGRES_PASSWORD .env line, DB_PASSWORD overlap, and DATABASE_URL
+    # embedded password all agree (postgres container init vs backend connect).
+    shared_db_password = secrets.token_hex(32)
+    backend_env_vars = (
+        {}
+        if skip_env_detection
+        else _uat_lib.detect_backend_env_vars(project_path, synthetic_db_password=shared_db_password)
+    )
     frontend_cfg = _uat_lib.detect_frontend_config(project_path)
     alembic_detected = _uat_lib.detect_alembic_strategy(project_path)
     alembic_strategy = alembic_strategy_override if alembic_strategy_override != "auto" else alembic_detected
@@ -325,6 +345,7 @@ def deploy(
             db_creds=db_creds,
             backend_env_vars=backend_env_vars,
             frontend_cfg=frontend_cfg,
+            shared_db_password=shared_db_password,
         )
         write_nginx_config(slug, port=port)
 

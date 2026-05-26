@@ -500,6 +500,59 @@ def test_detect_backend_env_vars_marks_user_secret_as_placeholder(tmp_path):
     assert env["MY_PLAIN"] == "plain_value"
 
 
+def test_detect_backend_env_vars_shares_synthetic_db_password_within_call(tmp_path):
+    """CR-023: POSTGRES_PASSWORD + DB_PASSWORD + DATABASE_URL embed share one synth value.
+
+    Bug #5 (smoke 2026-05-26): postgres container init password vs backend
+    connect password were two independent ``secrets.token_hex(32)`` calls →
+    auth failed. Fix: a single shared synthetic password threaded through
+    every DB credential consumer in one detect_backend_env_vars() call.
+    """
+    (tmp_path / "docker-compose.yml").write_text(
+        "services:\n"
+        "  db:\n"
+        "    environment:\n"
+        "      POSTGRES_USER: appuser\n"
+        "      POSTGRES_DB: appdb\n"
+        "  backend:\n"
+        "    environment:\n"
+        "      POSTGRES_PASSWORD: prod_password\n"
+        "      DB_PASSWORD: prod_password\n"
+        "      DATABASE_URL: postgresql+pg8000://appuser:prod_password@db:5432/appdb\n"
+    )
+    env = _uat_lib.detect_backend_env_vars(tmp_path)
+    # Extract embedded password from DATABASE_URL (between first ':' after ://
+    # username and the '@' host separator).
+    url = env["DATABASE_URL"]
+    userinfo = url.split("://", 1)[1].rsplit("@", 1)[0]
+    embedded_password = userinfo.split(":", 1)[1]
+    assert env["POSTGRES_PASSWORD"] == embedded_password
+    assert env["DB_PASSWORD"] == embedded_password
+    assert env["POSTGRES_PASSWORD"] != "prod_password"  # not passthrough
+
+
+def test_detect_backend_env_vars_accepts_explicit_shared_password(tmp_path):
+    """CR-023: ``synthetic_db_password`` kwarg threads the same value into all consumers.
+
+    Caller (uat-deploy.generate_uat_env) generates the password once for the
+    top-level POSTGRES_PASSWORD .env line and passes it here so the backend's
+    DATABASE_URL embed agrees with the postgres container init password.
+    """
+    (tmp_path / "docker-compose.yml").write_text(
+        "services:\n"
+        "  db:\n"
+        "    environment:\n"
+        "      POSTGRES_USER: appuser\n"
+        "      POSTGRES_DB: appdb\n"
+        "  backend:\n"
+        "    environment:\n"
+        "      DATABASE_URL: postgresql://appuser:prod_pwd@db:5432/appdb\n"
+    )
+    shared = "deadbeef" * 8  # 64-char placeholder
+    env = _uat_lib.detect_backend_env_vars(tmp_path, synthetic_db_password=shared)
+    assert f":{shared}@" in env["DATABASE_URL"]
+
+
 # ---------- CR-022: detect_frontend_config ----------
 
 

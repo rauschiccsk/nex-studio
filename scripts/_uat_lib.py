@@ -234,8 +234,21 @@ def _is_var_expansion(value: Any) -> bool:
     return isinstance(value, str) and value.startswith("${") and value.endswith("}")
 
 
-def _rewrite_db_connection_var(key: str, value: Any, *, db_creds: dict[str, Any], db_name: str) -> str:
-    """Rewrite DB connection env vars to UAT db hostname + detected/derived creds."""
+def _rewrite_db_connection_var(
+    key: str,
+    value: Any,
+    *,
+    db_creds: dict[str, Any],
+    db_name: str,
+    synthetic_password: str,
+) -> str:
+    """Rewrite DB connection env vars to UAT db hostname + detected/derived creds.
+
+    ``synthetic_password`` must be the **shared** UAT DB password (single value
+    reused across POSTGRES_PASSWORD, DB_PASSWORD, and DATABASE_URL embedded
+    password) — per F-003 §11 CR-023. Caller (e.g. ``detect_backend_env_vars``
+    or ``uat-deploy.generate_uat_env``) precomputes this once per env build.
+    """
     if key in {"DB_HOST", "POSTGRES_HOST"}:
         return UAT_DB_HOSTNAME
     if key in {"DB_PORT", "POSTGRES_PORT"}:
@@ -245,17 +258,18 @@ def _rewrite_db_connection_var(key: str, value: Any, *, db_creds: dict[str, Any]
     if key in {"DB_USER", "POSTGRES_USER"}:
         return db_creds["POSTGRES_USER"]
     if key in {"DB_PASSWORD", "POSTGRES_PASSWORD"}:
-        # Synthetic random (caller writes same value to .env POSTGRES_PASSWORD).
-        return secrets.token_hex(32)
+        return synthetic_password
     if key == "DATABASE_URL":
         user = db_creds["POSTGRES_USER"]
-        # Use synthetic password (matches what _PASSWORD suffix would generate).
-        password = secrets.token_hex(32)
-        return f"postgresql://{user}:{password}@{UAT_DB_HOSTNAME}:{UAT_DB_PORT}/{db_name}"
+        return f"postgresql://{user}:{synthetic_password}@{UAT_DB_HOSTNAME}:{UAT_DB_PORT}/{db_name}"
     return str(value)
 
 
-def detect_backend_env_vars(source_project_path: Path) -> dict[str, str]:
+def detect_backend_env_vars(
+    source_project_path: Path,
+    *,
+    synthetic_db_password: str | None = None,
+) -> dict[str, str]:
     """Parse services.backend.environment and produce synthetic UAT env map.
 
     Per F-003 §11 + CR-022 §C-1 (synthetic credentials generation):
@@ -263,6 +277,14 @@ def detect_backend_env_vars(source_project_path: Path) -> dict[str, str]:
     - DB connection vars (explicit whitelist) → rewritten to UAT container hostname
     - Values with ${VAR} expansion notation → __UAT_SYNTHETIC__ placeholder
     - Other plain vars → copy as-is (string-ified)
+
+    Per F-003 §11 CR-023: ``synthetic_db_password`` (if provided) is the shared
+    UAT DB password threaded into every DB credential consumer (POSTGRES_PASSWORD,
+    DB_PASSWORD, DATABASE_URL embedded password). When ``None``, a single value
+    is precomputed once per call so DB consumers within this env map agree.
+    Caller (``uat-deploy.generate_uat_env``) should pass the same value it
+    writes to the top-level ``POSTGRES_PASSWORD`` .env line so the postgres
+    container init and the backend connect agree.
 
     Returns empty dict if no source compose or no backend service.
     """
@@ -279,6 +301,10 @@ def detect_backend_env_vars(source_project_path: Path) -> dict[str, str]:
     db_creds = detect_db_credentials(source_project_path)
     db_name = db_creds["POSTGRES_DB"] or "uat_db"
 
+    # Shared synthetic DB password (CR-023). Precompute once so every DB
+    # consumer within this env map agrees.
+    shared_password = synthetic_db_password or secrets.token_hex(32)
+
     out: dict[str, str] = {}
     for key, value in env.items():
         key_str = str(key)
@@ -290,7 +316,13 @@ def detect_backend_env_vars(source_project_path: Path) -> dict[str, str]:
 
         # Priority 2: DB connection rewrite (explicit whitelist)
         if key_str in DB_CONNECTION_VARS:
-            out[key_str] = _rewrite_db_connection_var(key_str, value, db_creds=db_creds, db_name=db_name)
+            out[key_str] = _rewrite_db_connection_var(
+                key_str,
+                value,
+                db_creds=db_creds,
+                db_name=db_name,
+                synthetic_password=shared_password,
+            )
             continue
 
         # Priority 3: Synthetic secret suffix match
