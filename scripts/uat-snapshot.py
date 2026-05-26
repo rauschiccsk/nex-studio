@@ -46,9 +46,19 @@ def snapshot(slug: str, *, reason: str | None, version: str) -> int:
     filename = _uat_lib.snapshot_filename(version=version, reason=effective_reason)
     snapshot_path = snapshots_dir / filename
 
+    # CR-025: read detected POSTGRES_USER + POSTGRES_DB from uat-deploy-written .env
+    # (single source of truth — see _uat_lib.read_uat_env). Hardcoded -U postgres
+    # zlyháva keď source compose detegoval iného usera (Bug #8).
+    env = _uat_lib.read_uat_env(slug)
+    pg_user = env.get("POSTGRES_USER", "postgres")
+    pg_db = env.get("POSTGRES_DB")
+
     container = f"uat-{slug}-postgres"
+    cmd = ["pg_dump", "-U", pg_user]
+    if pg_db:
+        cmd += ["-d", pg_db]
     try:
-        result = _uat_lib.docker_exec(container, ["pg_dump", "-U", "postgres"], capture=True)
+        result = _uat_lib.docker_exec(container, cmd, capture=True)
     except Exception as exc:  # noqa: BLE001
         _uat_lib.error_console.print(f"[red]ERROR:[/red] pg_dump failed: {exc}")
         return 1

@@ -77,6 +77,53 @@ def test_snapshot_writes_to_snapshots_dir(monkeypatch, tmp_path):
     assert "v0.2.0" in snapshots[0].name
 
 
+def test_snapshot_uses_detected_postgres_user_and_db(monkeypatch, tmp_path):
+    """CR-025: pg_dump invoked with -U <detected> -d <detected> z .env."""
+    mod = _import_module(monkeypatch)
+    fake_uat = tmp_path / "uat" / "dev"
+    fake_uat.mkdir(parents=True)
+    (fake_uat / "docker-compose.yml").write_text("# stub")
+    (fake_uat / "snapshots").mkdir()
+    (fake_uat / ".env").write_text("POSTGRES_USER=nexstudio\nPOSTGRES_DB=nexstudio\n")
+    monkeypatch.setattr(mod, "UAT_ROOT", tmp_path / "uat")
+    monkeypatch.setattr(mod._uat_lib, "uat_env_path", lambda slug: fake_uat / ".env")
+
+    captured: dict = {}
+
+    def fake_exec(container, command, **kwargs):
+        captured["cmd"] = command
+        return MagicMock(stdout=b"-- ok\n")
+
+    monkeypatch.setattr(mod._uat_lib, "docker_exec", fake_exec)
+
+    rc = mod.snapshot("dev", reason=None, version="v0.2.0")
+    assert rc == 0
+    assert captured["cmd"] == ["pg_dump", "-U", "nexstudio", "-d", "nexstudio"]
+
+
+def test_snapshot_falls_back_to_postgres_user_when_env_missing(monkeypatch, tmp_path):
+    """CR-025: graceful fallback when /opt/uat/<slug>/.env missing → -U postgres (no -d)."""
+    mod = _import_module(monkeypatch)
+    fake_uat = tmp_path / "uat" / "legacy"
+    fake_uat.mkdir(parents=True)
+    (fake_uat / "docker-compose.yml").write_text("# stub")
+    (fake_uat / "snapshots").mkdir()
+    monkeypatch.setattr(mod, "UAT_ROOT", tmp_path / "uat")
+    monkeypatch.setattr(mod._uat_lib, "uat_env_path", lambda slug: fake_uat / ".env")  # absent
+
+    captured: dict = {}
+
+    def fake_exec(container, command, **kwargs):
+        captured["cmd"] = command
+        return MagicMock(stdout=b"-- ok\n")
+
+    monkeypatch.setattr(mod._uat_lib, "docker_exec", fake_exec)
+
+    rc = mod.snapshot("legacy", reason=None, version="v0.0.0")
+    assert rc == 0
+    assert captured["cmd"] == ["pg_dump", "-U", "postgres"]
+
+
 def test_snapshot_includes_reason_in_filename(monkeypatch, tmp_path):
     mod = _import_module(monkeypatch)
     fake_uat = tmp_path / "uat" / "dev"

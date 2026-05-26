@@ -91,6 +91,54 @@ def test_path_helpers_validate_slug():
         _uat_lib.uat_dir("BAD/slug")
 
 
+# ---------- CR-025: read_uat_env ----------
+
+
+def test_uat_env_path_returns_expected():
+    assert _uat_lib.uat_env_path("mager") == Path("/opt/uat/mager/.env")
+
+
+def test_read_uat_env_parses_basic(tmp_path, monkeypatch):
+    """CR-025: simple KEY=VALUE pairs parsed into dict."""
+    env_file = tmp_path / "mager" / ".env"
+    env_file.parent.mkdir()
+    env_file.write_text("POSTGRES_USER=appuser\nPOSTGRES_DB=appdb\n")
+    monkeypatch.setattr(_uat_lib, "uat_dir", lambda slug: tmp_path / slug)
+    monkeypatch.setattr(_uat_lib, "uat_env_path", lambda slug: tmp_path / slug / ".env")
+
+    env = _uat_lib.read_uat_env("mager")
+    assert env["POSTGRES_USER"] == "appuser"
+    assert env["POSTGRES_DB"] == "appdb"
+
+
+def test_read_uat_env_ignores_comments_and_blanks(tmp_path, monkeypatch):
+    """CR-025: # comments + blank lines skipped without breaking parse."""
+    env_file = tmp_path / "dev" / ".env"
+    env_file.parent.mkdir()
+    env_file.write_text("# header comment\n\nPOSTGRES_USER=appuser\n  # indented comment\nPOSTGRES_DB=appdb\n\n")
+    monkeypatch.setattr(_uat_lib, "uat_env_path", lambda slug: tmp_path / slug / ".env")
+
+    env = _uat_lib.read_uat_env("dev")
+    assert env == {"POSTGRES_USER": "appuser", "POSTGRES_DB": "appdb"}
+
+
+def test_read_uat_env_missing_file_returns_empty(tmp_path, monkeypatch):
+    """CR-025: graceful degradation when /opt/uat/<slug>/.env doesn't exist."""
+    monkeypatch.setattr(_uat_lib, "uat_env_path", lambda slug: tmp_path / "absent" / ".env")
+    assert _uat_lib.read_uat_env("absent") == {}
+
+
+def test_read_uat_env_preserves_values_with_equals(tmp_path, monkeypatch):
+    """CR-025: only first '=' splits, values like 'postgresql://...' stay intact."""
+    env_file = tmp_path / "dev" / ".env"
+    env_file.parent.mkdir()
+    env_file.write_text("DATABASE_URL=postgresql://u:p@host:5432/db\n")
+    monkeypatch.setattr(_uat_lib, "uat_env_path", lambda slug: tmp_path / slug / ".env")
+
+    env = _uat_lib.read_uat_env("dev")
+    assert env["DATABASE_URL"] == "postgresql://u:p@host:5432/db"
+
+
 # ---------- Port allocation ----------
 
 
