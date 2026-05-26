@@ -149,6 +149,35 @@ class ProjectCreate(BaseModel):
         default=None,
         description="User who created the project. If omitted, resolved from the active session.",
     )
+    # F-004 flags — frontend Create Project form (default per spec §4):
+    enable_coordinator: bool = Field(
+        default=True,
+        description=(
+            "F-004 K-003: bootstrap Koordinátor agent (charter + settings + dedo-inbox + "
+            "state file). Default True per spec §4 form. Opt-out via False."
+        ),
+    )
+    enable_cicd: bool = Field(
+        default=False,
+        description=(
+            "F-004 K-005: copy github-actions-workflow.yml template + commit + push. "
+            "Default False per spec §3.5 (opt-in)."
+        ),
+    )
+    full_smoke: bool = Field(
+        default=False,
+        description=(
+            "F-004 K-004: run full smoke test (build + up + health) instead of minimal "
+            "(build only). Default False per spec §3.4."
+        ),
+    )
+    enable_branch_protection: bool = Field(
+        default=False,
+        description=(
+            "F-004 K-001-extension: configure GitHub branch protection (require PR, "
+            "no force push). Default False per spec O-3 + Dedo approval."
+        ),
+    )
 
 
 class ProjectUpdate(BaseModel):

@@ -56,8 +56,11 @@ from backend.services import version as version_service
 from backend.services.knowledge_base_writer import KnowledgeBaseWriter
 from backend.services.live_documents import LiveDocumentService
 from backend.services.template_bootstrap import (
+    GitPushVerificationError,
     TemplateBootstrapError,
     invoke_init_script,
+    push_and_verify,
+    rollback_partial_state,
 )
 
 logger = logging.getLogger(__name__)
@@ -490,13 +493,56 @@ def create_project(
         # alongside the GitHub-repo dangling case (see docstring above).
         # Disabled when template_init_script_path is empty.
         try:
-            invoke_init_script(db, project)
+            invoke_init_script(db, project, enable_coordinator=payload.enable_coordinator)
         except TemplateBootstrapError as exc:
             db.rollback()
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Filesystem bootstrap failed: {exc}",
             ) from exc
+
+        # Stage 4 — F-004 K-001 push + verify, K-002 rollback on failure.
+        # Runs only if payload.repo_url je nastavený (skipped pre brownfield
+        # projects bez GitHub repo). Rollback v partial-failure scenárioch:
+        # local .git deleted; GitHub repo zostáva (manual cleanup by Director).
+        if payload.repo_url and project.source_path:
+            from backend.services.template_bootstrap import _repo_from_url
+
+            repo_full_name = _repo_from_url(payload.repo_url, project.slug)
+            try:
+                push_and_verify(target=project.source_path, repo_full_name=repo_full_name)
+            except GitPushVerificationError as exc:
+                # K-002: clean up local .git so re-run is idempotent
+                rollback_partial_state(
+                    target=project.source_path,
+                    repo_full_name=repo_full_name,
+                    delete_github_repo=False,  # Director confirms manually
+                )
+                db.rollback()
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=(
+                        f"Stage 4 push+verify failed: {exc}. Local .git rolled back. "
+                        f"GitHub repo {repo_full_name} preserved — Director cleanup if needed."
+                    ),
+                ) from exc
+
+        # Stage 5+6 — F-004 K-004 smoke test + K-005 CI/CD opt-in.
+        # Both are best-effort (logged warnings, NIE 500) — partial success
+        # acceptable. Director can re-run smoke / wire CI manually if needed.
+        from backend.services.create_project_postscaffold import (
+            run_post_scaffold_steps,
+        )
+
+        run_post_scaffold_steps(
+            target=project.source_path or "",
+            slug=project.slug,
+            repo_url=payload.repo_url,
+            enable_cicd=payload.enable_cicd,
+            full_smoke=payload.full_smoke,
+            enable_branch_protection=payload.enable_branch_protection,
+        )
+
         db.commit()
     except ValueError as exc:
         db.rollback()

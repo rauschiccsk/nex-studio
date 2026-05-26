@@ -96,7 +96,13 @@ def _repo_from_url(repo_url: str | None, slug: str) -> str:
     return f"rauschiccsk/{slug}"
 
 
-def invoke_init_script(db: Session, project: Project, *, dry_run: bool = False) -> BootstrapResult:
+def invoke_init_script(
+    db: Session,
+    project: Project,
+    *,
+    dry_run: bool = False,
+    enable_coordinator: bool = True,
+) -> BootstrapResult:
     """Run the icc-claude-template init.sh for the given project.
 
     Pre-conditions:
@@ -179,6 +185,9 @@ def invoke_init_script(db: Session, project: Project, *, dry_run: bool = False) 
     ]
     if dry_run:
         args.append("--dry-run")
+    if not enable_coordinator:
+        # F-004 K-003 opt-out (default in init.sh is enabled)
+        args.append("--no-coordinator")
 
     timeout = system_setting_service.get_int(db, "template_init_timeout_seconds")
 
