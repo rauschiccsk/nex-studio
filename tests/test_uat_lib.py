@@ -592,6 +592,52 @@ def test_detect_backend_env_vars_env_example_secret_gets_synthetic(tmp_path):
         assert "base64" not in env[key]
 
 
+def test_synthetic_secret_key_suffix_returns_base64_32_bytes(tmp_path):
+    """CR-027: `_KEY` suffix → base64-encoded 32-byte random (Fernet/crypto convention)."""
+    import base64
+
+    val = _uat_lib._synthetic_secret("EMAIL_CREDS_ENCRYPTION_KEY")
+    assert len(val) == 44, f"base64(32 bytes) should be 44 chars, got {len(val)}"
+    decoded = base64.urlsafe_b64decode(val)
+    assert len(decoded) == 32, f"decoded length should be 32 bytes, got {len(decoded)}"
+
+
+def test_synthetic_secret_password_suffix_returns_hex32(tmp_path):
+    """CR-027: `_PASSWORD` suffix → 64-char hex (regression from CR-022)."""
+    val = _uat_lib._synthetic_secret("DB_PASSWORD")
+    assert len(val) == 64
+    int(val, 16)  # raises ValueError if not valid hex
+
+
+def test_synthetic_secret_secret_and_token_suffixes_return_hex32(tmp_path):
+    """CR-027: `_SECRET`, `_TOKEN` → 64-char hex (regression)."""
+    for key in ("JWT_SECRET", "LAUNCH_TOKEN", "API_TOKEN", "MY_SECRET"):
+        val = _uat_lib._synthetic_secret(key)
+        assert len(val) == 64, f"{key} expected 64 hex chars, got {len(val)}"
+        int(val, 16)
+
+
+def test_synthetic_secret_case_insensitive_key_suffix(tmp_path):
+    """CR-027: dispatch case-insensitive (`encryption_key`, `Key`, `KEY`)."""
+    import base64
+
+    for key in ("encryption_key", "API_Key", "FOO_KEY"):
+        val = _uat_lib._synthetic_secret(key)
+        decoded = base64.urlsafe_b64decode(val)
+        assert len(decoded) == 32, f"{key} should produce base64(32), got {len(decoded)} bytes decoded"
+
+
+def test_detect_backend_env_vars_encryption_key_is_base64_decodable_32_bytes(tmp_path):
+    """CR-027 integration: EMAIL_CREDS_ENCRYPTION_KEY z .env.example → valid Fernet key."""
+    import base64
+
+    (tmp_path / ".env.example").write_text("EMAIL_CREDS_ENCRYPTION_KEY=replace-with-real-key\n")
+    (tmp_path / "docker-compose.yml").write_text("services:\n  backend:\n    environment: {}\n")
+    env = _uat_lib.detect_backend_env_vars(tmp_path)
+    decoded = base64.urlsafe_b64decode(env["EMAIL_CREDS_ENCRYPTION_KEY"])
+    assert len(decoded) == 32  # nex-inbox CredsCipher strict requirement
+
+
 def test_detect_backend_env_vars_marks_user_secret_as_placeholder(tmp_path):
     """${VAR} env-var expansion → __UAT_SYNTHETIC__ placeholder (cannot read host env)."""
     (tmp_path / "docker-compose.yml").write_text(

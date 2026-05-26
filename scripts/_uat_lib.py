@@ -20,6 +20,7 @@ State files:
 
 from __future__ import annotations
 
+import base64
 import json
 import re
 import secrets
@@ -263,6 +264,27 @@ UAT_DB_PORT = "5432"
 USER_SECRET_PLACEHOLDER = "__UAT_SYNTHETIC__"
 
 
+def _synthetic_secret(key: str) -> str:
+    """Generate synthetic value for a secret env var (CR-027 format heuristic).
+
+    Suffix-based dispatch:
+
+    - ``_KEY`` (case-insensitive) → ``base64.urlsafe_b64encode(secrets.token_bytes(32))``.
+      Matches the most common encryption-key convention (Fernet, NaCl,
+      cryptography library). Decoded length = 32 bytes; encoded length =
+      44 ASCII chars. Compatible as a plain string for non-decoding readers
+      (JWT HS256, FastAPI SECRET_KEY).
+    - All other suffixes (``_PASSWORD``, ``_SECRET``, ``_TOKEN``) →
+      ``secrets.token_hex(32)``. 64 hex chars; never decoded; safe for
+      password / API-token / random-secret usage.
+
+    Per-project format overrides deferred to CR-028+ (no universal standard).
+    """
+    if key.lower().endswith("_key"):
+        return base64.urlsafe_b64encode(secrets.token_bytes(32)).decode("ascii")
+    return secrets.token_hex(32)
+
+
 def _is_var_expansion(value: Any) -> bool:
     """Return True for ${VAR} or ${VAR:-default} env-var expansion notation."""
     return isinstance(value, str) and value.startswith("${") and value.endswith("}")
@@ -396,9 +418,9 @@ def detect_backend_env_vars(
             )
             continue
 
-        # Priority 3: Synthetic secret suffix match
+        # Priority 3: Synthetic secret suffix match (CR-027 format heuristic)
         if key_str.lower().endswith(SECRET_SUFFIXES):
-            out[key_str] = secrets.token_hex(32)
+            out[key_str] = _synthetic_secret(key_str)
             continue
 
         # Priority 4: plain value (string-ified for .env file compatibility)
