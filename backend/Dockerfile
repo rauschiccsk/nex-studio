@@ -53,22 +53,39 @@ RUN apt-get update \
 # Implementer (cez AgentTerminal subprocess) potrebuje `docker` + `gh` CLI
 # binárky aby mohol orchestrovať cross-project deploys (UAT compose) a
 # monitorovať CI runs cez gh API. `docker.sock` je už mounted v compose
-# (Director directive 2026-05-19), ale chýba CLI binary. `gh` nie je v
-# default Debian repos — install z official GitHub Apt repo.
+# (Director directive 2026-05-19), ale chýba CLI binary.
+#
+# Docker CLI: install z official Docker repo (`docker-ce-cli` — len client,
+# žiadny daemon — daemon beží na host cez mounted socket). Debian default
+# `docker.io` package na slim base produkuje silent install fail (§9.1
+# NEX Inbox v0.1.0 lesson: binárky chýbajú napriek "successful" install) —
+# fixed v CI run 26745805192 fix-commit.
+#
+# GitHub CLI: install z official GitHub Apt repo (nie v default Debian).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        docker.io curl ca-certificates gnupg \
+        curl ca-certificates gnupg lsb-release \
+    && install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg \
+        | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
+    && chmod a+r /etc/apt/keyrings/docker.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $(. /etc/os-release && echo $VERSION_CODENAME) stable" \
+        > /etc/apt/sources.list.d/docker.list \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
         | gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
     && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
         > /etc/apt/sources.list.d/github-cli.list \
     && apt-get update \
-    && apt-get install -y --no-install-recommends gh \
+    && apt-get install -y --no-install-recommends docker-ce-cli gh \
     && rm -rf /var/lib/apt/lists/*
 
 # Verify binárky existujú (per §9.1 build pattern lesson z NEX Inbox v0.1.0 —
-# silent install fail by inak prešiel až do runtime crash).
-RUN test -x /usr/bin/docker && test -x /usr/bin/gh
+# silent install fail by inak prešiel až do runtime crash). Path-agnostic
+# cez `command -v` lebo `docker-ce-cli` môže inštalovať do /usr/bin alebo
+# /usr/local/bin per Debian convention.
+RUN docker_bin="$(command -v docker)" && test -x "$docker_bin" \
+    && gh_bin="$(command -v gh)" && test -x "$gh_bin" \
+    && echo "Docker CLI at $docker_bin, GitHub CLI at $gh_bin"
 
 # Set system-wide git identity used by template_bootstrap when init.sh
 # does the first commit on a freshly-created project. The identity is
