@@ -570,27 +570,124 @@ Skill `.claude/skills/systematic-debugging.md` (ak existuje) — detail protokol
 
 ---
 
-## 15. CI/CD MONITORING (keď bude remote repo)
+## 15. CI/CD MONITORING + DEPLOY (autonomous lifecycle per CR-NS-002)
 
-NEX Studio aktuálne nemá GitHub remote (per memory) — táto sekcia platí
-po pridaní remote repa.
+Per Director directive 2026-06-01 — Implementer pokrýva FULL post-commit
+lifecycle: secret scan → push → CI monitor → deploy → post-deploy verify
+→ DONE report. Dedo je meta-observer (kontroluje že NEX Studio + agenti
+projekt zvládajú), NIE work substitution.
 
-### Po každom push
-1. `gh run watch` alebo `gh run list --limit 1` — identifikuj run ID
-2. **Čakaj** na dokončenie všetkých jobov
-3. **Report v DONE**:
+NEX Studio + nex-inbox repos sú na rauschiccsk/* organization — remote
+JE k dispozícii. Toto NIE je "keď bude" hypotéza, je current reality.
+
+### 15.1 Po commit (PRED push) — secret scan
+
+```bash
+# Whole-commit scan (vrátane benign matches filter)
+git show HEAD | grep -iEc '(password|passwd|secret|api[_-]?key|bearer|private[_-]?key|DB_PASS|SMB_PASS)' || true
+```
+
+Benign matches (acceptable):
+- `Co-Authored-By: ... anthropic.com` (Claude trailer)
+- Test fixture parametre `encrypted_password="hunter2"` (PDF encryption tests)
+- Code symbol mentions v komentároch (`# rotate password v X dni`)
+
+Ak hit > 0 mimo benign matches: **STOP**, fix:
+- Pre unpushed commit: amend OK
+- Pre pushed commit: **NIE amend** — rotate credentials, new fix commit
+  (per CLAUDE.md §4 P0 incident protocol)
+
+### 15.2 Push do main
+
+```bash
+git push origin main
+```
+
+Direct push, žiadny PR (current nex-studio + nex-inbox workflow).
+Žiadny `--force`, `--no-verify` (settings.json §13 deny rules).
+
+### 15.3 Po push — CI monitor
+
+```bash
+# 1. Identify run ID (~8s po push pre workflow trigger)
+sleep 8
+RUN=$(gh api repos/<owner>/<repo>/actions/runs --jq '.workflow_runs[0].id')
+echo "RUN=$RUN"
+
+# 2. Wait for CI completion (blocks until done; ~5-15 min)
+gh run watch $RUN
+
+# 3. Confirm conclusion + per-job status
+gh api repos/<owner>/<repo>/actions/runs/$RUN --jq '.conclusion'
+gh api repos/<owner>/<repo>/actions/runs/$RUN/jobs --jq '[.jobs[] | {name, conclusion}]'
+```
+
+**Report v DONE:**
+```
+CI: <run-id> — lint PASS, test PASS, build PASS
+```
+
+**CI FAIL** → fix root cause:
+```bash
+gh run view $RUN --log-failed | head -50
+```
+Diagnose → fix + new commit + push + re-monitor. **Žiadne výnimky.**
+Žiadny "deploy anyway", žiadny "fix later", žiadny "known flaky" skip
+bez Director schválenia.
+
+### 15.4 Deploy (post-CI green, ak projekt má deploy convention)
+
+Per-project deploy command — discover cez project's docker-compose.yml
+alebo deployment docs.
+
+**nex-inbox UAT:**
+```bash
+cd /opt/uat/inbox
+docker compose build backend [frontend]  # frontend iba ak .tsx/.css zmeny
+docker compose up -d backend [frontend]
+
+# Wait for healthy
+until [ "$(docker inspect uat-inbox-backend --format '{{.State.Health.Status}}')" = "healthy" ]; do
+    sleep 5
+done
+```
+
+**nex-studio (self):** NIE deploy (Implementer beží v nex-studio container —
+restart by ho killol). Bootstrap reštart je Director / Dedo scope.
+
+**Iné projekty:** per ich `docker-compose.yml` + `deployment/` docs konventie.
+
+Ak deploy zlyhá (build error, container restart loop) → diagnose root cause
++ fix commit + new push. NIE "deploy retry without diagnosis".
+
+### 15.5 Post-deploy verify
+
+1. **Health endpoint:**
+   ```bash
+   curl -sf http://127.0.0.1:<port>/api/v1/health | jq .
    ```
-   CI: <run-id> — Lint PASS, Build PASS, Test PASS, Deploy PASS
+
+2. **Live code verify** (ak commit menil module):
+   ```bash
+   docker exec <container> python -c "from new_module import new_function; print('OK')"
    ```
-4. **CI FAIL** → fix root cause → nový commit + push → re-monitor. Žiadne výnimky.
 
-### Branch
-- Push **exclusively to `main`**
-- Žiadne develop branch
-- CI triggers len na `main`
+3. **Migration verify** (ak commit menil schema):
+   ```bash
+   docker exec <db_container> psql -U <user> -d <db> -c "SELECT version_num FROM alembic_version;"
+   ```
 
-### Force push
-**ZAKÁZANÉ** mimo Zoltánovho explicitného príkazu. Nikdy `--force` do main.
+**Report v DONE:** `Deploy + verify: ✓ health OK, migration <version>, live import OK`
+
+### 15.6 Branch + safety
+
+- Push **exclusively to `main`**.
+- Žiadne develop/feature branches.
+- CI triggers iba na `main`.
+- `git push --force`, `git push --no-verify`, `git commit --amend` na
+  pushed commit, `git reset --hard`, `git revert`, `git rm` mimo
+  backend/frontend — **ZAKÁZANÉ** mimo Director explicit instrukcia
+  (settings.json deny rules + §13 anti-patterns).
 
 ---
 

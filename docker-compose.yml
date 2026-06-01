@@ -61,6 +61,12 @@ services:
       # if NEX Studio is exposed to untrusted users. See backend/
       # Dockerfile comment on the matching docker group (GID 110).
       - /var/run/docker.sock:/var/run/docker.sock
+      # rw — backend orchestrates UAT deploys cez Implementer agents.
+      # Required pre cross-project `docker compose build/up` v UAT
+      # compose files (per CR-NS-002 Director directive 2026-06-01).
+      # SECURITY: same as /var/run/docker.sock — effective root on host.
+      # Acceptable for ICC internal dev (single trusted Director).
+      - /opt/uat:/opt/uat:rw
     environment:
       DATABASE_URL: "postgresql+pg8000://nexstudio:nexstudio@db:5432/nexstudio"
       TEST_DATABASE_URL: "postgresql+pg8000://nexstudio:nexstudio@db:5432/nexstudio_test"
@@ -86,6 +92,11 @@ services:
       # Scope required: admin:org (create repo under an organisation)
       # + repo (manage repo metadata). Set in /opt/projects/nex-studio/.env.
       GITHUB_TOKEN: "${GITHUB_TOKEN}"
+      # gh CLI authentication — used by Implementer (AgentTerminal subprocess)
+      # for `gh run watch`, `gh api`, etc. per charter §15.3 CI monitor.
+      # Same PAT as GITHUB_TOKEN typically; gh CLI prefers GH_TOKEN env name.
+      # Per CR-NS-002 Director directive 2026-06-01.
+      GH_TOKEN: "${GH_TOKEN:-}"
       # Mockup server runs with network_mode: host so the backend
       # (bridged) reaches it via host-gateway — extra_hosts below
       # wires the Docker-standard name on Linux.

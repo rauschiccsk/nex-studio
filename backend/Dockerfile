@@ -49,6 +49,27 @@ RUN apt-get update \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
+# CR-NS-002 — Docker CLI + GitHub CLI pre autonomous Implementer lifecycle.
+# Implementer (cez AgentTerminal subprocess) potrebuje `docker` + `gh` CLI
+# binárky aby mohol orchestrovať cross-project deploys (UAT compose) a
+# monitorovať CI runs cez gh API. `docker.sock` je už mounted v compose
+# (Director directive 2026-05-19), ale chýba CLI binary. `gh` nie je v
+# default Debian repos — install z official GitHub Apt repo.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        docker.io curl ca-certificates gnupg \
+    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+        | gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+        > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends gh \
+    && rm -rf /var/lib/apt/lists/*
+
+# Verify binárky existujú (per §9.1 build pattern lesson z NEX Inbox v0.1.0 —
+# silent install fail by inak prešiel až do runtime crash).
+RUN test -x /usr/bin/docker && test -x /usr/bin/gh
+
 # Set system-wide git identity used by template_bootstrap when init.sh
 # does the first commit on a freshly-created project. The identity is
 # generic ICC service-account style; per-project commits later will be
