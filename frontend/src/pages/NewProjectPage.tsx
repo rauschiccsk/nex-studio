@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { createProjectApi, suggestPortBlockApi } from "@/services/api/projects";
 import { getSystemSettingApi } from "@/services/api/systemSettings";
+import { listUsersApi } from "@/services/api/users";
 import { useAuthStore } from "@/store/authStore";
 import type { ProjectCategory } from "@/types";
+import type { UserRead } from "@/types/user";
 
 // ─── Slug helper ─────────────────────────────────────────────────────────────
 
@@ -72,6 +74,10 @@ export default function NewProjectPage() {
   const [fullSmoke, setFullSmoke] = useState(false);
   const [enableBranchProtection, setEnableBranchProtection] = useState(false);
 
+  // CR-NS-012: notification owner picker. Empty = none (no notifications).
+  const [users, setUsers] = useState<UserRead[]>([]);
+  const [ownerId, setOwnerId] = useState<string>("");
+
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -80,6 +86,21 @@ export default function NewProjectPage() {
 
   // Auto-focus name on mount
   useEffect(() => { nameRef.current?.focus(); }, []);
+
+  // Fetch users for the Owner picker; default to the current user when present.
+  useEffect(() => {
+    let cancelled = false;
+    listUsersApi({ limit: 100 })
+      .then((res) => {
+        if (cancelled) return;
+        setUsers(res.items);
+        if (user?.id && res.items.some((u) => u.id === user.id)) {
+          setOwnerId(user.id);
+        }
+      })
+      .catch(() => { /* owner is optional — silently leave the picker empty */ });
+    return () => { cancelled = true; };
+  }, [user?.id]);
 
   // Load the github_org ICC setting — used to auto-fill repo_url as
   // "{github_org}/{slug}". Fails silently when the endpoint is
@@ -160,6 +181,7 @@ export default function NewProjectPage() {
         db_port: dbPort ? Number(dbPort) : null,
         ui_design_port: uiDesignPort ? Number(uiDesignPort) : null,
         created_by: user?.id ?? "",
+        owner_id: ownerId || null,
         // F-004 flags
         enable_coordinator: enableCoordinator,
         enable_cicd: enableCicd,
@@ -336,6 +358,29 @@ export default function NewProjectPage() {
                   </div>
                 ))}
               </div>
+            </div>
+
+            {/* CR-NS-012 — notification owner */}
+            <div>
+              <label htmlFor="np-owner" className="block text-sm font-medium text-slate-300 mb-2">
+                Owner <span className="text-slate-500 font-normal">(receives agent Telegram notifications)</span>
+              </label>
+              <select
+                id="np-owner"
+                value={ownerId}
+                onChange={(e) => setOwnerId(e.target.value)}
+                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
+              >
+                <option value="">— none —</option>
+                {users.map((u) => {
+                  const display = [u.first_name, u.last_name].filter(Boolean).join(" ") || u.username;
+                  return (
+                    <option key={u.id} value={u.id}>
+                      {display} ({u.username})
+                    </option>
+                  );
+                })}
+              </select>
             </div>
 
             {/* F-004 Setup options */}

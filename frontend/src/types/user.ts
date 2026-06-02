@@ -35,6 +35,8 @@ export interface UserCreate {
   first_name?: string | null;
   /** Family name. Optional — legacy users may not have it. Max 100 chars. */
   last_name?: string | null;
+  /** Telegram chat_id for agent notifications (CR-NS-012). Optional. Max 64. */
+  telegram_chat_id?: string | null;
 }
 
 /**
@@ -52,6 +54,7 @@ export interface UserUpdate {
   is_active?: boolean;
   first_name?: string | null;
   last_name?: string | null;
+  telegram_chat_id?: string | null;
 }
 
 /**
@@ -70,6 +73,8 @@ export interface UserRead {
   first_name?: string | null;
   /** Family name (nullable — legacy users may not have it). */
   last_name?: string | null;
+  /** Telegram chat_id for agent notifications (nullable). */
+  telegram_chat_id?: string | null;
   /** ISO-8601 timestamp. */
   created_at: string;
   /** ISO-8601 timestamp. */

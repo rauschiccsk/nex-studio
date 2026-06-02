@@ -36,6 +36,8 @@ export interface UserFormData {
   role: UserRole;
   first_name: string;
   last_name: string;
+  /** Telegram chat_id for agent notifications (CR-NS-012). */
+  telegram_chat_id: string;
   is_active: boolean;
 }
 
@@ -62,6 +64,7 @@ function initialFromUser(user: UserRead | undefined): UserFormData {
     role: user?.role ?? "shu",
     first_name: user?.first_name ?? "",
     last_name: user?.last_name ?? "",
+    telegram_chat_id: user?.telegram_chat_id ?? "",
     is_active: user?.is_active ?? true,
   };
 }
@@ -227,6 +230,20 @@ export function UserForm({
             <option value="ha">ha — Medior</option>
             <option value="ri">ri — Director</option>
           </select>
+        </div>
+
+        <div>
+          <label htmlFor="uf-telegram" className="block text-xs text-slate-500 mb-1">
+            Telegram chat_id
+          </label>
+          <input
+            id="uf-telegram"
+            type="text"
+            value={data.telegram_chat_id}
+            onChange={(e) => update("telegram_chat_id", e.target.value)}
+            placeholder="e.g. 123456789 (agent notifications)"
+            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
+          />
         </div>
 
         {isEdit && (

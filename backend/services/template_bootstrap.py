@@ -33,6 +33,7 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
+from backend.db.models.foundation import User
 from backend.db.models.projects import Project
 from backend.services import system_setting as system_setting_service
 
@@ -188,6 +189,16 @@ def invoke_init_script(
     if not enable_coordinator:
         # F-004 K-003 opt-out (default in init.sh is enabled)
         args.append("--no-coordinator")
+
+    # CR-NS-012: route agent notifications to the project owner. init.sh
+    # writes the value into the new project's .env as TELEGRAM_NOTIFY_CHAT_ID.
+    # Omitted when there is no owner or the owner has no chat_id configured
+    # (→ no notifications, never blocks creation).
+    if project.owner_id is not None:
+        owner = db.get(User, project.owner_id)
+        chat_id = (owner.telegram_chat_id or "").strip() if owner else ""
+        if chat_id:
+            args.extend(["--notify-chat-id", chat_id])
 
     timeout = system_setting_service.get_int(db, "template_init_timeout_seconds")
 

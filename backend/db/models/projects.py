@@ -39,6 +39,16 @@ class Project(Base, UUIDMixin, TimestampMixin):
         ForeignKey("users.id", ondelete="RESTRICT"),
         nullable=False,
     )
+    # Notification owner (CR-NS-012). Receives agent Telegram notifications
+    # for this project via their User.telegram_chat_id. Optional — defaults
+    # to the creator at create time; ON DELETE SET NULL so removing the user
+    # leaves the project intact (just unowned for notifications).
+    owner_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     __table_args__ = (
         UniqueConstraint("name", name="uq_projects_name"),

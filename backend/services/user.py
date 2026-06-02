@@ -174,6 +174,7 @@ def create(db: Session, data: UserCreate) -> User:
         is_active=data.is_active,
         first_name=data.first_name,
         last_name=data.last_name,
+        telegram_chat_id=data.telegram_chat_id,
     )
     db.add(user)
     db.flush()
@@ -216,6 +217,7 @@ def update(db: Session, user_id: UUID, data: UserUpdate) -> User:
         "is_active",
         "first_name",
         "last_name",
+        "telegram_chat_id",
     }
 
     # Uniqueness checks only for actually-changing values.

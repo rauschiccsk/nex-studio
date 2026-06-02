@@ -42,6 +42,9 @@ export interface ProjectCreate {
   guardian_enabled?: boolean;
   /** User who created the project. */
   created_by: string;
+  /** Notification owner (CR-NS-012). Their Telegram chat_id receives agent
+   *  notifications. Optional — defaults to the creator server-side. */
+  owner_id?: string | null;
   // F-004 setup flags
   /** F-004 K-003: bootstrap Koordinátor agent. Default true. */
   enable_coordinator?: boolean;
@@ -91,6 +94,8 @@ export interface ProjectRead {
   kb_path: string | null;
   guardian_enabled: boolean;
   created_by: string;
+  /** Notification owner (CR-NS-012), nullable. */
+  owner_id: string | null;
   /** ISO-8601 timestamp. */
   created_at: string;
   /** ISO-8601 timestamp. */

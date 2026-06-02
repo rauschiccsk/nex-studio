@@ -191,6 +191,7 @@ export default function SettingsPage() {
         role: data.role,
         first_name: data.first_name || null,
         last_name: data.last_name || null,
+        telegram_chat_id: data.telegram_chat_id || null,
       });
       setUsers((prev) => [u, ...prev]);
       setShowNewForm(false);
@@ -231,6 +232,7 @@ export default function SettingsPage() {
       const updated = await updateUserApi(editingUser.id, {
         first_name: data.first_name || null,
         last_name: data.last_name || null,
+        telegram_chat_id: data.telegram_chat_id || null,
         email: data.email,
         role: data.role,
         is_active: data.is_active,

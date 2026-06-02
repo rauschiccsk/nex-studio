@@ -28,6 +28,10 @@ class User(Base, UUIDMixin, TimestampMixin):
     is_active = Column(Boolean, nullable=False, server_default="true")
     first_name = Column(String(100), nullable=True)
     last_name = Column(String(100), nullable=True)
+    # Telegram chat_id for agent notifications (CR-NS-011/012). When a user
+    # owns a project, this id is written into that project's .env as
+    # TELEGRAM_NOTIFY_CHAT_ID so agent reports reach them.
+    telegram_chat_id = Column(String(64), nullable=True)
 
     __table_args__ = (
         UniqueConstraint("username", name="uq_users_username"),

@@ -445,6 +445,10 @@ def create_project(
     # Resolve created_by — use supplied UUID or fall back to active ri user.
     payload.created_by = _resolve_created_by(db, payload.created_by)
 
+    # Notification owner (CR-NS-012) defaults to the creator when omitted.
+    if payload.owner_id is None:
+        payload.owner_id = payload.created_by
+
     gh_timeout = float(system_setting_service.get_int(db, "github_api_timeout_seconds"))
 
     # Stage 1 — GitHub repo. Runs before any DB state so a failure is

@@ -149,6 +149,13 @@ class ProjectCreate(BaseModel):
         default=None,
         description="User who created the project. If omitted, resolved from the active session.",
     )
+    owner_id: Optional[UUID] = Field(
+        default=None,
+        description=(
+            "Notification owner (CR-NS-012). Their Telegram chat_id is written into the "
+            "project .env. If omitted, defaults to the creator."
+        ),
+    )
     # F-004 flags — frontend Create Project form (default per spec §4):
     enable_coordinator: bool = Field(
         default=True,
@@ -266,5 +273,6 @@ class ProjectRead(BaseModel):
     kb_path: Optional[str] = None
     guardian_enabled: bool
     created_by: UUID
+    owner_id: Optional[UUID] = None
     created_at: datetime
     updated_at: datetime

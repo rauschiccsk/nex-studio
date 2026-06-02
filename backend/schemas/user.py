@@ -89,6 +89,11 @@ class UserCreate(BaseModel):
         max_length=100,
         description="Family name. Optional — legacy users may not have it.",
     )
+    telegram_chat_id: Optional[str] = Field(
+        default=None,
+        max_length=64,
+        description="Telegram chat_id for agent notifications (CR-NS-012). Optional.",
+    )
 
 
 class UserUpdate(BaseModel):
@@ -130,6 +135,11 @@ class UserUpdate(BaseModel):
         max_length=100,
         description="Updated family name.",
     )
+    telegram_chat_id: Optional[str] = Field(
+        default=None,
+        max_length=64,
+        description="Updated Telegram chat_id for agent notifications.",
+    )
 
 
 class ChangePasswordRequest(BaseModel):
@@ -169,5 +179,6 @@ class UserRead(BaseModel):
     is_active: bool
     first_name: Optional[str] = None
     last_name: Optional[str] = None
+    telegram_chat_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime

@@ -209,6 +209,7 @@ def create(db: Session, data: ProjectCreate) -> Project:
         kb_path=kb_path,
         guardian_enabled=data.guardian_enabled,
         created_by=data.created_by,
+        owner_id=data.owner_id,
     )
     db.add(project)
     db.flush()
