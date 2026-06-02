@@ -183,7 +183,8 @@ class TestCreateGithubRepo:
         body = mock_post.call_args[1]["json"]
         assert body["name"] == "nex-test"
         assert body["private"] is True
-        assert body["auto_init"] is True
+        # CR-NS-015: repo must be created EMPTY so the scaffold push fast-forwards.
+        assert body["auto_init"] is False
         headers = mock_post.call_args[1]["headers"]
         assert headers["Authorization"] == "Bearer ghp_test"
 

@@ -204,17 +204,19 @@ def create_github_repo(
         )
 
     url = _resolve_repo_endpoint(owner, timeout=timeout)
-    # auto_init=True asks GitHub to create an initial README and materialise
-    # the default branch on the first commit. Without it the repo is
-    # technically created but has no refs, which surprises the first
-    # ``git clone`` (empty result) and a subsequent push would have to
-    # invent the default branch locally. Initial README is trivial to
-    # overwrite and is the common default across GitHub tooling.
+    # auto_init=False creates an EMPTY repo (no refs). The local scaffold
+    # (init.sh ``git init -b main`` + its own first commit) then pushes with
+    # ``git push -u origin main``, which materialises the default branch as a
+    # clean fast-forward from empty. With auto_init=True GitHub would seed a
+    # README "Initial commit", making the scaffold's history divergent →
+    # non-fast-forward push rejection (CR-NS-015). Branch protection is applied
+    # post-push (create_project_postscaffold._enable_branch_protection), so the
+    # branch already exists by then — an empty repo at create time is safe.
     body = {
         "name": name,
         "description": description,
         "private": private,
-        "auto_init": True,
+        "auto_init": False,
     }
 
     response = httpx.post(url, headers=_github_headers(), json=body, timeout=timeout)
