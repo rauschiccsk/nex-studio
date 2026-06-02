@@ -108,6 +108,28 @@ async def spawn_session(
     return row
 
 
+@router.get("/available-roles", response_model=dict[str, bool])
+def available_roles(
+    project_slug: str = Query(..., description="Project slug to check charter availability for."),
+    _current_user: User = Depends(require_ri_role),
+) -> dict[str, bool]:
+    """Return per-role charter availability for ``project_slug``.
+
+    ``{"designer": true, "implementer": true, "auditor": true,
+    "coordinator": false}`` — a role is available when its
+    ``.claude/agents/<role>/CLAUDE.md`` exists in the project. Used by the
+    Sidebar to disable AG tabs a project has no charter for (CR-NS-014).
+    An invalid slug or unknown project → 404.
+    """
+    try:
+        return service.available_roles(project_slug)
+    except AgentTerminalError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+
 @router.get("/sessions", response_model=list[AgentTerminalSessionRead])
 def list_sessions(
     current_user: User = Depends(require_ri_role),

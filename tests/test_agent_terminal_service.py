@@ -405,3 +405,53 @@ class TestSchemas:
     def test_spawn_request_rejects_invalid_role(self):
         with pytest.raises(ValueError):
             AgentTerminalSpawnRequest(role="hacker", project_slug="nex-inbox")
+
+
+# ─── CR-NS-014 — per-project role charter availability ───────────────────────
+
+
+class TestAvailableRoles:
+    """``available_roles`` reports per-role charter presence (non-raising)."""
+
+    def test_reports_present_and_absent_roles(self, tmp_path, monkeypatch):
+        slug = "partial-project"
+        project_root = tmp_path / slug
+        # Charters for three roles; coordinator deliberately absent.
+        for role in ("designer", "implementer", "auditor"):
+            agent_dir = project_root / ".claude" / "agents" / role
+            agent_dir.mkdir(parents=True)
+            (agent_dir / "CLAUDE.md").write_text(f"# {role}\n")
+        monkeypatch.setattr(service, "PROJECTS_ROOT", tmp_path)
+
+        result = service.available_roles(slug)
+
+        assert result == {
+            "designer": True,
+            "implementer": True,
+            "auditor": True,
+            "coordinator": False,
+        }
+
+    def test_all_present(self, tmp_path, monkeypatch):
+        slug = "full-project"
+        project_root = tmp_path / slug
+        for role in ("designer", "implementer", "auditor", "coordinator"):
+            agent_dir = project_root / ".claude" / "agents" / role
+            agent_dir.mkdir(parents=True)
+            (agent_dir / "CLAUDE.md").write_text(f"# {role}\n")
+        monkeypatch.setattr(service, "PROJECTS_ROOT", tmp_path)
+
+        result = service.available_roles(slug)
+
+        assert result["coordinator"] is True
+        assert all(result.values())
+
+    def test_unknown_project_raises(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(service, "PROJECTS_ROOT", tmp_path)
+        with pytest.raises(service.AgentTerminalError):
+            service.available_roles("does-not-exist")
+
+    def test_invalid_slug_raises(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(service, "PROJECTS_ROOT", tmp_path)
+        with pytest.raises(service.AgentTerminalError):
+            service.available_roles("../escape")

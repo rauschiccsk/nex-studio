@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuthStore } from "@/store/authStore";
 import { useActiveContextStore } from "@/store/activeContextStore";
+import { getAvailableRolesApi, type AgentRole, type AvailableRoles } from "@/services/api/agentTerminal";
 
 // ─── Icon helpers ───────────────────────────────────────────────────────────
 // Director directive 2026-05-15: full Unicode emoji glyphs instead of
@@ -147,6 +148,32 @@ export default function Sidebar() {
   const hasProject = Boolean(selectedProject);
   const projectsFallback = "/projects";
 
+  // CR-NS-014: which AG role charters exist in the selected project. AG tabs
+  // for absent roles render disabled (e.g. Koordinátor on nex-inbox).
+  const [availableRoles, setAvailableRoles] = useState<AvailableRoles | null>(null);
+  const selectedSlug = selectedProject?.slug;
+  useEffect(() => {
+    if (!selectedSlug) {
+      setAvailableRoles(null);
+      return;
+    }
+    let cancelled = false;
+    getAvailableRolesApi(selectedSlug)
+      .then((roles) => { if (!cancelled) setAvailableRoles(roles); })
+      .catch(() => { if (!cancelled) setAvailableRoles(null); });
+    return () => { cancelled = true; };
+  }, [selectedSlug]);
+
+  const AG_ROLE_LABEL: Record<AgentRole, string> = {
+    designer: "Designera",
+    implementer: "Implementátora",
+    auditor: "Audítora",
+    coordinator: "Koordinátora",
+  };
+  // A role tab is disabled only when we know (loaded) the project lacks it.
+  const agentDisabled = (role: AgentRole) => availableRoles !== null && !availableRoles[role];
+  const agentTitle = (role: AgentRole) => `Tento projekt nemá ${AG_ROLE_LABEL[role]}`;
+
   return (
     <aside
       className="flex-shrink-0 bg-slate-900 border-r border-slate-800 flex flex-col select-none transition-all duration-200 overflow-x-hidden"
@@ -219,11 +246,11 @@ export default function Sidebar() {
         {/* Embedded agent terminals — replace external Windows Terminal
             tabs with full-page xterm.js sessions inside NEX Studio
             (Director directive 2026-05-13). */}
-        <NavItem icon={<IconCoordinator />} label="AG Koordinátor" path="/coordinator" collapsed={collapsed} active={isActive("/coordinator")} />
-        <NavItem icon={<IconDesigner />} label="AG Designer" path="/designer" collapsed={collapsed} active={isActive("/designer")} />
+        <NavItem icon={<IconCoordinator />} label="AG Koordinátor" path="/coordinator" collapsed={collapsed} active={isActive("/coordinator")} disabled={agentDisabled("coordinator")} disabledTitle={agentTitle("coordinator")} />
+        <NavItem icon={<IconDesigner />} label="AG Designer" path="/designer" collapsed={collapsed} active={isActive("/designer")} disabled={agentDisabled("designer")} disabledTitle={agentTitle("designer")} />
         <NavItem icon={<IconDialogue />} label="AG Customer" path="/dialogue" collapsed={collapsed} active={isActive("/dialogue")} />
-        <NavItem icon={<IconImplementer />} label="AG Implementator" path="/implementer" collapsed={collapsed} active={isActive("/implementer")} />
-        <NavItem icon={<IconAuditor />} label="AG Auditor" path="/auditor" collapsed={collapsed} active={isActive("/auditor")} />
+        <NavItem icon={<IconImplementer />} label="AG Implementator" path="/implementer" collapsed={collapsed} active={isActive("/implementer")} disabled={agentDisabled("implementer")} disabledTitle={agentTitle("implementer")} />
+        <NavItem icon={<IconAuditor />} label="AG Auditor" path="/auditor" collapsed={collapsed} active={isActive("/auditor")} disabled={agentDisabled("auditor")} disabledTitle={agentTitle("auditor")} />
 
         <NavItem icon={<IconKbBook />} label="Knowledge Base" path="/kb" collapsed={collapsed} active={isActive("/kb")} />
         <NavItem icon={<IconProjectSpecsBook />} label="Project Specs" path="/project-specs" collapsed={collapsed} active={isActive("/project-specs")} />

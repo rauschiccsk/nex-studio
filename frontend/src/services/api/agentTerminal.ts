@@ -46,6 +46,16 @@ export function listAgentTerminalSessionsApi(): Promise<AgentTerminalSession[]> 
   return api.get<AgentTerminalSession[]>("/agent-terminal/sessions");
 }
 
+/** Per-role charter availability for a project (CR-NS-014). A role is
+ *  available when its ``.claude/agents/<role>/CLAUDE.md`` exists. */
+export type AvailableRoles = Record<AgentRole, boolean>;
+
+export function getAvailableRolesApi(projectSlug: string): Promise<AvailableRoles> {
+  return api.get<AvailableRoles>("/agent-terminal/available-roles", {
+    params: { project_slug: projectSlug },
+  });
+}
+
 /** Explicit End session — SIGTERM, grace, SIGKILL. Idempotent. */
 export function endAgentTerminalSessionApi(
   sessionId: string,

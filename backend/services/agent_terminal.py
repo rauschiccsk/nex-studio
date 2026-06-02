@@ -145,6 +145,11 @@ def _validate_slug(slug: str) -> None:
         raise AgentTerminalError(f"Invalid slug: {slug!r}")
 
 
+def _agent_spec_path(project_root: Path, role: str) -> Path:
+    """Charter path for a role within a project: ``.claude/agents/<role>/CLAUDE.md``."""
+    return project_root / ".claude" / "agents" / role / "CLAUDE.md"
+
+
 def _resolve_agent_spec(slug: str, role: str) -> Path:
     """Return the validated path to ``.claude/agents/<role>/CLAUDE.md``."""
     _validate_slug(slug)
@@ -152,12 +157,27 @@ def _resolve_agent_spec(slug: str, role: str) -> Path:
     project_root = PROJECTS_ROOT / slug
     if not project_root.is_dir():
         raise AgentTerminalError(f"Project not found: {slug}")
-    spec = project_root / ".claude" / "agents" / role / "CLAUDE.md"
+    spec = _agent_spec_path(project_root, role)
     if not spec.is_file():
         raise AgentTerminalError(
             f"Agent spec missing for {slug}/{role}: expected {spec}",
         )
     return spec
+
+
+def available_roles(slug: str) -> dict[str, bool]:
+    """Return charter availability per valid role for ``slug``.
+
+    Non-raising spec-path check (mirrors :func:`_resolve_agent_spec`):
+    ``{role: <CLAUDE.md exists>}`` for every role in :data:`_VALID_ROLES`.
+    Raises :class:`AgentTerminalError` on an invalid slug or missing project
+    directory (the router maps that to a 404).
+    """
+    _validate_slug(slug)
+    project_root = PROJECTS_ROOT / slug
+    if not project_root.is_dir():
+        raise AgentTerminalError(f"Project not found: {slug}")
+    return {role: _agent_spec_path(project_root, role).is_file() for role in _VALID_ROLES}
 
 
 # ---------------------------------------------------------------------------
