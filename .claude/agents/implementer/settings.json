@@ -130,5 +130,19 @@
       "Bash(docker system prune:*)",
       "Bash(docker volume rm:*)"
     ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/projects/nex-studio/scripts/hook_agent_notify.sh",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
   }
 }
