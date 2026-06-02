@@ -67,6 +67,10 @@ services:
       # SECURITY: same as /var/run/docker.sock — effective root on host.
       # Acceptable for ICC internal dev (single trusted Director).
       - /opt/uat:/opt/uat:rw
+      # ro — shared ICC infra. Agent Telegram-notify bot token lives at
+      # /opt/infra/telegram/icc-agents.env (CR-NS-011). Read-only; the secret
+      # file is owned by andros (uid 1000 = container user) so notify can read it.
+      - /opt/infra:/opt/infra:ro
     environment:
       DATABASE_URL: "postgresql+pg8000://nexstudio:nexstudio@db:5432/nexstudio"
       TEST_DATABASE_URL: "postgresql+pg8000://nexstudio:nexstudio@db:5432/nexstudio_test"
