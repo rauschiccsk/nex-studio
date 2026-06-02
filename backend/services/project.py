@@ -32,8 +32,7 @@ Design notes (per DESIGN.md §1.3 / §2.2 and :mod:`backend.db.models.projects`)
       (``project_modules``, ``raw_specifications``,
       ``professional_specifications``, ``design_documents``, ``kb_documents``,
       ``architect_sessions``, ``epics``, ``bugs``, ``delegations``,
-      ``migration_batches``, ``migration_id_map``,
-      ``migration_category_status``, ``report_configs``). No RESTRICT
+      ``report_configs``). No RESTRICT
       dependency checks are required — deleting a project cleanly
       removes every dependent row via DB-level cascade.
     * List filters (``status``, ``category``, ``created_by``) support the

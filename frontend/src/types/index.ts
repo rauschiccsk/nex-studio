@@ -53,11 +53,6 @@ export * from "./guardian";
 // Reporting.
 export * from "./reportConfig";
 
-// Migration.
-export * from "./migrationBatch";
-export * from "./migrationCategoryStatus";
-export * from "./migrationIdMap";
-
 // Versions.
 export * from "./version";
 

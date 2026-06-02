@@ -24,8 +24,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from backend.api.routes.credentials import router as credentials_router
 from backend.api.routes.knowledge import router as knowledge_router
-from backend.api.routes.migration_batches import router as migration_batches_router
 from backend.api.routes.project_members import router as project_members_router
 from backend.core.security import (
     get_current_user,
@@ -55,7 +55,7 @@ def _build_client(db_session, user: User) -> TestClient:
     require_* dependencies resolve naturally (ri vs ha vs shu)."""
     app = FastAPI()
     app.include_router(knowledge_router, prefix="/api/v1/knowledge")
-    app.include_router(migration_batches_router, prefix="/api/v1/migration-batches")
+    app.include_router(credentials_router, prefix="/api/v1/credentials")
     app.include_router(project_members_router, prefix="/api/v1/project-members")
 
     def _override_get_db():
@@ -104,21 +104,21 @@ def shu_user(db_session) -> User:
 
 
 class TestRequireRiRole:
-    """Migration batches CRUD is router-level gated by require_ri_role."""
+    """Credentials registry list is router-level gated by require_ri_role."""
 
     def test_ri_can_list(self, db_session, ri_user):
         client = _build_client(db_session, ri_user)
-        resp = client.get("/api/v1/migration-batches")
+        resp = client.get("/api/v1/credentials")
         assert resp.status_code == 200
 
     def test_ha_forbidden(self, db_session, ha_user):
         client = _build_client(db_session, ha_user)
-        resp = client.get("/api/v1/migration-batches")
+        resp = client.get("/api/v1/credentials")
         assert resp.status_code == 403
 
     def test_shu_forbidden(self, db_session, shu_user):
         client = _build_client(db_session, shu_user)
-        resp = client.get("/api/v1/migration-batches")
+        resp = client.get("/api/v1/credentials")
         assert resp.status_code == 403
 
 

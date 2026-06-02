@@ -16,7 +16,6 @@ from backend.db.models.bugs import Bug, BugFixTask
 from backend.db.models.delegations import AutoFixAttempt, Delegation, ExecutionLog
 from backend.db.models.foundation import User, UserSession
 from backend.db.models.guardian import GuardianPrecedent, GuardianReview
-from backend.db.models.migration import MigrationBatch, MigrationCategoryStatus, MigrationIdMap
 from backend.db.models.project_member import ProjectMember
 from backend.db.models.projects import ModuleDependency, Project, ProjectModule
 from backend.db.models.reports import ReportConfig
@@ -25,7 +24,7 @@ from backend.db.models.system_settings import SystemSetting
 from backend.db.models.tasks import Epic, Feat, Task
 from backend.db.models.versions import Version
 
-# The complete list of concrete ORM models covered by Alembic migrations 001-022.
+# The complete list of concrete ORM models covered by the Alembic migration chain.
 # Ordered loosely by creation order so diffs against migration history are easy
 # to follow.
 ALL_MODELS: tuple[type, ...] = (
@@ -33,8 +32,6 @@ ALL_MODELS: tuple[type, ...] = (
     User,
     Project,
     Bug,
-    MigrationBatch,
-    MigrationCategoryStatus,
     ProjectModule,
     ProjectMember,
     ArchitectSession,
@@ -49,7 +46,6 @@ ALL_MODELS: tuple[type, ...] = (
     Task,
     UserSession,
     BugFixTask,
-    MigrationIdMap,
     Delegation,
     AutoFixAttempt,
     ExecutionLog,
@@ -74,9 +70,6 @@ __all__ = [
     "Feat",
     "GuardianPrecedent",
     "GuardianReview",
-    "MigrationBatch",
-    "MigrationCategoryStatus",
-    "MigrationIdMap",
     "ModuleDependency",
     "ProfessionalSpecification",
     "Project",

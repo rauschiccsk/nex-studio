@@ -27,11 +27,6 @@ from backend.api.routes.guardian_precedents import router as guardian_precedents
 from backend.api.routes.guardian_reviews import router as guardian_reviews_router
 from backend.api.routes.health import health_check as _health_check_handler
 from backend.api.routes.knowledge import router as knowledge_router
-from backend.api.routes.migration_batches import router as migration_batches_router
-from backend.api.routes.migration_category_statuses import (
-    router as migration_category_statuses_router,
-)
-from backend.api.routes.migration_id_maps import router as migration_id_maps_router
 from backend.api.routes.module_dependencies import router as module_dependencies_router
 from backend.api.routes.professional_specifications import (
     router as professional_specifications_router,
@@ -228,12 +223,6 @@ app.include_router(auto_fix_attempts_router, prefix="/api/v1/auto-fix-attempts")
 app.include_router(guardian_reviews_router, prefix="/api/v1/guardian-reviews")
 app.include_router(guardian_precedents_router, prefix="/api/v1/guardian-precedents")
 app.include_router(report_configs_router, prefix="/api/v1/report-configs")
-app.include_router(migration_batches_router, prefix="/api/v1/migration-batches")
-app.include_router(
-    migration_category_statuses_router,
-    prefix="/api/v1/migration-category-statuses",
-)
-app.include_router(migration_id_maps_router, prefix="/api/v1/migration-id-maps")
 # The versions router intentionally mounts under the bare ``/api/v1`` prefix
 # because it spans two URL families (``/projects/{id}/versions`` and
 # ``/versions/{id}``) — see DESIGN.md §2.6 Version Management.

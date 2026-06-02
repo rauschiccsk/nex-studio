@@ -9,7 +9,6 @@ from backend.db.models.delegations import AutoFixAttempt, Delegation, ExecutionL
 from backend.db.models.dialogue import DialogueMessage, DialogueSession
 from backend.db.models.foundation import User, UserSession
 from backend.db.models.guardian import GuardianPrecedent, GuardianReview
-from backend.db.models.migration import MigrationBatch, MigrationCategoryStatus, MigrationIdMap
 from backend.db.models.project_member import ProjectMember
 from backend.db.models.projects import ModuleDependency, Project, ProjectModule
 from backend.db.models.reports import ReportConfig
@@ -42,9 +41,6 @@ __all__ = [
     "DesignDocument",
     "GuardianPrecedent",
     "GuardianReview",
-    "MigrationBatch",
-    "MigrationCategoryStatus",
-    "MigrationIdMap",
     "ModuleDependency",
     "Project",
     "ProjectMember",

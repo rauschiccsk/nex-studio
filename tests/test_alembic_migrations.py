@@ -45,7 +45,7 @@ def test_every_model_table_is_in_metadata() -> None:
 
 
 def test_expected_domain_tables_present() -> None:
-    """All 26 domain tables (per Feat 1 Domain Models) are registered."""
+    """All 23 domain tables (per Feat 1 Domain Models) are registered."""
     expected_tables = {
         "architect_messages",
         "architect_sessions",
@@ -59,9 +59,6 @@ def test_expected_domain_tables_present() -> None:
         "feats",
         "guardian_precedents",
         "guardian_reviews",
-        "migration_batches",
-        "migration_category_status",
-        "migration_id_map",
         "module_dependencies",
         "professional_specifications",
         "project_modules",

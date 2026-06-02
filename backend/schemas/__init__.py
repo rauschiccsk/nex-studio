@@ -81,24 +81,6 @@ from backend.schemas.guardian import (
     GuardianReviewUpdate,
     GuardianVerdict,
 )
-from backend.schemas.migration_batch import (
-    MigrationBatchCreate,
-    MigrationBatchDirection,
-    MigrationBatchRead,
-    MigrationBatchStatus,
-    MigrationBatchUpdate,
-)
-from backend.schemas.migration_category_status import (
-    MigrationCategoryStatusCreate,
-    MigrationCategoryStatusRead,
-    MigrationCategoryStatusStatus,
-    MigrationCategoryStatusUpdate,
-)
-from backend.schemas.migration_id_map import (
-    MigrationIdMapCreate,
-    MigrationIdMapRead,
-    MigrationIdMapUpdate,
-)
 from backend.schemas.module_dependency import (
     ModuleDependencyCreate,
     ModuleDependencyRead,
@@ -216,18 +198,6 @@ __all__ = [
     "GuardianReviewRiskLevel",
     "GuardianReviewUpdate",
     "GuardianVerdict",
-    "MigrationBatchCreate",
-    "MigrationBatchDirection",
-    "MigrationBatchRead",
-    "MigrationBatchStatus",
-    "MigrationBatchUpdate",
-    "MigrationCategoryStatusCreate",
-    "MigrationCategoryStatusRead",
-    "MigrationCategoryStatusStatus",
-    "MigrationCategoryStatusUpdate",
-    "MigrationIdMapCreate",
-    "MigrationIdMapRead",
-    "MigrationIdMapUpdate",
     "ModuleDependencyCreate",
     "ModuleDependencyRead",
     "ModuleDependencyUpdate",
