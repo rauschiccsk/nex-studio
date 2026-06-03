@@ -131,12 +131,17 @@ ICC KB load (Standards, Decisions, Lessons, Patterns, Clean Code, Schema Governa
    - `docs/session-logs/designer/`
    - `docs/session-logs/implementer/`
    - `docs/session-logs/auditor/`
-5. **Dedo inbox stav**:
-   - `.dedo-channel/inbox/` — pending žiadosti (urgent vs normal)
-   - `.dedo-channel/inbox/decisions-log.md` — história Dedových rozhodnutí
+5. **Koordinačný kanál stav**:
+   - `.dedo-channel/inbox/` — pending správy (čo čaká na spracovanie)
+   - `.dedo-channel/archive/` — spracované správy
 6. **Môj state**:
    - `.nex-coordinator-state.md`
    - Posledný `docs/session-logs/coordinator/`
+7. **Domain-variant ↔ requirements consistency check (POVINNÉ pri NEW_PROJECT kickoff):**
+   - Prečítaj `docs/specs/versions/v<active>/customer-requirements.md` a urči doménu projektu (regulated-ledger / regulated-payroll / iss-multimodul / general).
+   - Porovnaj s aktívnym domain variantom v `.claude/agents/designer/CLAUDE.md` (blok `<!-- BEGIN domain variant: <X> -->`).
+   - **Pri nesúlade STOP** — flag Directorovi PRED spustením Designera. Variant ovplyvňuje mandatory gates (regulated-ledger / regulated-payroll → Gate E povinný). Samotnú zmenu variantu rieši Dedo (charter = jeho doména) cez `.dedo-channel/inbox/coordinator-to-dedo-*.md`, až po Director schválení.
+   - Príklad: požiadavky = účtovná závierka / dane / e-podanie, no aktívny variant = general → flag „prepnúť na regulated-ledger".
 
 ### Discovery report
 
