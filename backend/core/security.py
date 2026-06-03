@@ -138,6 +138,24 @@ def require_shu_or_above(
     return current_user
 
 
+def verify_ws_token(token: str, db: Session) -> User | None:
+    """Decode a WebSocket query-string JWT and return the active user, or ``None``.
+
+    Browsers can't set custom headers on the ``WebSocket`` constructor, so WS
+    endpoints pass the same HS256 token as a ``?token=`` query parameter. This
+    is the shared verify path for every WS endpoint (agent terminal, pipeline).
+    """
+    try:
+        payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
+        user_id = UUID(str(payload["sub"]))
+    except (JWTError, KeyError, ValueError):
+        return None
+    user = db.get(User, user_id)
+    if user is None or not user.is_active:
+        return None
+    return user
+
+
 def has_full_kb_access(user: User) -> bool:
     """True if the user can read every KB document, including any restricted category.
 

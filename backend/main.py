@@ -18,6 +18,7 @@ from backend.api.routes.feats import router as feats_router
 from backend.api.routes.health import health_check as _health_check_handler
 from backend.api.routes.knowledge import router as knowledge_router
 from backend.api.routes.module_dependencies import router as module_dependencies_router
+from backend.api.routes.pipeline import router as pipeline_router
 from backend.api.routes.project_members import router as project_members_router
 from backend.api.routes.project_modules import router as project_modules_router
 from backend.api.routes.project_specs import router as project_specs_router
@@ -196,6 +197,7 @@ app.include_router(uploads_router, prefix="/api/v1")
 app.include_router(system_settings_router, prefix="/api/v1/system-settings")
 app.include_router(agent_terminal_router, prefix="/api/v1/agent-terminal")
 app.include_router(dialogue_router, prefix="/api/v1/dialogue")
+app.include_router(pipeline_router, prefix="/api/v1/pipeline")
 
 
 @app.get("/health")

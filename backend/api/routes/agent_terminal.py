@@ -36,7 +36,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from typing import Optional
 
 from fastapi import (
     APIRouter,
@@ -48,12 +47,10 @@ from fastapi import (
     WebSocketDisconnect,
     status,
 )
-from jose import JWTError, jwt
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.config.settings import settings
-from backend.core.security import require_ri_role
+from backend.core.security import require_ri_role, verify_ws_token
 from backend.db.models.agent_terminal import AgentTerminalSession
 from backend.db.models.foundation import User
 from backend.db.session import SessionLocal, get_db
@@ -178,23 +175,6 @@ async def end_session(
 # ---------------------------------------------------------------------------
 
 
-def _verify_ws_token(token: str, db: Session) -> Optional[User]:
-    """Decode the WS query-string JWT and return the user, or ``None``."""
-    try:
-        payload = jwt.decode(
-            token,
-            settings.secret_key,
-            algorithms=["HS256"],
-        )
-        user_id = uuid.UUID(str(payload["sub"]))
-    except (JWTError, KeyError, ValueError):
-        return None
-    user = db.get(User, user_id)
-    if user is None or not user.is_active:
-        return None
-    return user
-
-
 @router.websocket("/ws/{session_id}")
 async def terminal_ws(
     websocket: WebSocket,
@@ -205,7 +185,7 @@ async def terminal_ws(
     # Auth + session ownership check (close before accept where possible).
     db = SessionLocal()
     try:
-        user = _verify_ws_token(token, db)
+        user = verify_ws_token(token, db)
         if user is None or user.role != "ri":
             await websocket.close(code=4003)  # forbidden
             return

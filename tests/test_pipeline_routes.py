@@ -1,0 +1,201 @@
+"""Tests for the pipeline cockpit REST routes + broadcast wiring (CR-NS-018 Phase 3)."""
+
+import json
+import uuid
+
+import bcrypt
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from backend.api.routes.pipeline import router as pipeline_router
+from backend.core.security import get_current_user, require_ri_role
+from backend.db.models.foundation import User
+from backend.db.models.projects import Project
+from backend.db.models.versions import Version
+from backend.db.session import get_db
+from backend.services import orchestrator
+from backend.services.pipeline_ws import registry
+
+
+def _block(stage="kickoff", kind="done", summary="ok", awaiting="director", **extra) -> str:
+    body = {"stage": stage, "kind": kind, "summary": summary, "awaiting": awaiting}
+    body.update(extra)
+    return f"<<<PIPELINE_STATUS>>>\n{json.dumps(body)}\n<<<END_PIPELINE_STATUS>>>"
+
+
+class _FakeClaude:
+    def __init__(self):
+        self.response = _block()
+
+    async def __call__(self, **kwargs):
+        return self.response
+
+
+def _seed_user(db_session, role="ri") -> User:
+    u = User(
+        username=f"u_{uuid.uuid4().hex[:8]}",
+        email=f"{uuid.uuid4().hex[:8]}@test.local",
+        password_hash=bcrypt.hashpw(b"test", bcrypt.gensalt(rounds=4)).decode(),
+        role=role,
+        is_active=True,
+    )
+    db_session.add(u)
+    db_session.flush()
+    return u
+
+
+def _make_version(db_session, user) -> Version:
+    project = Project(
+        name=f"P {uuid.uuid4().hex[:8]}",
+        slug=f"p-{uuid.uuid4().hex[:8]}",
+        category="singlemodule",
+        description="d",
+        created_by=user.id,
+    )
+    db_session.add(project)
+    db_session.flush()
+    version = Version(project_id=project.id, version_number=f"1.{uuid.uuid4().hex[:4]}.0")
+    db_session.add(version)
+    db_session.flush()
+    return version
+
+
+@pytest.fixture()
+def client(db_session, monkeypatch):
+    # No live claude / git in route tests.
+    fake = _FakeClaude()
+    monkeypatch.setattr(orchestrator, "invoke_claude", fake)
+    monkeypatch.setattr(orchestrator, "verify_mechanical", lambda slug, block: None)
+
+    app = FastAPI()
+    app.include_router(pipeline_router, prefix="/api/v1/pipeline")
+
+    ri = _seed_user(db_session, "ri")
+
+    def _override_db():
+        yield db_session
+
+    def _override_user():
+        return ri
+
+    app.dependency_overrides[get_db] = _override_db
+    app.dependency_overrides[get_current_user] = _override_user
+    app.dependency_overrides[require_ri_role] = _override_user
+
+    with TestClient(app) as c:
+        c._ri = ri
+        c._fake = fake
+        yield c
+    app.dependency_overrides.clear()
+    registry._conns.clear()
+
+
+# ── GET board / messages ──────────────────────────────────────────────────────
+
+
+def test_board_none_before_start(client, db_session):
+    version = _make_version(db_session, client._ri)
+    r = client.get(f"/api/v1/pipeline/{version.id}")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["state"] is None
+    assert body["recent_messages"] == []
+
+
+def test_board_unknown_version_404(client):
+    r = client.get(f"/api/v1/pipeline/{uuid.uuid4()}")
+    assert r.status_code == 404
+
+
+def test_start_then_board_populated(client, db_session):
+    version = _make_version(db_session, client._ri)
+    r = client.post(f"/api/v1/pipeline/{version.id}/action", json={"action": "start"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["state"]["current_stage"] == "kickoff"
+    assert len(body["recent_messages"]) >= 1
+    # board GET reflects it
+    g = client.get(f"/api/v1/pipeline/{version.id}").json()
+    assert g["state"]["current_stage"] == "kickoff"
+
+
+def test_messages_paginated(client, db_session):
+    version = _make_version(db_session, client._ri)
+    client.post(f"/api/v1/pipeline/{version.id}/action", json={"action": "start"})
+    r = client.get(f"/api/v1/pipeline/{version.id}/messages?skip=0&limit=1")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] >= 1
+    assert len(body["items"]) == 1
+    assert body["skip"] == 0 and body["limit"] == 1
+
+
+# ── POST action errors ────────────────────────────────────────────────────────
+
+
+def test_double_start_409(client, db_session):
+    version = _make_version(db_session, client._ri)
+    client.post(f"/api/v1/pipeline/{version.id}/action", json={"action": "start"})
+    r = client.post(f"/api/v1/pipeline/{version.id}/action", json={"action": "start"})
+    assert r.status_code == 409
+
+
+def test_unknown_action_400(client, db_session):
+    version = _make_version(db_session, client._ri)
+    client.post(f"/api/v1/pipeline/{version.id}/action", json={"action": "start"})
+    r = client.post(f"/api/v1/pipeline/{version.id}/action", json={"action": "teleport"})
+    assert r.status_code == 400
+
+
+def test_action_unknown_version_404(client):
+    r = client.post(f"/api/v1/pipeline/{uuid.uuid4()}/action", json={"action": "start"})
+    assert r.status_code == 404
+
+
+# ── auth ──────────────────────────────────────────────────────────────────────
+
+
+def test_non_ri_forbidden(db_session, monkeypatch):
+    monkeypatch.setattr(orchestrator, "invoke_claude", _FakeClaude())
+    app = FastAPI()
+    app.include_router(pipeline_router, prefix="/api/v1/pipeline")
+    ha = _seed_user(db_session, "ha")
+    version = _make_version(db_session, ha)
+
+    def _override_db():
+        yield db_session
+
+    # get_current_user resolves the ha user; require_ri_role NOT overridden →
+    # the real gate runs and rejects ha with 403.
+    app.dependency_overrides[get_db] = _override_db
+    app.dependency_overrides[get_current_user] = lambda: ha
+
+    with TestClient(app) as c:
+        r = c.get(f"/api/v1/pipeline/{version.id}")
+        assert r.status_code == 403
+    app.dependency_overrides.clear()
+
+
+# ── broadcast wiring (POST → registry) ────────────────────────────────────────
+
+
+class _FakeWS:
+    def __init__(self):
+        self.received = []
+
+    async def send_json(self, data):
+        self.received.append(data)
+
+
+def test_post_action_broadcasts_to_registered_socket(client, db_session):
+    version = _make_version(db_session, client._ri)
+    ws = _FakeWS()
+    # Register a live socket directly (test setup — bypass the async connect lock).
+    registry._conns[version.id].add((ws, client._ri.id))
+
+    client.post(f"/api/v1/pipeline/{version.id}/action", json={"action": "start"})
+
+    types = [e["type"] for e in ws.received]
+    assert "state_changed" in types
+    assert "message_added" in types
