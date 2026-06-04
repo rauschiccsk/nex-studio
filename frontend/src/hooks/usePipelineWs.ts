@@ -10,14 +10,19 @@ import { useAuthStore } from "../store/authStore";
 import {
   buildPipelineWsUrl,
   getPipelineBoardApi,
+  type ActivityLine,
   type PipelineBoard,
   type PipelineWsFrame,
 } from "../services/api/pipeline";
+
+const _MAX_ACTIVITY = 50;
 
 export interface UsePipelineWs {
   board: PipelineBoard | null;
   connected: boolean;
   error: string | null;
+  /** Live agent activity for the current run; reset on every state change. */
+  activity: ActivityLine[];
   /** Replace the board (e.g. with the fresh board returned by a POST action). */
   setBoard: (board: PipelineBoard) => void;
 }
@@ -27,12 +32,14 @@ export function usePipelineWs(versionId: string | null): UsePipelineWs {
   const [board, setBoard] = useState<PipelineBoard | null>(null);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [activity, setActivity] = useState<ActivityLine[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
     if (!versionId || !token) {
       setBoard(null);
       setConnected(false);
+      setActivity([]);
       return;
     }
 
@@ -68,16 +75,21 @@ export function usePipelineWs(versionId: string | null): UsePipelineWs {
       }
       if (frame.type === "state_changed" && "board" in frame) {
         setBoard(frame.board);
+        setActivity([]); // activity belongs to one run; a state change ends/starts it
       } else if (frame.type === "state_changed" && "state" in frame) {
         setBoard((prev) =>
           prev ? { ...prev, state: frame.state } : { state: frame.state, recent_messages: [] },
         );
+        setActivity([]);
       } else if (frame.type === "message_added") {
         setBoard((prev) => {
           if (!prev) return { state: null, recent_messages: [frame.message] };
           if (prev.recent_messages.some((m) => m.id === frame.message.id)) return prev;
           return { ...prev, recent_messages: [...prev.recent_messages, frame.message] };
         });
+      } else if (frame.type === "agent_activity") {
+        const { stage, actor, kind, line } = frame;
+        setActivity((prev) => [...prev, { stage, actor, kind, line }].slice(-_MAX_ACTIVITY));
       }
     };
 
@@ -102,5 +114,5 @@ export function usePipelineWs(versionId: string | null): UsePipelineWs {
 
   const replaceBoard = useCallback((b: PipelineBoard) => setBoard(b), []);
 
-  return { board, connected, error, setBoard: replaceBoard };
+  return { board, connected, error, activity, setBoard: replaceBoard };
 }

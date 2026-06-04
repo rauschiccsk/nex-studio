@@ -27,6 +27,7 @@ from backend.db.models.versions import Version
 from backend.db.session import SessionLocal
 from backend.schemas.pipeline import PipelineMessageRead, PipelineStateRead
 from backend.services import notify, orchestrator
+from backend.services.pipeline_activity import activity_line
 from backend.services.pipeline_ws import registry
 
 logger = logging.getLogger(__name__)
@@ -76,13 +77,30 @@ async def _broadcast_new_messages(db, version_id: uuid.UUID, pre_ids: set[uuid.U
         )
 
 
+def _activity_callback(version_id: uuid.UUID, stage: str, actor: str):
+    """Build the streaming callback that broadcasts ``agent_activity`` frames."""
+
+    async def _cb(evt: dict) -> None:
+        line, kind = activity_line(evt)
+        if not line:
+            return
+        await registry.broadcast(
+            version_id,
+            {"type": "agent_activity", "stage": stage, "actor": actor, "kind": kind, "line": line},
+        )
+
+    return _cb
+
+
 async def _run(version_id: uuid.UUID) -> None:
     """Run one agent dispatch and broadcast the result. Owns its own session."""
     db = SessionLocal()
     try:
         pre_ids = _message_ids(db, version_id)
+        pre = db.execute(select(PipelineState).where(PipelineState.version_id == version_id)).scalar_one_or_none()
+        on_event = _activity_callback(version_id, pre.current_stage, pre.current_actor) if pre else None
         try:
-            state = await orchestrator.run_dispatch(db, version_id)
+            state = await orchestrator.run_dispatch(db, version_id, on_event)
             db.commit()
         except Exception:  # noqa: BLE001 — unexpected; degrade to blocked, don't hang UI.
             logger.exception("run_dispatch failed for version %s", version_id)

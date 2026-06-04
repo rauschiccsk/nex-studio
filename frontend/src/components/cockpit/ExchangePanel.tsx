@@ -3,11 +3,13 @@
 import { useEffect, useRef } from "react";
 
 import type {
+  ActivityLine,
   PipelineActionName,
   PipelineBoard,
   PipelineStatus,
 } from "../../services/api/pipeline";
 import PipelineActionBar from "./PipelineActionBar";
+import PipelineActivityFeed from "./PipelineActivityFeed";
 import PipelineMessageBubble from "./PipelineMessageBubble";
 
 const STATUS_BANNER: Record<PipelineStatus, string> = {
@@ -27,10 +29,11 @@ const STATUS_LABEL: Record<PipelineStatus, string> = {
 interface Props {
   board: PipelineBoard;
   inFlight: boolean;
+  activity: ActivityLine[];
   onAction: (action: PipelineActionName, payload?: Record<string, unknown>) => void;
 }
 
-export function ExchangePanel({ board, inFlight, onAction }: Props) {
+export function ExchangePanel({ board, inFlight, activity, onAction }: Props) {
   const { state, recent_messages } = board;
   const threadRef = useRef<HTMLDivElement>(null);
 
@@ -46,6 +49,12 @@ export function ExchangePanel({ board, inFlight, onAction }: Props) {
         <div className={`flex-shrink-0 border-b px-4 py-2.5 text-xs ${banner}`}>
           <span className="font-mono">&gt; {STATUS_LABEL[state.status]}</span>
           {state.next_action && <span className="ml-2 text-slate-200">— {state.next_action}</span>}
+        </div>
+      )}
+
+      {state?.status === "agent_working" && (
+        <div className="flex-shrink-0">
+          <PipelineActivityFeed activity={activity} />
         </div>
       )}
 

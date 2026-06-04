@@ -57,7 +57,7 @@ class FakeClaude:
         self.response = _block()
         self.calls = []
 
-    async def __call__(self, *, project_slug, claude_session_id, prompt, charter_path=None, timeout=180):
+    async def __call__(self, *, project_slug, claude_session_id, prompt, charter_path=None, timeout=180, on_event=None):
         self.calls.append({"project_slug": project_slug, "session": claude_session_id, "prompt": prompt})
         return self.response
 

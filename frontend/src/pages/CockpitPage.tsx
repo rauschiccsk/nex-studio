@@ -21,7 +21,7 @@ export default function CockpitPage() {
   const selectedVersion = useActiveContextStore((s) => s.selectedVersion);
   const versionId = selectedVersion?.versionId ?? null;
 
-  const { board, error, setBoard } = usePipelineWs(versionId);
+  const { board, error, activity, setBoard } = usePipelineWs(versionId);
   const [inFlight, setInFlight] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -101,7 +101,7 @@ export default function CockpitPage() {
               </button>
             </div>
           ) : board ? (
-            <ExchangePanel board={board} inFlight={inFlight} onAction={handleAction} />
+            <ExchangePanel board={board} inFlight={inFlight} activity={activity} onAction={handleAction} />
           ) : (
             <div className="flex flex-1 items-center justify-center text-xs text-slate-600">
               <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Načítavam board…

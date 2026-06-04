@@ -175,6 +175,7 @@ async def invoke_agent(
     stage: str,
     prompt: str,
     timeout: Optional[int] = None,
+    on_event: Optional[claude_agent.EventCallback] = None,
 ) -> PipelineStatusBlock | ParseFailure:
     """Drive one agent turn headless and record its message.
 
@@ -199,6 +200,7 @@ async def invoke_agent(
             prompt=prompt,
             charter_path=charter_path,
             timeout=timeout if timeout is not None else _timeout_for(stage),
+            on_event=on_event,
         )
     except ClaudeAgentError as exc:
         _record_message(
@@ -344,7 +346,11 @@ def _begin_dispatch(db: Session, state: PipelineState) -> None:
     db.flush()
 
 
-async def run_dispatch(db: Session, version_id: uuid.UUID) -> Optional[PipelineState]:
+async def run_dispatch(
+    db: Session,
+    version_id: uuid.UUID,
+    on_event: Optional[claude_agent.EventCallback] = None,
+) -> Optional[PipelineState]:
     """Run the working agent for a version and settle its status (background).
 
     Second half of the old ``_dispatch``: reloads the (already ``agent_working``)
@@ -352,6 +358,9 @@ async def run_dispatch(db: Session, version_id: uuid.UUID) -> Optional[PipelineS
     ``awaiting_director``. Runs in :mod:`backend.services.pipeline_runner`'s
     background task against a fresh session — never inside the request. Returns
     the settled state (``None`` if the version/state vanished).
+
+    ``on_event`` (CR-NS-018) streams the **primary** agent's activity; the
+    secondary verify/retry invocations don't stream (short, secondary).
     """
     state = _get_state(db, version_id)
     if state is None:
@@ -361,7 +370,9 @@ async def run_dispatch(db: Session, version_id: uuid.UUID) -> Optional[PipelineS
     if STAGE_ACTOR.get(stage) is None:  # terminal — nothing to run.
         return state
 
-    result = await invoke_agent(db, version_id=state.version_id, role=actor, stage=stage, prompt=_directive_for(stage))
+    result = await invoke_agent(
+        db, version_id=state.version_id, role=actor, stage=stage, prompt=_directive_for(stage), on_event=on_event
+    )
 
     if isinstance(result, ParseFailure):
         state.status = "blocked"

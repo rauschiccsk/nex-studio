@@ -111,7 +111,7 @@ async def test_run_broadcasts_state_and_only_new_messages(db_session, monkeypatc
     _seed_working_state(db_session, version.id)
     fake_reg = _wire_runner(db_session, monkeypatch)
 
-    async def fake_run_dispatch(db, vid):
+    async def fake_run_dispatch(db, vid, on_event=None):
         st = db.execute(select(PipelineState).where(PipelineState.version_id == vid)).scalar_one()
         st.status = "awaiting_director"
         st.next_action = "Director: posúdiť."
@@ -148,7 +148,7 @@ async def test_run_unexpected_exception_marks_blocked(db_session, monkeypatch):
     _seed_working_state(db_session, version.id)
     fake_reg = _wire_runner(db_session, monkeypatch)
 
-    async def boom(db, vid):
+    async def boom(db, vid, on_event=None):
         raise RuntimeError("kaboom")
 
     monkeypatch.setattr(orchestrator, "run_dispatch", boom)
@@ -175,7 +175,7 @@ async def test_run_unexpected_exception_marks_blocked(db_session, monkeypatch):
 # ── presence-aware Telegram notify (CR-NS-018 Phase 5a) ───────────────────────
 
 
-async def _settle_awaiting(db, vid):
+async def _settle_awaiting(db, vid, on_event=None):
     st = db.execute(select(PipelineState).where(PipelineState.version_id == vid)).scalar_one()
     st.status = "awaiting_director"
     st.next_action = "Director: posúdiť fázu."
@@ -232,3 +232,37 @@ async def test_notify_noop_when_no_chat_id(db_session, monkeypatch):
     await pipeline_runner._run(version.id)
 
     assert sent == []
+
+
+# ── live agent activity stream (CR-NS-018) ────────────────────────────────────
+
+
+async def test_run_streams_agent_activity(db_session, monkeypatch):
+    version = _make_version(db_session)
+    _seed_working_state(db_session, version.id)  # kickoff / coordinator
+    fake_reg = _wire_runner(db_session, monkeypatch)
+
+    async def fake_run_dispatch(db, vid, on_event=None):
+        # the agent emits a tool event mid-run → runner translates + broadcasts
+        await on_event(
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "tool_use", "name": "Read", "input": {"file_path": "docs/spec.md"}}]},
+            }
+        )
+        st = db.execute(select(PipelineState).where(PipelineState.version_id == vid)).scalar_one()
+        st.status = "awaiting_director"
+        st.next_action = "ok"
+        db.flush()
+        return st
+
+    monkeypatch.setattr(orchestrator, "run_dispatch", fake_run_dispatch)
+
+    await pipeline_runner._run(version.id)
+
+    activity = [p for _, p in fake_reg.events if p["type"] == "agent_activity"]
+    assert len(activity) == 1
+    assert activity[0]["line"] == "číta docs/spec.md"
+    assert activity[0]["actor"] == "coordinator"
+    assert activity[0]["stage"] == "kickoff"
+    assert activity[0]["kind"] == "tool"

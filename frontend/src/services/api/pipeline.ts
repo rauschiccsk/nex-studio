@@ -146,8 +146,17 @@ export function buildPipelineWsUrl(versionId: string, token: string): string {
   return `${wsBase}/api/v1/pipeline/ws/${versionId}?token=${encodeURIComponent(token)}`;
 }
 
+// One line of live agent activity (ephemeral — never persisted).
+export interface ActivityLine {
+  stage: PipelineStage;
+  actor: PipelineActor;
+  kind: "tool" | "text" | "";
+  line: string;
+}
+
 // WS frame shapes pushed by the backend (backend/api/routes/pipeline.py).
 export type PipelineWsFrame =
   | { type: "state_changed"; board: PipelineBoard } // initial snapshot on connect
   | { type: "state_changed"; state: PipelineState } // delta after an action
-  | { type: "message_added"; message: PipelineMessage };
+  | { type: "message_added"; message: PipelineMessage }
+  | ({ type: "agent_activity" } & ActivityLine); // live stream while agent_working
