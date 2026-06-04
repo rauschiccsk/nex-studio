@@ -37,6 +37,12 @@ export function PipelineActionBar({ state, inFlight, onAction }: Props) {
   const working = status === "agent_working";
   const isDone = status === "done";
 
+  // Schváliť/Vrátiť are offered when ratifying a stage AND when an agent is
+  // blocked asking — so a ratification question is never a dead-end ask-loop:
+  // the Director can answer, approve/advance, or return (CR-NS-018). The engine's
+  // approve/return have no status guard, so they work from blocked too.
+  const canRatify = (RATIFY_STAGES.has(current_stage) && awaiting) || blocked;
+
   const openComposer = (c: NonNullable<Composer>) => {
     setComposer(c);
     setText("");
@@ -87,7 +93,7 @@ export function PipelineActionBar({ state, inFlight, onAction }: Props) {
     <div className="flex flex-wrap items-center gap-2">
       {inFlight && <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-500" />}
 
-      {RATIFY_STAGES.has(current_stage) && awaiting && (
+      {canRatify && (
         <>
           <button
             onClick={() => onAction("approve")}

@@ -56,4 +56,12 @@ describe("PipelineActionBar — kickoff ratification", () => {
     expect(screen.queryByText("Schváliť")).not.toBeInTheDocument();
     expect(screen.queryByText("Spustiť")).not.toBeInTheDocument();
   });
+
+  it("when blocked (agent asking) shows Odpoveď + Schváliť + Vrátiť (never a dead-end)", () => {
+    render(<PipelineActionBar state={mkState("kickoff", "blocked")} inFlight={false} onAction={vi.fn()} />);
+    expect(screen.getByText("Odpoveď")).toBeInTheDocument();
+    expect(screen.getByText("Schváliť")).toBeInTheDocument();
+    expect(screen.getByText("Vrátiť")).toBeInTheDocument();
+    expect(screen.getByText("Otázka")).toBeInTheDocument();
+  });
 });
