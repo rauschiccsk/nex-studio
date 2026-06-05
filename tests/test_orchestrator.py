@@ -262,3 +262,48 @@ async def test_verify_failure_retries_then_blocks(db_session, monkeypatch):
     # auto-return messages were recorded
     returns = [m for m in _msgs(db_session, version.id) if m.kind == "return" and m.author == "system"]
     assert len(returns) >= 1
+
+
+# ── directive threading (CR-NS-018: Director's return/answer/ask reaches agent) ─
+
+
+def test_directive_for_action_frames_interactive_actions():
+    assert orchestrator.directive_for_action("return", {"comment": "Zlaď X"}, "gate_a") == (
+        "Director ťa vrátil na opravu fázy 'gate_a': Zlaď X"
+    )
+    assert orchestrator.directive_for_action("answer", {"text": "Schvaľujem"}, "gate_b") == (
+        "Director odpovedal na tvoju otázku: Schvaľujem"
+    )
+    assert orchestrator.directive_for_action("ask", {"text": "Ktorý port?"}, "gate_c") == (
+        "Director sa pýta: Ktorý port?"
+    )
+
+
+def test_directive_for_action_fresh_stage_is_none():
+    # start / approve / verdict are fresh-stage dispatches → generic directive.
+    assert orchestrator.directive_for_action("start", {}, "kickoff") is None
+    assert orchestrator.directive_for_action("approve", {"comment": "ok"}, "gate_a") is None
+    assert orchestrator.directive_for_action("verdict", {"verdict": "PASS"}, "gate_g") is None
+    # empty/whitespace content → None (defensive; apply_action already rejects it).
+    assert orchestrator.directive_for_action("return", {"comment": "   "}, "gate_a") is None
+    assert orchestrator.directive_for_action("ask", {}, "gate_a") is None
+
+
+async def test_run_dispatch_threads_directive_as_prompt(db_session, fake_claude):
+    """When a directive is supplied it IS the agent prompt (not the generic one)."""
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    fake_claude.response = _block(stage="kickoff", kind="blocked", summary="x", question="?")
+    await orchestrator.run_dispatch(
+        db_session, version.id, directive="Director ťa vrátil na opravu fázy 'kickoff': oprav súčet"
+    )
+    assert fake_claude.calls[-1]["prompt"] == "Director ťa vrátil na opravu fázy 'kickoff': oprav súčet"
+
+
+async def test_run_dispatch_generic_directive_without_override(db_session, fake_claude):
+    """Without a directive the agent gets the generic per-stage directive."""
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    fake_claude.response = _block(stage="kickoff", kind="blocked", summary="x", question="?")
+    await orchestrator.run_dispatch(db_session, version.id)
+    assert "Pokračuj fázou 'kickoff'" in fake_claude.calls[-1]["prompt"]

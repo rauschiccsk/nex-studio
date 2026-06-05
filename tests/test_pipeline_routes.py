@@ -71,7 +71,13 @@ def client(db_session, monkeypatch):
     # Async dispatch: capture scheduling instead of spawning a real bg task
     # (the agent run is unit-tested directly in test_orchestrator / runner).
     scheduled: list = []
-    monkeypatch.setattr(pipeline_runner, "schedule_dispatch", lambda vid: scheduled.append(vid))
+    scheduled_directives: list = []
+
+    def _capture_dispatch(vid, directive=None):
+        scheduled.append(vid)
+        scheduled_directives.append(directive)
+
+    monkeypatch.setattr(pipeline_runner, "schedule_dispatch", _capture_dispatch)
 
     app = FastAPI()
     app.include_router(pipeline_router, prefix="/api/v1/pipeline")
@@ -92,6 +98,7 @@ def client(db_session, monkeypatch):
         c._ri = ri
         c._fake = fake
         c._scheduled = scheduled
+        c._scheduled_directives = scheduled_directives
         yield c
     app.dependency_overrides.clear()
     registry._conns.clear()
@@ -138,6 +145,37 @@ def test_start_returns_agent_working_and_schedules_dispatch(client, db_session):
     assert [m["author"] for m in body["recent_messages"]] == ["director"]
     # A background dispatch was scheduled for this version.
     assert version.id in client._scheduled
+    # A fresh-stage dispatch (start) carries no Director-specific directive.
+    assert client._scheduled_directives[-1] is None
+
+
+def test_return_threads_director_comment_into_dispatch(client, db_session):
+    """CR-NS-018: the Director's ``return`` comment is framed and threaded into
+    the re-dispatch so the agent acts on it (not a blind generic re-run)."""
+    version = _make_version(db_session, client._ri)
+    client.post(f"/api/v1/pipeline/{version.id}/action", json={"action": "start"})
+    r = client.post(
+        f"/api/v1/pipeline/{version.id}/action",
+        json={"action": "return", "payload": {"comment": "Zlaď rozpor v kontrole súčtov"}},
+    )
+    assert r.status_code == 200, r.text
+    directive = client._scheduled_directives[-1]
+    assert directive is not None
+    assert "Zlaď rozpor v kontrole súčtov" in directive
+
+
+def test_answer_threads_director_text_into_dispatch(client, db_session):
+    """CR-NS-018: ``answer`` content reaches the agent (no re-ask loop)."""
+    version = _make_version(db_session, client._ri)
+    client.post(f"/api/v1/pipeline/{version.id}/action", json={"action": "start"})
+    r = client.post(
+        f"/api/v1/pipeline/{version.id}/action",
+        json={"action": "answer", "payload": {"text": "Schvaľujem port 8080"}},
+    )
+    assert r.status_code == 200, r.text
+    directive = client._scheduled_directives[-1]
+    assert directive is not None
+    assert "Schvaľujem port 8080" in directive
 
 
 def test_messages_paginated(client, db_session):

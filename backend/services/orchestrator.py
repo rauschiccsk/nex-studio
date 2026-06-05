@@ -162,6 +162,29 @@ def _directive_for(stage: str) -> str:
     )
 
 
+def directive_for_action(action: str, payload: dict[str, Any], stage: str) -> Optional[str]:
+    """Frame the Director's interactive message for the re-dispatch prompt, else ``None``.
+
+    For ``return`` / ``ask`` / ``answer`` the Director's content MUST reach the
+    agent (CR-NS-018) — otherwise the re-dispatched agent re-runs blind on the
+    generic stage directive ("nič sa nezmenilo, nemám čo prerábať"). For a
+    fresh-stage dispatch (``start`` / ``approve`` / ``verdict``) there is no
+    Director-specific instruction → ``None``, and the caller falls back to
+    :func:`_directive_for`. The agent runs ``--resume`` (full thread), so the
+    framed line lands in the right context.
+    """
+    if action == "return":
+        comment = str(payload.get("comment", "")).strip()
+        return f"Director ťa vrátil na opravu fázy '{stage}': {comment}" if comment else None
+    if action == "ask":
+        text = str(payload.get("text", "")).strip()
+        return f"Director sa pýta: {text}" if text else None
+    if action == "answer":
+        text = str(payload.get("text", "")).strip()
+        return f"Director odpovedal na tvoju otázku: {text}" if text else None
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Agent invocation (records message, no state mutation)
 # ---------------------------------------------------------------------------
@@ -350,6 +373,7 @@ async def run_dispatch(
     db: Session,
     version_id: uuid.UUID,
     on_event: Optional[claude_agent.EventCallback] = None,
+    directive: Optional[str] = None,
 ) -> Optional[PipelineState]:
     """Run the working agent for a version and settle its status (background).
 
@@ -361,6 +385,13 @@ async def run_dispatch(
 
     ``on_event`` (CR-NS-018) streams the **primary** agent's activity; the
     secondary verify/retry invocations don't stream (short, secondary).
+
+    ``directive`` (CR-NS-018) is the Director's framed message for ``return`` /
+    ``ask`` / ``answer`` re-dispatch (see :func:`directive_for_action`). When
+    present it IS the agent's prompt; otherwise the generic
+    :func:`_directive_for` is used (fresh-stage ``start`` / ``approve`` /
+    ``verdict``). Threading it here is what makes the Director↔agent loop
+    two-way: without it the agent re-runs blind on the generic directive.
     """
     state = _get_state(db, version_id)
     if state is None:
@@ -370,8 +401,9 @@ async def run_dispatch(
     if STAGE_ACTOR.get(stage) is None:  # terminal — nothing to run.
         return state
 
+    prompt = directive if directive is not None else _directive_for(stage)
     result = await invoke_agent(
-        db, version_id=state.version_id, role=actor, stage=stage, prompt=_directive_for(stage), on_event=on_event
+        db, version_id=state.version_id, role=actor, stage=stage, prompt=prompt, on_event=on_event
     )
 
     if isinstance(result, ParseFailure):

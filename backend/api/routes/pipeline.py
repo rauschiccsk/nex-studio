@@ -163,8 +163,12 @@ async def post_action(
 
     # Async dispatch (CR-NS-018 fix-round): the action left an agent working —
     # run it in the background; its result lands later via WS. POST returns now.
+    # The Director's return/ask/answer content is threaded into the re-dispatch
+    # prompt so the agent acts on it (else it re-runs blind on the generic
+    # directive); fresh-stage dispatch (start/approve/verdict) → directive None.
     if state.status == "agent_working":
-        pipeline_runner.schedule_dispatch(version_id)
+        directive = orchestrator.directive_for_action(payload.action, payload.payload or {}, state.current_stage)
+        pipeline_runner.schedule_dispatch(version_id, directive)
 
     return _board(db, version_id)
 
