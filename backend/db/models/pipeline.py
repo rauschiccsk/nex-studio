@@ -16,10 +16,12 @@ not native PG ENUM). Phase 1 of F-007 §12.
 """
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     Column,
     ForeignKey,
+    Identity,
     Index,
     Integer,
     String,
@@ -105,6 +107,12 @@ class PipelineMessage(Base, UUIDMixin):
         nullable=False,
         server_default=func.now(),
     )
+    # Monotonic insertion order (CR-NS-018). ``created_at`` uses ``func.now()``,
+    # which is constant within a transaction, so same-transaction messages (a
+    # worker's gate_report + the Coordinator's verify gate_report) tie on
+    # ``created_at`` and order non-deterministically. ``seq`` disambiguates →
+    # the board always shows the worker's report before its verification.
+    seq = Column(BigInteger, Identity(), nullable=False)
 
     __table_args__ = (
         CheckConstraint(
@@ -129,4 +137,5 @@ class PipelineMessage(Base, UUIDMixin):
             name="ck_pipeline_message_status",
         ),
         Index("ix_pipeline_message_version_created", "version_id", "created_at"),
+        Index("ix_pipeline_message_version_seq", "version_id", "seq"),
     )

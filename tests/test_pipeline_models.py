@@ -161,3 +161,34 @@ class TestPipelineMessage:
         db_session.expire_all()
 
         assert db_session.get(PipelineMessage, msg_id) is None
+
+    def test_seq_orders_same_transaction_messages_by_insertion(self, db_session):
+        """CR-NS-018: two messages in ONE transaction tie on created_at (func.now)
+        but order deterministically by the monotonic ``seq`` — worker report first,
+        then the coordinator's verify of it."""
+        from sqlalchemy import select
+
+        version = _make_version(db_session)
+        worker = _message(version, author="designer", kind="gate_report", content="spec hotové")
+        db_session.add(worker)
+        db_session.flush()
+        verify = _message(version, author="coordinator", kind="gate_report", content="verifikácia OK")
+        db_session.add(verify)
+        db_session.flush()
+        db_session.refresh(worker)
+        db_session.refresh(verify)
+
+        # created_at ties within the transaction; seq is monotonic and increasing.
+        assert worker.created_at == verify.created_at
+        assert worker.seq < verify.seq
+
+        ordered = (
+            db_session.execute(
+                select(PipelineMessage)
+                .where(PipelineMessage.version_id == version.id)
+                .order_by(PipelineMessage.seq.asc())
+            )
+            .scalars()
+            .all()
+        )
+        assert [m.content for m in ordered] == ["spec hotové", "verifikácia OK"]

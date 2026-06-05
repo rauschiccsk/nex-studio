@@ -53,7 +53,7 @@ def _recent_messages(db: Session, version_id: uuid.UUID, limit: int) -> list[Pip
         db.execute(
             select(PipelineMessage)
             .where(PipelineMessage.version_id == version_id)
-            .order_by(PipelineMessage.created_at.desc())
+            .order_by(PipelineMessage.seq.desc())
             .limit(limit)
         )
         .scalars()
@@ -111,7 +111,7 @@ def list_messages(
         db.execute(
             select(PipelineMessage)
             .where(PipelineMessage.version_id == version_id)
-            .order_by(PipelineMessage.created_at.asc())
+            .order_by(PipelineMessage.seq.asc())
             .offset(skip)
             .limit(limit)
         )

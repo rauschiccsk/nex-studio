@@ -68,9 +68,7 @@ async def _broadcast_state(version_id: uuid.UUID, state: PipelineState) -> None:
 async def _broadcast_new_messages(db, version_id: uuid.UUID, pre_ids: set[uuid.UUID]) -> None:
     new_msgs = (
         db.execute(
-            select(PipelineMessage)
-            .where(PipelineMessage.version_id == version_id)
-            .order_by(PipelineMessage.created_at.asc())
+            select(PipelineMessage).where(PipelineMessage.version_id == version_id).order_by(PipelineMessage.seq.asc())
         )
         .scalars()
         .all()

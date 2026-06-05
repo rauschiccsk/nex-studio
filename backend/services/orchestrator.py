@@ -206,8 +206,9 @@ def directive_for_action(action: str, payload: dict[str, Any], stage: str) -> Op
 def latest_coordinator_report(db: Session, version_id: uuid.UUID) -> Optional[str]:
     """Content of the most recent Coordinator ``gate_report`` for a version, or ``None``.
 
-    Author-filtered (``coordinator`` + ``gate_report``), so there is no
-    same-instant ``created_at`` tie with the stage actor's report. Feeds the
+    Author-filtered (``coordinator`` + ``gate_report``) and ordered by the
+    monotonic ``seq`` (not ``created_at``, which ties within a transaction), so
+    the most recent Coordinator report is unambiguous. Feeds the
     "Schváliť návrh Koordinátora" action (``apply_coordinator_recommendation``):
     its content becomes the re-dispatch directive so the Director accepts the
     Coordinator's recommended fix without retyping it.
@@ -219,7 +220,7 @@ def latest_coordinator_report(db: Session, version_id: uuid.UUID) -> Optional[st
             PipelineMessage.author == "coordinator",
             PipelineMessage.kind == "gate_report",
         )
-        .order_by(PipelineMessage.created_at.desc())
+        .order_by(PipelineMessage.seq.desc())
         .limit(1)
     ).scalar_one_or_none()
 
