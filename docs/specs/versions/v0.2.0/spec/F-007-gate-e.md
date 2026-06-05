@@ -1,79 +1,96 @@
 # F-007 — Gate E (Customer review) v cockpite
 
 > NEX Studio v0.2.0 — dorieši odložený "Gate E cutover" (F-007 Phase 5).
-> **Status:** DESIGN — posvätené Directorom 2026-06-05 (3 rozhodnutia).
+> **Status:** DESIGN — posvätené Directorom 2026-06-05; **revízia 2026-06-05** po
+> live teste: per-otázka schvaľovanie, Návrhár neopravuje sám (nález → Koordinátor → Director).
 > Autor návrhu: Dedo. Implementácia: Implementer (plan-first). Spec SK, kód EN.
 
 ## 1. Účel
 
 Gate E = zákaznícka previerka návrhu **pred Programovaním**. Agent **Zákazník**
 (pohľad bežného používateľa) systematicky preverí návrh, aby vytlačil na povrch
-nedomyslené miesta; **Návrhár** ich musí buď vysvetliť (je pokryté) alebo opraviť
-návrh. Pri regulated-ledger/payroll je **povinný**. Hodnota = externý
+nedomyslené miesta; **Návrhár** ich musí buď vysvetliť (je pokryté), alebo — ak je
+to medzera — **navrhnúť** opravu na schválenie Directorom (Návrhár neopravuje sám
+počas Gate E, viď §2). Pri regulated-ledger/payroll je **povinný**. Hodnota = externý
 používateľský tlak na špecifikáciu (Tiborova logika).
 
 Dnes cockpit nemá slučku Zákazník↔Návrhár (`gate_e` len dispatchne Zákazníka →
 otázka ide Directorovi, nie Návrhárovi). Tento spec to dorieši.
 
-## 2. Rozhodnutie 1 — slučku vedie orchestrátor
+## 2. Rozhodnutie 1 — slučku vedie orchestrátor, schvaľuje sa po jednej otázke
 
 Orchestrátor (Koordinátor) **sprostredkúva Zákazník ↔ Návrhár** (hub-and-spoke —
-agenti sa nevolajú priamo). Beh:
+agenti sa nevolajú priamo). Beh **po jednej otázke**, každú dvojicu schvaľuje
+Director:
 
-1. Zákazník položí otázku → orchestrátor ju pošle **Návrhárovi**.
-2. Návrhár odpovie (vysvetlí, že je pokryté / **opraví návrh**) → orchestrátor
-   odpoveď pošle späť **Zákazníkovi**.
-3. Zákazník reaguje (digne hlbšie / ďalšia otázka) → opakuje sa.
+1. Zákazník položí **jednu** otázku → orchestrátor ju pošle **Návrhárovi**.
+2. Návrhár odpovie — **iba vysvetlí** (pokryté / medzera). Ak je to medzera,
+   **len NAVRHNE** riešenie textom; **needituje žiadny spec súbor**.
+3. Orchestrátor odpoveď ukáže **Directorovi**, ktorý rozhodne:
+   - **(A) bez medzery** — odpoveď OK → Director schváli „v poriadku" →
+     **ďalšia otázka**.
+   - **(B) Návrhár našiel medzeru** — návrh riešenia ide **Koordinátorovi** →
+     Koordinátor prekontroluje + dá **odporúčanie** → **Director** rozhodne
+     **opraviť / ponechať** → pokyn ide Návrhárovi → Návrhár **až teraz** opraví
+     (alebo ponechá) → **ďalšia otázka**.
 
-Director **nesprostredkúva každú výmenu** (žiadne desiatky mikro-klikov) —
-**dozerá na hraniciach kôl** + finálne uzavretie (§3, §4).
+**Tvrdé pravidlo:** Návrhár **nikdy needituje spec sám** počas Gate E — výhradne
+na základe Directorom schváleného pokynu `fix` (vetva B). Routine otázka-odpoveď
+(vetva A) ide priamo Directorovi; cez Koordinátora idú **len nálezy** (na kontrolu
++ odporúčanie). Žiadny autonómny beh vnútri okruhu — **každá** výmena stojí na
+schválení Directora.
 
-## 3. Rozhodnutie 2 — kolo = jeden okruh
+## 3. Rozhodnutie 2 — okruhy = organizácia previerky (nie jednotka schvaľovania)
 
 Gate E pokrýva **7 okruhov** (per Customer charter §4.1): prihlásenie, hlavný tok,
 moduly, obrazovky, chyby (NIB-XXX), edge-cases, integrácie.
 
-- **Kolo = jeden okruh.** Orchestrátor v rámci okruhu vedie Zákazník↔Návrhár
-  autonómne (viacero Q&A), kým Zákazník okruh neuzavrie.
-- Na **hranici okruhu** orchestrátor zastaví a Directorovi ukáže:
-  - **nálezy okruhu** (čo Zákazník našiel),
-  - **riešenia Návrhára** (čo vysvetlil / opravil),
-  - **veci na rozhodnutie Directora** (politiky — napr. povinná zmena hesla).
-- Director na hranici: **schváli riešenia** / **rozhodne politiky** / **pokračuje**
-  na ďalší okruh (alebo „ukonči Gate E").
-- **Mid-okruh pauza:** keď Zákazník/Návrhár narazí na vec, ktorú **musí rozhodnúť
-  Director** (politika), orchestrátor zastaví aj v strede okruhu a počká — nehádže.
+- **Okruh = organizácia previerky.** Zákazník vedie otázky po okruhoch, ale
+  **jednotkou schvaľovania je jedna otázka** (§2) — nie okruh. Žiadny autonómny
+  beh vnútri okruhu.
+- Na **hranici okruhu** Zákazník pošle `gate_report` (okruh dokončený + súhrn
+  nálezov a ako boli vyriešené) → Director potvrdí prechod na ďalší okruh
+  (alebo „ukonči Gate E").
+- Politiky (napr. povinná zmena hesla) sú **nález ako každý iný** — idú cez vetvu
+  B (§2): Návrhár navrhne → Koordinátor → Director rozhodne. Žiadne osobitné
+  „mid-okruh" vetvenie netreba — každá otázka aj tak stojí na Directorovi.
 
 ## 4. Rozhodnutie 3 — coverage + koniec
 
 - **Coverage:** všetkých 7 okruhov; každý modul/obrazovka/tok aspoň raz poriadne
   preverený (Zákazník sleduje v `.nex-customer-state.md`). Previerku neskracujeme.
 - **Gate E sa uzavrie**, keď: všetky okruhy pokryté **A** všetky nálezy
-  **vyriešené** (Návrhár vysvetlil pokryté / opravil návrh / Director rozhodol
-  politiku). **Žiadny otvorený nález pred Programovaním.**
+  **vyriešené** (Návrhár na Directorom schválený pokyn opravil / Director rozhodol
+  ponechať). **Žiadny otvorený nález pred Programovaním.**
 - Vtedy orchestrátor ukáže **finálny súhrn Gate E** (nálezy + ako boli vyriešené)
   → Director dá **finálne schválenie** → posun na `build`.
 - **Director môže ukončiť skôr** („pokrytie stačí") — jeho rozhodnutie.
-- **Otvorený nález** (Návrhár nevyriešil a Director nerozhodol) **blokuje
+- **Otvorený nález** (Director ešte nerozhodol opraviť/ponechať) **blokuje
   uzavretie** Gate E.
 - **Výstup:** Gate E súhrn (nálezy + riešenia) uložený ako audit záznam
   (`docs/specs/versions/v<X>/customer-dialogue.md` alebo gate-e-report).
 
 ## 5. Mechanika (pre Implementer plán)
 
-- **Orchestrátorová Zákazník↔Návrhár slučka v `gate_e`:** nový vzor —
-  agent↔agent výmena sprostredkovaná orchestrátorom v rámci jednej fázy. Reuse
-  `invoke_agent_with_parse_retry`, `dispatch_directive`, `_coordinator_relay`
-  pattern. Customer a Designer = samostatné claude sessiony (orchestrator_session
-  per (project, role)).
-- **Status-blok signály (§7.2):** Zákazník v bloku signalizuje napr.
-  `kind=question` (otázka pre Návrhára), `kind=gate_report` + „okruh dokončený"
-  (hranica kola, s nálezmi), a niečo ako „needs_director_decision" (politika →
-  mid-okruh pauza). Presné polia dolaď v pláne + ja zladím charter §7.2.
-- **Nálezy/riešenia** sa zaznamenávajú ako `pipeline_message` (stage=gate_e);
-  poradie cez `seq`. Director-facing texty po slovensky, bežnou rečou (§7.2).
-- **Director akcie na hranici:** schváliť (pokračovať / uzavrieť), rozhodnúť
-  politiku (odpoveď), vrátiť. Mapovanie na cockpit akcie dolaď v pláne.
+- **Per-otázka cyklus v `gate_e`:** orchestrátor po **každej** Návrhárovej
+  odpovedi zastaví (`status=awaiting_director`) — nikdy nereťazí ďalšiu Zákazníkovu
+  otázku bez schválenia Directora. Reuse `invoke_agent_with_parse_retry`,
+  `dispatch_directive`, `_coordinator_relay`. Customer a Designer = samostatné
+  claude sessiony (orchestrator_session per (project, role)).
+- **Návrhár v Gate E needituje spec.** Dispatch Návrhárovi v `gate_e` ho
+  inštruuje: „odpovedz / pri medzere LEN navrhni — NEUPRAVUJ žiadny súbor". Edit
+  povolí až Directorom schválený pokyn `fix` (vetva B), ktorý príde ako directive
+  („teraz uprav podľa schváleného návrhu").
+- **Status-blok signály (§7.2):** Návrhárova odpoveď nesie `gap_found`
+  (true/false); ak `true`, pridá `proposed_fix` (textový návrh, žiaden edit).
+  Zákazník: `kind=question` (otázka), `kind=gate_report` (okruh dokončený +
+  nálezy). Presné polia dolaď v pláne; charter §7.2 zladím ja.
+- **Vetva B routing:** pri `gap_found` orchestrátor pošle návrh **Koordinátorovi**
+  (jeho session) na kontrolu + odporúčanie (reuse `_coordinator_relay`), výsledok
+  Directorovi. Director akcie: **schváliť odpoveď** (A → ďalšia otázka),
+  **opraviť** / **ponechať** (B). Mapovanie na cockpit akcie dolaď v pláne.
+- **Nálezy/riešenia** ako `pipeline_message` (stage=gate_e); poradie cez `seq`.
+  Director-facing texty po slovensky, bežnou rečou (§7.2).
 
 ## 6. Cutover starého `/dialogue` (dorieši odložené Phase 5 items 2+3)
 
