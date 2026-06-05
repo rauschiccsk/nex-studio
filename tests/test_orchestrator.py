@@ -802,6 +802,8 @@ async def test_gate_e_final_approve_advances_to_build(db_session, fake_claude):
     _at_gate_e_boundary(db_session, version, coverage_complete=True, findings=[])
     state = await orchestrator.apply_action(db_session, version_id=version.id, action="approve")
     assert state.current_stage == "build"
+    # §4 audit record written before closing
+    assert any(m.author == "system" and "Gate E audit" in m.content for m in _msgs(db_session, version.id))
 
 
 async def test_gate_e_final_approve_blocked_by_open_findings(db_session, fake_claude):
@@ -818,6 +820,7 @@ async def test_end_gate_e_advances_when_no_open_findings(db_session, fake_claude
     _at_gate_e_boundary(db_session, version, coverage_complete=False, findings=[])
     state = await orchestrator.apply_action(db_session, version_id=version.id, action="end_gate_e")
     assert state.current_stage == "build"
+    assert any(m.author == "system" and "Gate E audit" in m.content for m in _msgs(db_session, version.id))
 
 
 async def test_end_gate_e_blocked_by_open_findings(db_session, fake_claude):
@@ -834,3 +837,38 @@ async def test_end_gate_e_outside_gate_e_errors(db_session, fake_claude):
     _settle(db_session, version.id)  # kickoff, awaiting (past the status guard)
     with pytest.raises(orchestrator.OrchestratorError):
         await orchestrator.apply_action(db_session, version_id=version.id, action="end_gate_e")
+
+
+def _gm(author, kind, content, **payload):
+    return PipelineMessage(
+        version_id=uuid.uuid4(),
+        stage="gate_e",
+        author=author,
+        recipient="director",
+        kind=kind,
+        content=content,
+        payload=payload or None,
+    )
+
+
+def test_gate_e_audit_markdown_assembles():
+    msgs = [
+        _gm("customer", "question", "Ako sa rieši reset hesla?"),
+        _gm("designer", "answer", "Reset cez email, pokryté v §4.2"),
+        _gm("customer", "gate_report", "okruh prihlásenie hotový", topic="prihlasenie", topic_done=True),
+        _gm(
+            "customer",
+            "gate_report",
+            "všetky okruhy pokryté",
+            topic="integracie",
+            topic_done=True,
+            coverage_complete=True,
+            findings=[],
+        ),
+    ]
+    md = orchestrator.gate_e_audit_markdown(msgs, "0.2.0")
+    assert "v0.2.0" in md
+    assert "prihlasenie" in md and "integracie" in md  # covered topics
+    assert "Zákazník" in md and "Návrhár" in md  # role-labelled transcript
+    assert "Ako sa rieši reset hesla?" in md
+    assert "Reset cez email" in md

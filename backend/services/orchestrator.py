@@ -274,6 +274,86 @@ def _gate_e_coverage_complete(report: Optional[PipelineMessage]) -> bool:
     return bool(report and report.payload and report.payload.get("coverage_complete"))
 
 
+_GATE_E_ROLE_SK = {
+    "customer": "Zákazník",
+    "designer": "Návrhár",
+    "director": "Director",
+    "coordinator": "Koordinátor",
+    "system": "Systém",
+}
+
+
+def gate_e_audit_markdown(messages: list[PipelineMessage], version_number: str) -> str:
+    """Assemble the Gate E audit record (F-007-gate-e §4) from the stage=gate_e thread.
+
+    Pure (no DB/FS): covered okruhy + findings recorded during the review + the
+    full Customer↔Designer↔Director transcript (seq-ordered). Written on final
+    sign-off — by then the open-finding gate has passed, so closure is clean.
+    """
+    topics: list[str] = []
+    findings: list[str] = []
+    for m in messages:
+        if not m.payload:
+            continue
+        if m.author == "customer" and m.kind == "gate_report" and m.payload.get("topic_done"):
+            topic = m.payload.get("topic")
+            if topic and topic not in topics:
+                topics.append(topic)
+        for finding in m.payload.get("findings") or []:
+            if finding not in findings:
+                findings.append(finding)
+
+    lines = [f"# Gate E — zákaznícka previerka (audit) — v{version_number}", ""]
+    lines += ["## Pokryté okruhy", ""]
+    lines += ([f"- {t}" for t in topics] if topics else ["(žiadne zaznamenané)"]) + [""]
+    lines += ["## Nálezy zaznamenané počas previerky", ""]
+    lines += ([f"- {f}" for f in findings] if findings else ["Žiadne otvorené nálezy."]) + [""]
+    lines += ["## Priebeh previerky (riešenia v poradí)", ""]
+    for m in messages:
+        who = _GATE_E_ROLE_SK.get(m.author, m.author)
+        lines.append(f"**{who}:** {m.content}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _write_gate_e_audit(db: Session, version_id: uuid.UUID) -> str:
+    """Persist the Gate E audit at final sign-off (F-007-gate-e §4) → returns the rel path.
+
+    Records the summary as a ``pipeline_message`` (FS-independent audit trail) and
+    best-effort writes ``docs/specs/versions/v<X>/customer-dialogue.md`` into the
+    orchestrated project's repo (only when that repo exists — tests/no-repo skip).
+    """
+    slug = _project_slug_for_version(db, version_id)
+    version_number = db.execute(select(Version.version_number).where(Version.id == version_id)).scalar_one()
+    messages = (
+        db.execute(
+            select(PipelineMessage)
+            .where(PipelineMessage.version_id == version_id, PipelineMessage.stage == "gate_e")
+            .order_by(PipelineMessage.seq.asc())
+        )
+        .scalars()
+        .all()
+    )
+    md = gate_e_audit_markdown(messages, version_number)
+    rel = f"docs/specs/versions/v{version_number}/customer-dialogue.md"
+    _record_message(
+        db,
+        version_id=version_id,
+        stage="gate_e",
+        author="system",
+        recipient="director",
+        kind="notification",
+        content=f"Gate E audit uložený: {rel}",
+        payload={"path": rel, "gate_e_audit": md},
+    )
+    project_root = claude_agent.PROJECTS_ROOT / slug
+    if project_root.exists():  # real orchestrated repo — write the spec-tree artifact
+        out = project_root / rel
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(md, encoding="utf-8")
+    return rel
+
+
 def dispatch_directive(
     db: Session, version_id: uuid.UUID, action: str, payload: dict[str, Any], stage: str
 ) -> Optional[str]:
@@ -833,6 +913,7 @@ async def apply_action(
                 open_findings = _gate_e_open_findings(report)
                 if open_findings:
                     raise OrchestratorError("Otvorené nálezy blokujú uzavretie Gate E — najprv ich vyrieš")
+                _write_gate_e_audit(db, version_id)  # §4 audit record before closing
                 state.current_stage = _next_stage("gate_e")  # → build
                 db.flush()
                 _begin_dispatch(db, state)
@@ -982,6 +1063,7 @@ async def apply_action(
             kind="approval",
             content="Gate E ukončené Directorom (pokrytie stačí).",
         )
+        _write_gate_e_audit(db, version_id)  # §4 audit record before closing
         state.current_stage = _next_stage("gate_e")  # → build
         db.flush()
         _begin_dispatch(db, state)
