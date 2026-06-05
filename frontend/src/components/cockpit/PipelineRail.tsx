@@ -1,25 +1,7 @@
 // Left rail: stage progress + agent status chips (F-007 §7).
 
-import type {
-  PipelineActor,
-  PipelineStage,
-  PipelineState,
-} from "../../services/api/pipeline";
-import { ROLE_LABELS, STAGE_CODES, STAGE_LABELS } from "./labels";
-
-// Mirrors backend orchestrator.STAGE_ORDER + STAGE_ACTOR.
-const STAGE_ORDER: PipelineStage[] = [
-  "kickoff",
-  "gate_a",
-  "gate_b",
-  "gate_c",
-  "gate_d",
-  "gate_e",
-  "build",
-  "gate_g",
-  "release",
-  "done",
-];
+import type { PipelineActor, PipelineState } from "../../services/api/pipeline";
+import { ROLE_LABELS, STAGE_CODES, STAGE_LABELS, STAGE_ORDER } from "./labels";
 
 // Agent chips (director is the human, not an agent chip). Labels from the shared
 // ROLE_LABELS map; emoji is decorative.

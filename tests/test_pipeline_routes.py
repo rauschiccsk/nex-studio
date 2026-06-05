@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from backend.api.routes.pipeline import router as pipeline_router
 from backend.core.security import get_current_user, require_ri_role
 from backend.db.models.foundation import User
+from backend.db.models.pipeline import PipelineMessage
 from backend.db.models.projects import Project
 from backend.db.models.versions import Version
 from backend.db.session import get_db
@@ -176,6 +177,43 @@ def test_answer_threads_director_text_into_dispatch(client, db_session):
     directive = client._scheduled_directives[-1]
     assert directive is not None
     assert "Schvaľujem port 8080" in directive
+
+
+def test_apply_coordinator_recommendation_threads_report(client, db_session):
+    """CR-NS-018: the latest Coordinator gate_report is framed + threaded into the
+    re-dispatch so the Director accepts it one-click, without retyping."""
+    version = _make_version(db_session, client._ri)
+    client.post(f"/api/v1/pipeline/{version.id}/action", json={"action": "start"})
+    db_session.add(
+        PipelineMessage(
+            version_id=version.id,
+            stage="kickoff",
+            author="coordinator",
+            recipient="director",
+            kind="gate_report",
+            content="Oprav riadok 3 — DPH.",
+        )
+    )
+    db_session.flush()
+    r = client.post(
+        f"/api/v1/pipeline/{version.id}/action",
+        json={"action": "apply_coordinator_recommendation"},
+    )
+    assert r.status_code == 200, r.text
+    directive = client._scheduled_directives[-1]
+    assert directive is not None
+    assert "Oprav riadok 3 — DPH." in directive
+
+
+def test_apply_coordinator_recommendation_no_report_400(client, db_session):
+    """No Coordinator report to apply → 400 (FE also hides the button)."""
+    version = _make_version(db_session, client._ri)
+    client.post(f"/api/v1/pipeline/{version.id}/action", json={"action": "start"})
+    r = client.post(
+        f"/api/v1/pipeline/{version.id}/action",
+        json={"action": "apply_coordinator_recommendation"},
+    )
+    assert r.status_code == 400
 
 
 def test_messages_paginated(client, db_session):

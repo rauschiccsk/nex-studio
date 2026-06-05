@@ -44,3 +44,26 @@ export const ROLE_LABELS: Record<PipelineParticipant, string> = {
   director: "Director",
   system: "Systém",
 };
+
+// Canonical stage order — mirrors backend orchestrator.STAGE_ORDER. Shared so the
+// rail and the action bar don't each keep a copy (DRY).
+export const STAGE_ORDER: PipelineStage[] = [
+  "kickoff",
+  "gate_a",
+  "gate_b",
+  "gate_c",
+  "gate_d",
+  "gate_e",
+  "build",
+  "gate_g",
+  "release",
+  "done",
+];
+
+// Human label of the stage that follows `stage` (clamped at the last). Drives the
+// "Schváliť → spustí sa ďalšia fáza (…)" consequence line.
+export function nextStageLabel(stage: PipelineStage): string {
+  const idx = STAGE_ORDER.indexOf(stage);
+  const next = idx >= 0 ? STAGE_ORDER[Math.min(idx + 1, STAGE_ORDER.length - 1)] : undefined;
+  return next ? STAGE_LABELS[next] : STAGE_LABELS[stage];
+}

@@ -363,3 +363,95 @@ async def test_run_dispatch_parse_retry_exhausted_blocks(db_session, monkeypatch
     # every failed parse was escalated as a system→director notification
     notifs = [m for m in _msgs(db_session, version.id) if m.author == "system" and m.kind == "notification"]
     assert len(notifs) >= 1
+
+
+# ── apply_coordinator_recommendation (CR-NS-018: one-click accept Coordinator fix) ─
+
+
+def _seed_coordinator_report(db_session, version_id, content, *, created_at=None):
+    """Add one coordinator gate_report message (optionally with explicit created_at)."""
+    kwargs = dict(
+        version_id=version_id,
+        stage="gate_a",
+        author="coordinator",
+        recipient="director",
+        kind="gate_report",
+        content=content,
+    )
+    if created_at is not None:
+        kwargs["created_at"] = created_at
+    db_session.add(PipelineMessage(**kwargs))
+    db_session.flush()
+
+
+def test_latest_coordinator_report_picks_most_recent(db_session):
+    from datetime import datetime, timedelta, timezone
+
+    version, _ = _make_version(db_session)
+    base = datetime(2026, 6, 5, 10, 0, 0, tzinfo=timezone.utc)
+    _seed_coordinator_report(db_session, version.id, "prvé", created_at=base)
+    _seed_coordinator_report(db_session, version.id, "druhé", created_at=base + timedelta(minutes=1))
+    # a designer report at the same instant must be ignored (author-filtered)
+    db_session.add(
+        PipelineMessage(
+            version_id=version.id,
+            stage="gate_a",
+            author="designer",
+            recipient="director",
+            kind="gate_report",
+            content="designer",
+            created_at=base + timedelta(minutes=2),
+        )
+    )
+    db_session.flush()
+    assert orchestrator.latest_coordinator_report(db_session, version.id) == "druhé"
+
+
+def test_dispatch_directive_routes_by_action(db_session):
+    version, _ = _make_version(db_session)
+    # payload-based delegates to directive_for_action
+    assert "Zlaď X" in orchestrator.dispatch_directive(
+        db_session, version.id, "return", {"comment": "Zlaď X"}, "gate_a"
+    )
+    assert orchestrator.dispatch_directive(db_session, version.id, "approve", {}, "gate_a") is None
+    # coordinator action with no report → None
+    assert (
+        orchestrator.dispatch_directive(db_session, version.id, "apply_coordinator_recommendation", {}, "gate_a")
+        is None
+    )
+    # with a report → framed directive carrying its content
+    _seed_coordinator_report(db_session, version.id, "odporúčania X")
+    framed = orchestrator.dispatch_directive(db_session, version.id, "apply_coordinator_recommendation", {}, "gate_a")
+    assert "odporúčania X" in framed and "Koordinátora" in framed
+
+
+async def test_apply_coordinator_recommendation_redispatches_with_report(db_session, fake_claude):
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _seed_coordinator_report(db_session, version.id, "Oprav súčet DPH na riadku 3.")
+    # move to a designer gate awaiting the Director
+    state = orchestrator._get_state(db_session, version.id)
+    state.current_stage = "gate_a"
+    state.current_actor = "designer"
+    state.status = "awaiting_director"
+    db_session.flush()
+
+    state = await orchestrator.apply_action(
+        db_session, version_id=version.id, action="apply_coordinator_recommendation"
+    )
+    assert state.status == "agent_working"
+    assert state.current_stage == "gate_a"  # stage does NOT advance
+
+    directive = orchestrator.dispatch_directive(
+        db_session, version.id, "apply_coordinator_recommendation", {}, state.current_stage
+    )
+    assert "Oprav súčet DPH na riadku 3." in directive
+    await orchestrator.run_dispatch(db_session, version.id, directive=directive)
+    assert any("Oprav súčet DPH na riadku 3." in c["prompt"] for c in fake_claude.calls)
+
+
+async def test_apply_coordinator_recommendation_no_report_errors(db_session, fake_claude):
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    with pytest.raises(orchestrator.OrchestratorError):
+        await orchestrator.apply_action(db_session, version_id=version.id, action="apply_coordinator_recommendation")

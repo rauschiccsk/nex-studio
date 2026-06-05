@@ -10,6 +10,7 @@ import "@testing-library/jest-dom/vitest";
 
 import PipelineRail from "@/components/cockpit/PipelineRail";
 import PipelineMessageBubble from "@/components/cockpit/PipelineMessageBubble";
+import { nextStageLabel } from "@/components/cockpit/labels";
 import type { PipelineMessage, PipelineState } from "@/services/api/pipeline";
 
 function mkState(): PipelineState {
@@ -66,5 +67,12 @@ describe("cockpit Slovak labels", () => {
     expect(screen.getByText("Návrhár")).toBeInTheDocument();
     expect(screen.getByText("Director")).toBeInTheDocument();
     expect(screen.queryByText("Designer")).not.toBeInTheDocument();
+  });
+
+  it("nextStageLabel returns the following stage's Slovak label (clamped at done)", () => {
+    expect(nextStageLabel("kickoff")).toBe("Rozsah"); // gate_a
+    expect(nextStageLabel("gate_e")).toBe("Programovanie"); // build
+    expect(nextStageLabel("release")).toBe("Hotovo"); // done
+    expect(nextStageLabel("done")).toBe("Hotovo"); // clamped
   });
 });

@@ -1,15 +1,18 @@
-// Context-aware Director action buttons (F-007 §8).
+// Context-aware Director action buttons (F-007 §8, CR-NS-018).
 //
-// Buttons are derived from current_stage + status. Actions needing free text
-// (return/ask/answer) open an inline composer; verdict offers PASS/FAIL.
+// Buttons are derived from current_stage + status. Each primary action carries a
+// muted consequence line so the outcome is unmistakable (Director feedback:
+// approving past a flagged "needs fixing" was too easy). Actions needing free
+// text (return/ask/answer) open an inline composer; verdict offers PASS/FAIL.
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 
 import type {
   PipelineActionName,
   PipelineState,
 } from "../../services/api/pipeline";
+import { nextStageLabel } from "./labels";
 
 // Stages the Director ratifies with Schváliť/Vrátiť. kickoff is a ratification
 // gate too — the engine's approve advances kickoff→gate_a (NOT a `start`; the
@@ -23,12 +26,35 @@ interface Props {
   /** Blocked due to an unexpected failure (agent crash/timeout) rather than an
    *  agent question — offer "Skús znova" instead of answer/approve (CR-NS-018). */
   isErrorBlock?: boolean;
+  /** A Coordinator gate_report exists to apply — gates the "Schváliť návrh
+   *  Koordinátora" button (else the action would 400). CR-NS-018. */
+  hasCoordinatorReport?: boolean;
   onAction: (action: PipelineActionName, payload?: Record<string, unknown>) => void;
 }
 
 type Composer = { action: PipelineActionName; label: string; field: string } | null;
 
-export function PipelineActionBar({ state, inFlight, isErrorBlock = false, onAction }: Props) {
+const btn =
+  "inline-flex w-fit items-center gap-1.5 rounded px-3 py-1.5 text-xs font-medium disabled:opacity-50";
+const hintCls = "pl-0.5 text-[10px] leading-tight text-slate-500";
+
+// One action = button + its consequence line, stacked.
+function ActionRow({ hint, children }: { hint?: string; children: ReactNode }) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      {children}
+      {hint ? <span className={hintCls}>{hint}</span> : null}
+    </div>
+  );
+}
+
+export function PipelineActionBar({
+  state,
+  inFlight,
+  isErrorBlock = false,
+  hasCoordinatorReport = false,
+  onAction,
+}: Props) {
   const [composer, setComposer] = useState<Composer>(null);
   const [text, setText] = useState("");
 
@@ -47,10 +73,12 @@ export function PipelineActionBar({ state, inFlight, isErrorBlock = false, onAct
   const errorBlock = blocked && isErrorBlock;
   const questionBlock = blocked && !isErrorBlock;
 
-  // Schváliť/Vrátiť: when ratifying a stage, AND when an agent is blocked asking
-  // (never a dead-end ask-loop) — but NOT for an error-block. The engine's
-  // approve/return have no status guard, so they work from blocked too.
-  const canRatify = (RATIFY_STAGES.has(current_stage) && awaiting) || questionBlock;
+  // The full ratify gate (Schváliť podľa Návrhára / Koordinátora / Vrátiť) shows
+  // at an awaiting ratify stage. Schváliť/Vrátiť also show on a question-block
+  // (never a dead-end ask-loop) — the engine's approve/return have no status
+  // guard, so they work from blocked too.
+  const awaitingRatify = RATIFY_STAGES.has(current_stage) && awaiting;
+  const canRatify = awaitingRatify || questionBlock;
 
   const openComposer = (c: NonNullable<Composer>) => {
     setComposer(c);
@@ -62,9 +90,6 @@ export function PipelineActionBar({ state, inFlight, isErrorBlock = false, onAct
     setComposer(null);
     setText("");
   };
-
-  const btn =
-    "inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-medium disabled:opacity-50";
 
   if (composer) {
     return (
@@ -99,95 +124,128 @@ export function PipelineActionBar({ state, inFlight, isErrorBlock = false, onAct
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="flex flex-col gap-2.5">
       {inFlight && <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-500" />}
 
       {canRatify && (
         <>
-          <button
-            onClick={() => onAction("approve")}
-            disabled={inFlight}
-            className={`${btn} bg-emerald-600 text-white hover:bg-emerald-500`}
+          <ActionRow
+            hint={`Prijme sa návrh Návrhára → spustí sa ďalšia fáza (${nextStageLabel(current_stage)}).`}
           >
-            Schváliť
-          </button>
-          <button
-            onClick={() => openComposer({ action: "return", label: "Vrátiť s komentárom", field: "comment" })}
-            disabled={inFlight}
-            className={`${btn} border border-red-500/40 text-red-300 hover:bg-red-500/10`}
-          >
-            Vrátiť
-          </button>
+            <button
+              onClick={() => onAction("approve")}
+              disabled={inFlight}
+              className={`${btn} bg-emerald-600 text-white hover:bg-emerald-500`}
+            >
+              Schváliť podľa Návrhára
+            </button>
+          </ActionRow>
+
+          {awaitingRatify && hasCoordinatorReport && (
+            <ActionRow hint="Návrhárovi sa pošlú odporúčania Koordinátora na zapracovanie. Pipeline počká.">
+              <button
+                onClick={() => onAction("apply_coordinator_recommendation")}
+                disabled={inFlight}
+                className={`${btn} bg-indigo-600 text-white hover:bg-indigo-500`}
+              >
+                Schváliť návrh Koordinátora
+              </button>
+            </ActionRow>
+          )}
+
+          <ActionRow hint="Napíšeš vlastnú pripomienku → Návrhár prepracuje.">
+            <button
+              onClick={() => openComposer({ action: "return", label: "Vrátiť s komentárom", field: "comment" })}
+              disabled={inFlight}
+              className={`${btn} border border-red-500/40 text-red-300 hover:bg-red-500/10`}
+            >
+              Vrátiť
+            </button>
+          </ActionRow>
         </>
       )}
 
       {current_stage === "gate_g" && awaiting && (
         <>
-          <button
-            onClick={() => onAction("verdict", { verdict: "PASS" })}
-            disabled={inFlight}
-            className={`${btn} bg-emerald-600 text-white hover:bg-emerald-500`}
-          >
-            Verdikt PASS
-          </button>
-          <button
-            onClick={() => onAction("verdict", { verdict: "FAIL" })}
-            disabled={inFlight}
-            className={`${btn} bg-red-600 text-white hover:bg-red-500`}
-          >
-            Verdikt FAIL
-          </button>
+          <ActionRow hint="Audit prešiel → pipeline pokračuje na vydanie.">
+            <button
+              onClick={() => onAction("verdict", { verdict: "PASS" })}
+              disabled={inFlight}
+              className={`${btn} bg-emerald-600 text-white hover:bg-emerald-500`}
+            >
+              Verdikt PASS
+            </button>
+          </ActionRow>
+          <ActionRow hint="Audit neprešiel → návrat na prepracovanie.">
+            <button
+              onClick={() => onAction("verdict", { verdict: "FAIL" })}
+              disabled={inFlight}
+              className={`${btn} bg-red-600 text-white hover:bg-red-500`}
+            >
+              Verdikt FAIL
+            </button>
+          </ActionRow>
         </>
       )}
 
       {current_stage === "release" && awaiting && (
-        <button
-          onClick={() => onAction("uat_accept")}
-          disabled={inFlight}
-          className={`${btn} bg-emerald-600 text-white hover:bg-emerald-500`}
-        >
-          UAT accept
-        </button>
+        <ActionRow hint="Verzia sa akceptuje zákazníkom (UAT) → hotovo.">
+          <button
+            onClick={() => onAction("uat_accept")}
+            disabled={inFlight}
+            className={`${btn} bg-emerald-600 text-white hover:bg-emerald-500`}
+          >
+            UAT accept
+          </button>
+        </ActionRow>
       )}
 
       {questionBlock && (
-        <button
-          onClick={() => openComposer({ action: "answer", label: "Odpovedať agentovi", field: "text" })}
-          disabled={inFlight}
-          className={`${btn} bg-sky-600 text-white hover:bg-sky-500`}
-        >
-          Odpoveď
-        </button>
+        <ActionRow hint="Odpovieš agentovi → pokračuje vo fáze.">
+          <button
+            onClick={() => openComposer({ action: "answer", label: "Odpovedať agentovi", field: "text" })}
+            disabled={inFlight}
+            className={`${btn} bg-sky-600 text-white hover:bg-sky-500`}
+          >
+            Odpoveď
+          </button>
+        </ActionRow>
       )}
 
       {errorBlock && (
-        <button
-          onClick={() => onAction("return", { comment: "Skús znova." })}
-          disabled={inFlight}
-          className={`${btn} bg-primary-600 text-white hover:bg-primary-500`}
-        >
-          Skús znova
-        </button>
+        <ActionRow hint="Znovu spustí agenta v aktuálnej fáze.">
+          <button
+            onClick={() => onAction("return", { comment: "Skús znova." })}
+            disabled={inFlight}
+            className={`${btn} bg-primary-600 text-white hover:bg-primary-500`}
+          >
+            Skús znova
+          </button>
+        </ActionRow>
       )}
 
       {working && (
-        <button
-          onClick={() => onAction("pause")}
-          disabled={inFlight}
-          className={`${btn} border border-slate-700 text-slate-300 hover:bg-slate-800`}
-        >
-          Pauza
-        </button>
+        <ActionRow hint="Pozastaví pipeline.">
+          <button
+            onClick={() => onAction("pause")}
+            disabled={inFlight}
+            className={`${btn} border border-slate-700 text-slate-300 hover:bg-slate-800`}
+          >
+            Pauza
+          </button>
+        </ActionRow>
       )}
 
       {!isDone && (
-        <button
-          onClick={() => openComposer({ action: "ask", label: "Položiť otázku", field: "text" })}
-          disabled={inFlight}
-          className={`${btn} border border-slate-700 text-slate-300 hover:bg-slate-800`}
-        >
-          Otázka
-        </button>
+        <ActionRow hint="Spýtaš sa, pipeline počká.">
+          <button
+            onClick={() => openComposer({ action: "ask", label: "Položiť otázku", field: "text" })}
+            disabled={inFlight}
+            className={`${btn} border border-slate-700 text-slate-300 hover:bg-slate-800`}
+          >
+            Otázka
+          </button>
+        </ActionRow>
       )}
     </div>
   );

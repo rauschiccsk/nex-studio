@@ -86,6 +86,7 @@ export type PipelineActionName =
   | "return"
   | "ask"
   | "answer"
+  | "apply_coordinator_recommendation"
   | "verdict"
   | "uat_accept"
   | "pause";

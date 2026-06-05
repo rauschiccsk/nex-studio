@@ -67,7 +67,19 @@ _VERIFY_RETRIES = 2
 # Distinct from ``_VERIFY_RETRIES`` (which retries a *valid* report that failed
 # verification).
 _PARSE_RETRIES = 2
-_ACTIONS = frozenset({"start", "approve", "return", "ask", "answer", "verdict", "uat_accept", "pause"})
+_ACTIONS = frozenset(
+    {
+        "start",
+        "approve",
+        "return",
+        "ask",
+        "answer",
+        "apply_coordinator_recommendation",
+        "verdict",
+        "uat_accept",
+        "pause",
+    }
+)
 
 # Per-stage backstop timeouts (seconds) for a single headless agent turn
 # (CR-NS-018 fix-round). Dispatch is async, so these only guard a *hung* agent.
@@ -189,6 +201,45 @@ def directive_for_action(action: str, payload: dict[str, Any], stage: str) -> Op
         text = str(payload.get("text", "")).strip()
         return f"Director odpovedal na tvoju otázku: {text}" if text else None
     return None
+
+
+def latest_coordinator_report(db: Session, version_id: uuid.UUID) -> Optional[str]:
+    """Content of the most recent Coordinator ``gate_report`` for a version, or ``None``.
+
+    Author-filtered (``coordinator`` + ``gate_report``), so there is no
+    same-instant ``created_at`` tie with the stage actor's report. Feeds the
+    "Schváliť návrh Koordinátora" action (``apply_coordinator_recommendation``):
+    its content becomes the re-dispatch directive so the Director accepts the
+    Coordinator's recommended fix without retyping it.
+    """
+    return db.execute(
+        select(PipelineMessage.content)
+        .where(
+            PipelineMessage.version_id == version_id,
+            PipelineMessage.author == "coordinator",
+            PipelineMessage.kind == "gate_report",
+        )
+        .order_by(PipelineMessage.created_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def dispatch_directive(
+    db: Session, version_id: uuid.UUID, action: str, payload: dict[str, Any], stage: str
+) -> Optional[str]:
+    """Resolve the re-dispatch prompt for an ``agent_working`` transition, else ``None``.
+
+    Single entry point for the route (CR-NS-018): payload-framed for
+    ``return`` / ``ask`` / ``answer`` (delegates to :func:`directive_for_action`),
+    DB-fetched + framed for ``apply_coordinator_recommendation``, ``None`` for a
+    fresh-stage dispatch (``start`` / ``approve`` / ``verdict``).
+    """
+    if action == "apply_coordinator_recommendation":
+        content = latest_coordinator_report(db, version_id)
+        if content is None:
+            return None
+        return f"Director schválil odporúčania Koordinátora. Zapracuj ich podľa jeho hlásenia: {content}"
+    return directive_for_action(action, payload, stage)
 
 
 # ---------------------------------------------------------------------------
@@ -627,6 +678,25 @@ async def apply_action(
             recipient=state.current_actor,
             kind="answer",
             content=str(text),
+        )
+        _begin_dispatch(db, state)
+        return state
+
+    if action == "apply_coordinator_recommendation":
+        if latest_coordinator_report(db, version_id) is None:
+            raise OrchestratorError("Žiadne odporúčanie Koordinátora na zapracovanie")
+        if STAGE_ACTOR.get(state.current_stage) is None:
+            raise OrchestratorError("Aktuálna fáza nemá agenta na re-dispatch")
+        # Audit only; the Coordinator's report is threaded as the re-dispatch
+        # directive by ``dispatch_directive`` (route). Stage does NOT advance.
+        _record_message(
+            db,
+            version_id=version_id,
+            stage=state.current_stage,
+            author="director",
+            recipient=state.current_actor,
+            kind="approval",
+            content="Schválené odporúčania Koordinátora.",
         )
         _begin_dispatch(db, state)
         return state

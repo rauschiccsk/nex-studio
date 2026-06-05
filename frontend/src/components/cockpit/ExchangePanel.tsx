@@ -63,6 +63,11 @@ export function ExchangePanel({ board, inFlight, activity, onAction }: Props) {
   // the agent role). Drives the "Skús znova" retry vs answer/approve choice.
   const lastMessage = recent_messages[recent_messages.length - 1];
   const isErrorBlock = state?.status === "blocked" && lastMessage?.author === "system";
+  // Drives the "Schváliť návrh Koordinátora" button: only offer it when there is
+  // a Coordinator gate_report to apply (else the action would 400). CR-NS-018.
+  const hasCoordinatorReport = recent_messages.some(
+    (m) => m.author === "coordinator" && m.kind === "gate_report",
+  );
 
   return (
     <div className="flex h-full flex-col">
@@ -89,7 +94,13 @@ export function ExchangePanel({ board, inFlight, activity, onAction }: Props) {
       </div>
 
       <div className="flex-shrink-0 border-t border-slate-800 p-3">
-        <PipelineActionBar state={state} inFlight={inFlight} isErrorBlock={isErrorBlock} onAction={onAction} />
+        <PipelineActionBar
+          state={state}
+          inFlight={inFlight}
+          isErrorBlock={isErrorBlock}
+          hasCoordinatorReport={hasCoordinatorReport}
+          onAction={onAction}
+        />
       </div>
     </div>
   );
