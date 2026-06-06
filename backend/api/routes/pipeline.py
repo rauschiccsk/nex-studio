@@ -171,9 +171,15 @@ async def post_action(
         directive = orchestrator.dispatch_directive(
             db, version_id, payload.action, payload.payload or {}, state.current_stage
         )
-        # Gate E Branch B fix: the Designer edits first (Coordinator-relayed directive),
-        # then the round continues to the next question (F-007-gate-e §2).
-        pipeline_runner.schedule_dispatch(version_id, directive, designer_edit=(payload.action == "fix"))
+        # Gate E sub-flow (F-007-gate-e §2/§5): fix → Designer edits (Coordinator-relayed)
+        # then continues; ask/return @ gate_e → the Coordinator revises its recommendation.
+        gate_e_dispatch = None
+        if state.current_stage == "gate_e":
+            if payload.action == "fix":
+                gate_e_dispatch = "designer_edit"
+            elif payload.action in ("ask", "return"):
+                gate_e_dispatch = "coordinator_consult"
+        pipeline_runner.schedule_dispatch(version_id, directive, gate_e_dispatch=gate_e_dispatch)
 
     return _board(db, version_id)
 

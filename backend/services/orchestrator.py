@@ -445,17 +445,29 @@ def dispatch_directive(
             "Director schválil — pokračuj v previerke Gate E ďalším okruhom "
             "(alebo ďalšou otázkou). Ukonči <<<PIPELINE_STATUS>>> blokom (§7.2)."
         )
-    # Branch B fix: the edit instruction is Coordinator-relayed (Director never writes
-    # to the Designer directly, §2) — composed from the proposed fix + the Coordinator's
-    # recommendation. Delivered to the Designer, who edits NOW (designer_edit dispatch).
+    # Director ↔ Coordinator only (§2): ask / return @ gate_e are Coordinator-relayed —
+    # the Coordinator revises its recommendation (NOT a message to the Customer/Designer).
+    if action == "ask" and stage == "gate_e":
+        text = str(payload.get("text", "")).strip()
+        return (
+            f"Director konzultuje s Koordinátorom: {text}. Prepracuj svoje odporúčanie. "
+            "Ukonči <<<PIPELINE_STATUS>>> blokom (§7.2)."
+        )
+    if action == "return" and stage == "gate_e":
+        comment = str(payload.get("comment", "")).strip()
+        return (
+            f"Director vrátil (cez Koordinátora): {comment}. Prepracuj svoje odporúčanie. "
+            "Ukonči <<<PIPELINE_STATUS>>> blokom (§7.2)."
+        )
+    # Branch B fix: "Schváliť návrh Koordinátora" → the edit instruction is the Coordinator's
+    # LATEST (possibly consult-revised) recommendation — Coordinator-relayed to the Designer
+    # (§2). The Designer's stale ``proposed_fix`` is NOT mixed in (it can contradict a revised
+    # recommendation — e.g. proposed 6 cols, revised to 7).
     if action == "fix" and stage == "gate_e":
-        ans = _latest_designer_answer(db, version_id)
-        proposed = (ans.payload.get("proposed_fix") if ans and ans.payload else None) or "(návrh chýba)"
         recommendation = _latest_coordinator_message_content(db, version_id) or "(bez poznámky)"
         return (
-            "Koordinátor odovzdáva Directorom schválený pokyn na opravu. Uprav návrh podľa "
-            f"schváleného riešenia: {proposed}. Odporúčanie Koordinátora: {recommendation}. "
-            "Ukonči <<<PIPELINE_STATUS>>> blokom (§7.2)."
+            "Koordinátor odovzdáva Directorom schválené odporúčanie na zapracovanie: "
+            f"{recommendation}. Uprav návrh podľa neho. Ukonči <<<PIPELINE_STATUS>>> blokom (§7.2)."
         )
     return directive_for_action(action, payload, stage)
 
@@ -729,13 +741,15 @@ async def run_dispatch(
     on_event: Optional[claude_agent.EventCallback] = None,
     directive: Optional[str] = None,
     *,
-    designer_edit: bool = False,
+    gate_e_dispatch: Optional[str] = None,
 ) -> Optional[PipelineState]:
     """Run the working agent for a version and settle its status (background).
 
-    ``designer_edit`` (Gate E Branch B ``fix``): the directive is the Coordinator-
-    relayed edit instruction — the Designer edits first, then the round continues to
-    the next Customer question (F-007-gate-e §2).
+    ``gate_e_dispatch`` selects the Gate E sub-flow (F-007-gate-e §2/§5):
+    ``"designer_edit"`` (Branch B ``fix`` — Coordinator-relayed edit, Designer edits
+    then the round continues to the next Customer question), ``"coordinator_consult"``
+    (``ask`` / ``return`` @ gate_e — the Coordinator revises its recommendation; the
+    Director never addresses the Customer/Designer directly), or ``None``.
 
     Second half of the old ``_dispatch``: reloads the (already ``agent_working``)
     state, invokes the actor headless, and settles ``status`` to ``blocked`` or
@@ -764,7 +778,9 @@ async def run_dispatch(
     # Gate E (F-007-gate-e revised §2): per-question, Director-gated Customer↔Designer
     # exchange — one Q&A then STOP. Not a single generic agent turn.
     if stage == "gate_e":
-        return await _run_gate_e_round(db, state, on_event=on_event, directive=directive, designer_edit=designer_edit)
+        return await _run_gate_e_round(
+            db, state, on_event=on_event, directive=directive, gate_e_dispatch=gate_e_dispatch
+        )
 
     prompt = directive if directive is not None else _directive_for(stage)
     result = await invoke_agent_with_parse_retry(
@@ -843,25 +859,38 @@ async def _run_gate_e_round(
     *,
     on_event: Optional[claude_agent.EventCallback] = None,
     directive: Optional[str] = None,
-    designer_edit: bool = False,
+    gate_e_dispatch: Optional[str] = None,
 ) -> PipelineState:
-    """One Gate E per-question exchange (F-007-gate-e revised §2): Director-gated.
+    """One Gate E per-question exchange (F-007-gate-e revised §2/§5): Director-gated.
 
     Hub-and-spoke, **one question at a time** — never chains the next question without
-    the Director. Flow per re-dispatch:
+    the Director. Per re-dispatch (by ``gate_e_dispatch``):
 
-    * ``designer_edit`` (Branch B ``fix``): the Designer first edits per the
+    * ``"coordinator_consult"`` (``ask`` / ``return`` @ gate_e): invoke ONLY the
+      **Coordinator** with the Director's input → it revises its recommendation →
+      STOP (``awaiting_director``). The Director never addresses the worker directly.
+    * ``"designer_edit"`` (Branch B ``fix``): the Designer first edits per the
       Coordinator-relayed directive, then the round continues to the next question.
-    * One Customer turn: ``gate_report``+``topic_done`` → round boundary
-      (``awaiting_director``); a ``question`` → one Designer answer (no-edit:
-      explain / on a gap only PROPOSE) → if ``gap_found`` the Coordinator reviews the
-      proposal (Branch B upward leg) → **STOP** (``awaiting_director``).
+    * ``None``: one Customer turn — ``gate_report``+``topic_done`` → round boundary;
+      a ``question`` → one Designer answer (no-edit: explain / on a gap only PROPOSE)
+      → if ``gap_found`` the Coordinator reviews the proposal → STOP.
 
     Each turn is a ``pipeline_message`` (stage=gate_e, ``seq``-ordered). Only the first
     turn streams ``on_event``. Parse failure → ``blocked`` (never guess).
     """
     stream = on_event
-    if designer_edit:  # Branch B: the Designer applies the approved fix, then we continue
+    if gate_e_dispatch == "coordinator_consult":  # ask/return @ gate_e — Coordinator revises
+        revised = await invoke_agent_with_parse_retry(
+            db, version_id=state.version_id, role="coordinator", stage="gate_e", prompt=directive, on_event=stream
+        )
+        if isinstance(revised, ParseFailure):
+            return _block_failed(state, db, revised.reason)
+        state.status = "awaiting_director"
+        state.next_action = "Director: posúď prepracované odporúčanie Koordinátora (Schváliť návrh / Ponechať)."
+        db.flush()
+        return state
+
+    if gate_e_dispatch == "designer_edit":  # Branch B: the Designer applies the approved fix, then continue
         edit = await invoke_agent_with_parse_retry(
             db, version_id=state.version_id, role="designer", stage="gate_e", prompt=directive, on_event=stream
         )
@@ -1049,12 +1078,15 @@ async def apply_action(
         comment = payload.get("comment")
         if not comment or not str(comment).strip():
             raise OrchestratorError("return requires a non-empty payload.comment")
+        # Gate E (§2): Director ↔ Coordinator only — a return is Coordinator-relayed,
+        # never addressed to the Customer/Designer directly.
+        recipient = "coordinator" if state.current_stage == "gate_e" else state.current_actor
         _record_message(
             db,
             version_id=version_id,
             stage=state.current_stage,
             author="director",
-            recipient=state.current_actor,
+            recipient=recipient,
             kind="return",
             content=str(comment),
         )
@@ -1065,12 +1097,15 @@ async def apply_action(
         text = payload.get("text")
         if not text or not str(text).strip():
             raise OrchestratorError("ask requires a non-empty payload.text")
+        # Gate E (§2): "Konzultovať s Koordinátorom" — the Director's input (question or
+        # constatation) goes to the Coordinator, never to the Customer/Designer directly.
+        recipient = "coordinator" if state.current_stage == "gate_e" else state.current_actor
         _record_message(
             db,
             version_id=version_id,
             stage=state.current_stage,
             author="director",
-            recipient=state.current_actor,
+            recipient=recipient,
             kind="question",
             content=str(text),
         )

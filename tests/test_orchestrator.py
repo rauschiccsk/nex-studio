@@ -743,7 +743,10 @@ async def test_gate_e_fix_edits_then_next_question(db_session, monkeypatch):
     await orchestrator.apply_action(db_session, version_id=version.id, action="start")
     _to_gate_e(db_session, version)
     state = await orchestrator.run_dispatch(
-        db_session, version.id, directive="Koordinátor odovzdáva pokyn: uprav podľa návrhu", designer_edit=True
+        db_session,
+        version.id,
+        directive="Koordinátor odovzdáva pokyn: uprav podľa návrhu",
+        gate_e_dispatch="designer_edit",
     )
 
     assert state.status == "awaiting_director"
@@ -808,9 +811,10 @@ async def test_fix_with_gap_dispatches_and_composes_coordinator_relayed_directiv
     assert state.status == "agent_working"
     assert state.current_stage == "gate_e"
     directive = orchestrator.dispatch_directive(db_session, version.id, "fix", {}, "gate_e")
-    assert "Pridať tok reset hesla" in directive
+    # the directive carries the Coordinator's recommendation, NOT the raw Designer proposal
     assert "Odporúčam pridať" in directive
     assert "Koordinátor" in directive
+    assert "Pridať tok reset hesla" not in directive  # stale proposed_fix must not leak
 
 
 async def test_leave_with_gap_continues_without_edit(db_session, fake_claude):
@@ -832,6 +836,82 @@ async def test_fix_outside_gate_e_errors(db_session, fake_claude):
     _settle(db_session, version.id)  # kickoff, awaiting (past the status guard)
     with pytest.raises(orchestrator.OrchestratorError):
         await orchestrator.apply_action(db_session, version_id=version.id, action="fix")
+
+
+# ── Director ↔ Coordinator only: consult (ask) / return @ gate_e (§2) ───────────
+
+
+async def test_ask_at_gate_e_routes_to_coordinator(db_session, fake_claude):
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _at_gate_e_gap(db_session, version)
+    state = await orchestrator.apply_action(
+        db_session, version_id=version.id, action="ask", payload={"text": "Predvaha má 7 stĺpcov"}
+    )
+    assert state.status == "agent_working"
+    # the consult message is addressed to the Coordinator (never the Customer/Designer)
+    q = [m for m in _msgs(db_session, version.id) if m.kind == "question" and m.author == "director"][-1]
+    assert q.recipient == "coordinator"
+    directive = orchestrator.dispatch_directive(
+        db_session, version.id, "ask", {"text": "Predvaha má 7 stĺpcov"}, "gate_e"
+    )
+    assert "Predvaha má 7 stĺpcov" in directive
+    assert "Prepracuj svoje odporúčanie" in directive
+
+
+async def test_coordinator_consult_dispatch_revises_recommendation(db_session, monkeypatch):
+    """coordinator_consult dispatch invokes ONLY the Coordinator → revised recommendation
+    → awaiting_director (no Customer/Designer turn)."""
+    seq = SequenceClaude(
+        [_block(stage="gate_e", kind="gate_report", summary="prepracované: 7 stĺpcov", awaiting="director")]
+    )
+    monkeypatch.setattr(orchestrator, "invoke_claude", seq)
+    monkeypatch.setattr(orchestrator, "verify_mechanical", lambda slug, block: None)
+
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _to_gate_e(db_session, version)
+    state = await orchestrator.run_dispatch(
+        db_session, version.id, directive="Director konzultuje: 7 stĺpcov", gate_e_dispatch="coordinator_consult"
+    )
+    assert state.status == "awaiting_director"
+    assert len(seq.prompts) == 1  # only the Coordinator, no Customer/Designer
+    assert any(m.author == "coordinator" for m in _msgs(db_session, version.id))
+
+
+async def test_return_at_gate_e_routes_to_coordinator(db_session, fake_claude):
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _at_gate_e_gap(db_session, version)
+    await orchestrator.apply_action(
+        db_session, version_id=version.id, action="return", payload={"comment": "Zváž ešte raz"}
+    )
+    ret = [m for m in _msgs(db_session, version.id) if m.kind == "return" and m.author == "director"][-1]
+    assert ret.recipient == "coordinator"  # via the Coordinator, never the worker directly
+
+
+async def test_fix_after_consult_delivers_revised_recommendation_not_stale_proposal(db_session, fake_claude):
+    """The refinement: after a consult, approval must hand the Designer the Coordinator's
+    REVISED recommendation (7), never the stale Designer proposed_fix (6)."""
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _at_gate_e_gap(db_session, version, proposed_fix="predvaha má 6 stĺpcov")
+    # initial coordinator recommendation, then a consult-revised one (the latest by seq)
+    for content in ("Odporúčam 6 stĺpcov", "Po konzultácii: predvaha má 7 stĺpcov"):
+        db_session.add(
+            PipelineMessage(
+                version_id=version.id,
+                stage="gate_e",
+                author="coordinator",
+                recipient="director",
+                kind="gate_report",
+                content=content,
+            )
+        )
+        db_session.flush()
+    directive = orchestrator.dispatch_directive(db_session, version.id, "fix", {}, "gate_e")
+    assert "7 stĺpcov" in directive  # the revised recommendation
+    assert "6 stĺpcov" not in directive  # neither the stale proposal nor the stale recommendation
 
 
 # ── symmetric relay: Designer answer/outcome carried back to the Customer (§5) ──

@@ -202,13 +202,13 @@ export function PipelineActionBar({
 
       {gateEQuestion && gateEGap && (
         <>
-          <ActionRow hint="Schválený návrh sa pošle cez Koordinátora Návrhárovi → opraví → ďalšia otázka.">
+          <ActionRow hint="Odporúčanie Koordinátora sa pošle cez neho Návrhárovi → opraví → ďalšia otázka.">
             <button
               onClick={() => onAction("fix")}
               disabled={inFlight}
               className={`${btn} bg-emerald-600 text-white hover:bg-emerald-500`}
             >
-              Opraviť
+              Schváliť návrh Koordinátora
             </button>
           </ActionRow>
           <ActionRow hint="Medzera sa ponechá bez úpravy (podľa odporúčania Koordinátora) → ďalšia otázka.">
@@ -363,13 +363,29 @@ export function PipelineActionBar({
       )}
 
       {!isDone && (
-        <ActionRow hint="Spýtaš sa, pipeline počká.">
+        // At gate_e the Director communicates only with the Coordinator (§2): the
+        // input (a question OR a constatation) goes to the Coordinator, who revises
+        // its recommendation. Elsewhere it stays the plain "Otázka" (its reroute is a
+        // separate CR) — no lying button.
+        <ActionRow
+          hint={
+            gateE
+              ? "Otázka alebo konštatovanie → ide Koordinátorovi, ktorý prepracuje odporúčanie."
+              : "Spýtaš sa, pipeline počká."
+          }
+        >
           <button
-            onClick={() => openComposer({ action: "ask", label: "Položiť otázku", field: "text" })}
+            onClick={() =>
+              openComposer({
+                action: "ask",
+                label: gateE ? "Konzultovať s Koordinátorom" : "Položiť otázku",
+                field: "text",
+              })
+            }
             disabled={inFlight}
             className={`${btn} border border-slate-700 text-slate-300 hover:bg-slate-800`}
           >
-            Otázka
+            {gateE ? "Konzultovať s Koordinátorom" : "Otázka"}
           </button>
         </ActionRow>
       )}

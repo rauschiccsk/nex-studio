@@ -147,24 +147,30 @@ describe("PipelineActionBar — Gate E per-question (revised §2)", () => {
     />
   );
 
-  it("Branch A (no gap) shows Schváliť odpoveď → approve, no Opraviť/Ponechať", () => {
+  it("Branch A (no gap) shows Schváliť odpoveď → approve, no Branch-B buttons", () => {
     const onAction = vi.fn();
     render(gateE({ gateEMode: "question", onAction }));
     const approve = screen.getByText("Schváliť odpoveď");
-    expect(screen.queryByText("Opraviť")).not.toBeInTheDocument();
+    expect(screen.queryByText(COORD)).not.toBeInTheDocument();
     expect(screen.queryByText("Ponechať")).not.toBeInTheDocument();
     approve.click();
     expect(onAction).toHaveBeenCalledWith("approve");
   });
 
-  it("Branch B (gap) shows Opraviť (fix) / Ponechať (leave)", () => {
+  it("Branch B (gap) shows Schváliť návrh Koordinátora (fix) / Ponechať (leave)", () => {
     const onAction = vi.fn();
     render(gateE({ gateEMode: "question", gateEGap: true, onAction }));
     expect(screen.queryByText("Schváliť odpoveď")).not.toBeInTheDocument();
-    screen.getByText("Opraviť").click();
+    screen.getByText(COORD).click(); // "Schváliť návrh Koordinátora" → fix
     expect(onAction).toHaveBeenCalledWith("fix");
     screen.getByText("Ponechať").click();
     expect(onAction).toHaveBeenCalledWith("leave");
+  });
+
+  it("the consult button at gate_e reads 'Konzultovať s Koordinátorom' (not 'Otázka')", () => {
+    render(gateE({ gateEMode: "question" }));
+    expect(screen.getByText("Konzultovať s Koordinátorom")).toBeInTheDocument();
+    expect(screen.queryByText("Otázka")).not.toBeInTheDocument();
   });
 
   it("per-question stop shows no topic-boundary buttons", () => {
