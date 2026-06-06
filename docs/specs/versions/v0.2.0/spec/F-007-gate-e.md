@@ -125,6 +125,17 @@ moduly, obrazovky, chyby (NIB-XXX), edge-cases, integrácie.
   reťaze Z→N→K→D: Zákazníkova otázka → `recipient="designer"`, Návrhárova
   odpoveď/gate_report → `recipient="coordinator"`, Koordinátorov report →
   `recipient="director"`. Board zobrazí pravdivú reťaz (FE číta uložený recipient).
+- **Open-finding gate = deterministický, nie self-report Zákazníka:** dnes
+  `_gate_e_open_findings` číta `findings` pole z poslednej Zákazníkovej gate_report
+  (orchestrator ~1341; FE `ExchangePanel` z `lastCustomerReport.payload.findings`) —
+  **krehké**: Zákazník raz dal do `findings` *vyriešený súhrn* (6 položiek) namiesto
+  prázdneho → falošne zablokoval uzavretie. Oprav: open-findings počítaj
+  **deterministicky z orchestrátorovho záznamu** — medzera = Návrhárova odpoveď s
+  `gap_found=true`; vyriešená = Directorovo `fix`/`leave` rozhodnutie; **open = počet
+  medzier − počet rozhodnutí** (nevyriešené). Brána (server guard aj FE počet) berie
+  túto deterministickú hodnotu, NIE Zákazníkove `findings` pole (to ostáva len
+  informatívny audit súhrn). Tým je `coverage_complete` uzáver dôveryhodný bez ohľadu
+  na to, ako Zákazník naformuluje súhrn.
 - **Inkrementálny broadcast správ (nie dávkovo na konci):** dnes `pipeline_runner._run`
   spustí celé kolo, potom **naraz na konci** committne + broadcastne všetky správy
   (`_broadcast_new_messages`). Director tak vidí agentov „pracovať" (activity feed), ale
