@@ -79,6 +79,14 @@ moduly, obrazovky, chyby (NIB-XXX), edge-cases, integrácie.
   otázku bez schválenia Directora. Reuse `invoke_agent_with_parse_retry`,
   `dispatch_directive`, `_coordinator_relay`. Customer a Designer = samostatné
   claude sessiony (orchestrator_session per (project, role)).
+- **Relay OBOMA smermi (symetricky) — POVINNÉ:** orchestrátor relayuje otázku
+  Zákazníka **dole** Návrhárovi **aj odpoveď Návrhára späť hore** Zákazníkovi. Keď
+  slučka po Návrhárovej odpovedi pokračuje (Director schválil), continue-directive
+  Zákazníkovi **musí obsahovať Návrhárovu odpoveď / výsledok** — vetva A (odpoveď),
+  vetva B `fix` (čo sa opravilo), vetva B `leave` (rozhodnutie ponechať). Inak
+  Zákazník (samostatná session) odpoveď „nedostane", zopakuje tú istú otázku a
+  zapíše **falošný otvorený nález** (ktorý blokuje uzavretie Gate E). Reuse
+  `_latest_designer_answer`.
 - **Návrhár v Gate E needituje spec.** Dispatch Návrhárovi v `gate_e` ho
   inštruuje: „odpovedz / pri medzere LEN navrhni — NEUPRAVUJ žiadny súbor". Edit
   povolí až Directorom schválený pokyn `fix` (vetva B), ktorý príde ako directive
