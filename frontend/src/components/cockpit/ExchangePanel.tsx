@@ -75,9 +75,9 @@ export function ExchangePanel({ board, inFlight, activity, onAction }: Props) {
     .reverse()
     .find((m) => m.author === "customer" && m.stage === "gate_e" && m.kind === "gate_report");
   const gateECoverageComplete = lastCustomerReport?.payload?.coverage_complete === true;
-  const gateEOpenFindings = Array.isArray(lastCustomerReport?.payload?.findings)
-    ? (lastCustomerReport.payload.findings as string[]).length
-    : 0;
+  // Deterministic open-finding count from the board (CR-NS-018 §5) — NOT the Customer's
+  // self-reported findings array (which an imprecise summary could wrongly inflate).
+  const gateEOpenFindings = board.gate_e_open_findings ?? 0;
   // Per-question stop vs topic boundary (revised §2): the latest gate_e milestone is
   // either a Designer answer (per-question — Branch A/B) or a Customer gate_report
   // (topic boundary). gap_found on that answer → Branch B (Opraviť/Ponechať).

@@ -1001,14 +1001,29 @@ async def test_persistent_transient_stays_bounded_through_parse_retry(db_session
 # ── Gate E boundary actions + coverage/end (F-007-gate-e §3/§4, CR-NS-018 Phase 3) ─
 
 
-def _at_gate_e_boundary(db_session, version, *, coverage_complete=False, findings=None):
-    """Settle at a gate_e boundary (awaiting_director) with a Customer gate_report
-    carrying the boundary signals in its payload."""
+def _at_gate_e_boundary(db_session, version, *, coverage_complete=False, findings=None, open_gaps=0):
+    """Settle at a gate_e boundary (awaiting_director) with a Customer gate_report.
+
+    ``open_gaps`` seeds N UNRESOLVED Designer gaps (gap_found, no fix/leave) — the
+    deterministic open-finding source (§5). ``findings`` is the Customer's self-report
+    array, now informational only — the gate must ignore it."""
     state = orchestrator._get_state(db_session, version.id)
     state.current_stage = "gate_e"
     state.current_actor = "customer"
     state.status = "awaiting_director"
     db_session.flush()
+    for i in range(open_gaps):
+        db_session.add(
+            PipelineMessage(
+                version_id=version.id,
+                stage="gate_e",
+                author="designer",
+                recipient="coordinator",
+                kind="answer",
+                content=f"gap{i}",
+                payload={"gap_found": True},
+            )
+        )
     db_session.add(
         PipelineMessage(
             version_id=version.id,
@@ -1071,10 +1086,22 @@ async def test_gate_e_final_approve_advances_to_build(db_session, fake_claude):
     assert any(m.author == "system" and "Gate E audit" in m.content for m in _msgs(db_session, version.id))
 
 
+async def test_gate_e_final_approve_not_blocked_by_customer_findings_array(db_session, fake_claude):
+    """The exact bug (§5): the Customer's findings array is non-empty (a resolved summary)
+    but there are NO unresolved deterministic gaps → the close must NOT be blocked."""
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _at_gate_e_boundary(
+        db_session, version, coverage_complete=True, findings=["a", "b", "c", "d", "e", "f"], open_gaps=0
+    )
+    state = await orchestrator.apply_action(db_session, version_id=version.id, action="approve")
+    assert state.current_stage == "build"  # deterministic open == 0 wins over the array
+
+
 async def test_gate_e_final_approve_blocked_by_open_findings(db_session, fake_claude):
     version, _ = _make_version(db_session)
     await orchestrator.apply_action(db_session, version_id=version.id, action="start")
-    _at_gate_e_boundary(db_session, version, coverage_complete=True, findings=["nález X"])
+    _at_gate_e_boundary(db_session, version, coverage_complete=True, open_gaps=1)  # a real unresolved gap
     with pytest.raises(orchestrator.OrchestratorError):
         await orchestrator.apply_action(db_session, version_id=version.id, action="approve")
 
@@ -1091,7 +1118,7 @@ async def test_end_gate_e_advances_when_no_open_findings(db_session, fake_claude
 async def test_end_gate_e_blocked_by_open_findings(db_session, fake_claude):
     version, _ = _make_version(db_session)
     await orchestrator.apply_action(db_session, version_id=version.id, action="start")
-    _at_gate_e_boundary(db_session, version, coverage_complete=False, findings=["nález"])
+    _at_gate_e_boundary(db_session, version, coverage_complete=False, open_gaps=1)  # a real unresolved gap
     with pytest.raises(orchestrator.OrchestratorError):
         await orchestrator.apply_action(db_session, version_id=version.id, action="end_gate_e")
 
@@ -1102,6 +1129,132 @@ async def test_end_gate_e_outside_gate_e_errors(db_session, fake_claude):
     _settle(db_session, version.id)  # kickoff, awaiting (past the status guard)
     with pytest.raises(orchestrator.OrchestratorError):
         await orchestrator.apply_action(db_session, version_id=version.id, action="end_gate_e")
+
+
+# ── deterministic open-finding count (§5: orchestrator record, not self-report) ─
+
+
+def _director_resolution(db_session, version):
+    db_session.add(
+        PipelineMessage(
+            version_id=version.id,
+            stage="gate_e",
+            author="director",
+            recipient="coordinator",
+            kind="approval",
+            content="rozhodnuté",
+            payload={"resolves_gap": True},
+        )
+    )
+    db_session.flush()
+
+
+def test_open_findings_counts_raised_minus_resolved(db_session):
+    version, _ = _make_version(db_session)
+    assert orchestrator._gate_e_open_findings(db_session, version.id) == 0
+    _seed_gate_e_designer_answer(db_session, version, "medzera 1", gap_found=True)
+    assert orchestrator._gate_e_open_findings(db_session, version.id) == 1
+    _director_resolution(db_session, version)  # a fix/leave decision
+    assert orchestrator._gate_e_open_findings(db_session, version.id) == 0
+
+
+def test_open_findings_ignores_customer_findings_array(db_session):
+    version, _ = _make_version(db_session)
+    # no deterministic gaps, but the Customer's gate_report findings array is non-empty
+    db_session.add(
+        PipelineMessage(
+            version_id=version.id,
+            stage="gate_e",
+            author="customer",
+            recipient="director",
+            kind="gate_report",
+            content="súhrn",
+            payload={"coverage_complete": True, "findings": ["a", "b", "c", "d", "e", "f"]},
+        )
+    )
+    db_session.flush()
+    assert orchestrator._gate_e_open_findings(db_session, version.id) == 0  # the array is ignored
+
+
+def test_open_findings_consult_does_not_change_count(db_session):
+    version, _ = _make_version(db_session)
+    _seed_gate_e_designer_answer(db_session, version, "medzera", gap_found=True)  # open = 1
+    # a consult: a Director question (no resolves_gap) + a Coordinator gate_report (no gap_found)
+    db_session.add(
+        PipelineMessage(
+            version_id=version.id,
+            stage="gate_e",
+            author="director",
+            recipient="coordinator",
+            kind="question",
+            content="konzultácia",
+        )
+    )
+    db_session.add(
+        PipelineMessage(
+            version_id=version.id,
+            stage="gate_e",
+            author="coordinator",
+            recipient="director",
+            kind="gate_report",
+            content="prepracované odporúčanie",
+        )
+    )
+    db_session.flush()
+    assert orchestrator._gate_e_open_findings(db_session, version.id) == 1  # unchanged by the consult
+
+
+def test_open_findings_edit_turn_never_reraises(db_session):
+    """A fix EDIT turn (is_fix_edit) must NEVER raise a gap, even if its status block
+    erroneously carries gap_found — it executes an approved fix, not a review (§5)."""
+    version, _ = _make_version(db_session)
+    _seed_gate_e_designer_answer(db_session, version, "medzera", gap_found=True)  # raised 1
+    _director_resolution(db_session, version)  # resolved 1 → 0
+    db_session.add(  # the edit turn (is_fix_edit) wrongly sets gap_found — must be ignored
+        PipelineMessage(
+            version_id=version.id,
+            stage="gate_e",
+            author="designer",
+            recipient="coordinator",
+            kind="answer",
+            content="opravené",
+            payload={"gap_found": True, "is_fix_edit": True},
+        )
+    )
+    db_session.flush()
+    assert orchestrator._gate_e_open_findings(db_session, version.id) == 0  # edit turn never re-raises
+
+
+async def test_gate_e_fix_edit_message_is_tagged_is_fix_edit(db_session, monkeypatch):
+    """The designer_edit dispatch tags its recorded message ``is_fix_edit`` so the
+    deterministic count can exclude it (guards the double-count blocker)."""
+    seq = SequenceClaude(
+        [
+            _block(
+                stage="gate_e", kind="answer", summary="opravené", awaiting="none", gap_found=True
+            ),  # edit (misbehaving)
+            _block(stage="gate_e", kind="question", summary="?", question="ďalšia?"),  # next customer Q
+            _block(stage="gate_e", kind="answer", summary="pokryté", awaiting="none"),  # designer answer
+        ]
+    )
+    monkeypatch.setattr(orchestrator, "invoke_claude", seq)
+    monkeypatch.setattr(orchestrator, "verify_mechanical", lambda slug, block: None)
+
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _to_gate_e(db_session, version)
+    await orchestrator.run_dispatch(
+        db_session, version.id, directive="uprav podľa odporúčania", gate_e_dispatch="designer_edit"
+    )
+
+    edits = [
+        m
+        for m in _msgs(db_session, version.id)
+        if m.author == "designer" and m.payload and m.payload.get("is_fix_edit")
+    ]
+    assert len(edits) == 1  # the edit turn is tagged
+    # even though the edit's block had gap_found=true, it does not raise a gap
+    assert orchestrator._gate_e_open_findings(db_session, version.id) == 0
 
 
 def _gm(author, kind, content, **payload):

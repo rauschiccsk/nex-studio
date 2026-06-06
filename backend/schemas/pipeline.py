@@ -56,6 +56,9 @@ class PipelineBoardRead(BaseModel):
 
     state: Optional[PipelineStateRead] = None
     recent_messages: list[PipelineMessageRead] = Field(default_factory=list)
+    #: Deterministic count of unresolved Gate E gaps (CR-NS-018 §5) — the authoritative
+    #: open-finding value the FE close-gate reads, NOT the Customer's ``findings`` array.
+    gate_e_open_findings: int = 0
 
 
 class PipelineActionRequest(BaseModel):

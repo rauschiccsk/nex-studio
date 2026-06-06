@@ -261,16 +261,37 @@ def _latest_customer_gate_report(db: Session, version_id: uuid.UUID) -> Optional
     ).scalar_one_or_none()
 
 
-def _gate_e_open_findings(report: Optional[PipelineMessage]) -> list[str]:
-    """Open (unresolved) findings at the latest Gate E boundary — empty = clean.
+def _gate_e_open_findings(db: Session, version_id: uuid.UUID) -> int:
+    """Count of unresolved Gate E gaps — DETERMINISTIC from the orchestrator's own log,
+    NOT the Customer's self-reported ``findings`` array (F-007-gate-e §5).
 
-    Contract (F-007-gate-e §4): at a boundary the Customer's ``findings`` list = the
-    findings that remain UNRESOLVED (Designer-explained/fixed or Director-decided
-    ones are dropped). A non-empty list blocks closing Gate E (final or early-end).
-    """
-    if report is None or not report.payload:
-        return []
-    return list(report.payload.get("findings") or [])
+    A gap is RAISED by a Designer answer with ``payload.gap_found`` and RESOLVED by a
+    Director ``fix`` / ``leave`` decision (tagged ``payload.resolves_gap``). open =
+    ``max(0, raised − resolved)``. Consults (Coordinator revise) set neither marker, so
+    they never perturb the count; content strings are never matched. A non-zero count
+    blocks closing Gate E (final approve or early-end) — the gate no longer depends on
+    how the Customer phrases its summary."""
+    rows = (
+        db.execute(
+            select(PipelineMessage).where(PipelineMessage.version_id == version_id, PipelineMessage.stage == "gate_e")
+        )
+        .scalars()
+        .all()
+    )
+    # A gap is raised only by a Designer's REVIEW answer (Q&A loop) — never by the fix
+    # EDIT turn (``is_fix_edit``), which merely applies an approved fix. This makes the
+    # count robust even if the edit turn's status block erroneously carries gap_found (§5).
+    raised = sum(
+        1
+        for m in rows
+        if m.author == "designer"
+        and m.kind == "answer"
+        and m.payload
+        and m.payload.get("gap_found")
+        and not m.payload.get("is_fix_edit")
+    )
+    resolved = sum(1 for m in rows if m.author == "director" and m.payload and m.payload.get("resolves_gap"))
+    return max(0, raised - resolved)
 
 
 def _gate_e_coverage_complete(report: Optional[PipelineMessage]) -> bool:
@@ -473,7 +494,8 @@ def dispatch_directive(
         recommendation = _latest_coordinator_message_content(db, version_id) or "(bez poznámky)"
         return (
             "Koordinátor odovzdáva Directorom schválené odporúčanie na zapracovanie: "
-            f"{recommendation}. Uprav návrh podľa neho. Ukonči <<<PIPELINE_STATUS>>> blokom (§7.2)."
+            f"{recommendation}. Uprav návrh podľa neho. Toto je vykonanie schválenej opravy — "
+            "NEhodnoť nové medzery (gap_found nech ostane false). Ukonči <<<PIPELINE_STATUS>>> blokom (§7.2)."
         )
     return directive_for_action(action, payload, stage)
 
@@ -494,6 +516,7 @@ async def invoke_agent(
     on_event: Optional[claude_agent.EventCallback] = None,
     recipient: str = "director",
     on_message: Optional[MessageCallback] = None,
+    extra_payload: Optional[dict[str, Any]] = None,
 ) -> PipelineStatusBlock | ParseFailure:
     """Drive one agent turn headless and record its message.
 
@@ -599,6 +622,9 @@ async def invoke_agent(
             "findings": parsed.findings,
             "gap_found": parsed.gap_found,
             "proposed_fix": parsed.proposed_fix,
+            # Caller-supplied structural markers (e.g. is_fix_edit) for the deterministic
+            # open-finding count — orchestrator record, not agent self-report (§5).
+            **(extra_payload or {}),
         },
     )
     if on_message is not None:  # incremental broadcast (CR-NS-018) — stream this turn now
@@ -616,6 +642,7 @@ async def invoke_agent_with_parse_retry(
     on_event: Optional[claude_agent.EventCallback] = None,
     recipient: str = "director",
     on_message: Optional[MessageCallback] = None,
+    extra_payload: Optional[dict[str, Any]] = None,
 ) -> PipelineStatusBlock | ParseFailure:
     """Invoke the actor; on a status-block ``ParseFailure``, re-invoke (bounded).
 
@@ -640,6 +667,7 @@ async def invoke_agent_with_parse_retry(
         on_event=on_event,
         recipient=recipient,
         on_message=on_message,
+        extra_payload=extra_payload,
     )
     attempts = 0
     while isinstance(result, ParseFailure) and attempts < _PARSE_RETRIES:
@@ -655,6 +683,7 @@ async def invoke_agent_with_parse_retry(
             ),
             recipient=recipient,
             on_message=on_message,
+            extra_payload=extra_payload,
         )
     return result
 
@@ -982,6 +1011,9 @@ async def _run_gate_e_round(
             on_event=on_event,
             recipient="coordinator",
             on_message=on_message,
+            # Mark the edit turn so it can NEVER raise a gap in the deterministic count
+            # (§5): it executes an approved fix; new gaps come only via the Q&A loop.
+            extra_payload={"is_fix_edit": True},
         )
         if isinstance(edit, ParseFailure):
             return _block_failed(state, db, edit.reason)
@@ -1163,8 +1195,7 @@ async def apply_action(
         if state.current_stage == "gate_e":
             report = _latest_customer_gate_report(db, version_id)
             if _gate_e_coverage_complete(report):
-                open_findings = _gate_e_open_findings(report)
-                if open_findings:
+                if _gate_e_open_findings(db, version_id) > 0:
                     raise OrchestratorError("Otvorené nálezy blokujú uzavretie Gate E — najprv ich vyrieš")
                 _write_gate_e_audit(db, version_id)  # §4 audit record before closing
                 state.current_stage = _next_stage("gate_e")  # → build
@@ -1280,6 +1311,7 @@ async def apply_action(
             recipient="coordinator",
             kind="approval",
             content=content,
+            payload={"resolves_gap": True},  # deterministic open-finding gate marker (§5)
         )
         _begin_dispatch(db, state)
         return state
@@ -1337,8 +1369,7 @@ async def apply_action(
         # still blocks closing — no unresolved finding may pass to Build.
         if state.current_stage != "gate_e":
             raise OrchestratorError("end_gate_e je platné len vo fáze Gate E")
-        open_findings = _gate_e_open_findings(_latest_customer_gate_report(db, version_id))
-        if open_findings:
+        if _gate_e_open_findings(db, version_id) > 0:
             raise OrchestratorError("Otvorené nálezy blokujú uzavretie Gate E — najprv ich vyrieš")
         _record_message(
             db,

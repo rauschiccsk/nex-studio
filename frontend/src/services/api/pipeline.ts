@@ -79,6 +79,9 @@ export interface PipelineMessage {
 export interface PipelineBoard {
   state: PipelineState | null;
   recent_messages: PipelineMessage[];
+  // Deterministic unresolved Gate E gap count (CR-NS-018 §5) — the close-gate value,
+  // not the Customer's self-reported findings array.
+  gate_e_open_findings?: number;
 }
 
 // ── action requests ──────────────────────────────────────────────────────────

@@ -363,3 +363,36 @@ def test_debug_terminal_no_orchestrator_session_404(client, db_session):
 def test_debug_terminal_unknown_version_404(client):
     r = client.post(f"/api/v1/pipeline/{uuid.uuid4()}/debug-terminal?role=implementer")
     assert r.status_code == 404
+
+
+def test_board_exposes_deterministic_gate_e_open_findings(client, db_session):
+    """The board carries the deterministic open-finding count (CR-NS-018 §5), not the
+    Customer's self-reported findings array — so the FE close-gate reads it from here."""
+    version = _make_version(db_session, client._ri)
+    client.post(f"/api/v1/pipeline/{version.id}/action", json={"action": "start"})
+    # one unresolved Designer gap + a Customer report whose findings array is (wrongly) full
+    db_session.add(
+        PipelineMessage(
+            version_id=version.id,
+            stage="gate_e",
+            author="designer",
+            recipient="coordinator",
+            kind="answer",
+            content="medzera",
+            payload={"gap_found": True},
+        )
+    )
+    db_session.add(
+        PipelineMessage(
+            version_id=version.id,
+            stage="gate_e",
+            author="customer",
+            recipient="director",
+            kind="gate_report",
+            content="súhrn",
+            payload={"coverage_complete": True, "findings": ["a", "b", "c"]},
+        )
+    )
+    db_session.flush()
+    body = client.get(f"/api/v1/pipeline/{version.id}").json()
+    assert body["gate_e_open_findings"] == 1  # deterministic (1 raised, 0 resolved), not 3 from the array
