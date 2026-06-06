@@ -62,6 +62,7 @@ describe("cockpit Slovak labels", () => {
       status: "delivered",
       payload: null,
       created_at: "2026-06-04T00:00:00Z",
+      seq: 1,
     };
     render(<PipelineMessageBubble message={msg} />);
     expect(screen.getByText("Návrhár")).toBeInTheDocument();
@@ -106,6 +107,7 @@ describe("deriveActiveAgent (real active agent, not current_actor)", () => {
     status: "delivered",
     payload: null,
     created_at: "2026-06-06T00:00:00Z",
+    seq: 1,
   });
 
   it("while working = the latest activity frame's role (not the stage actor)", () => {

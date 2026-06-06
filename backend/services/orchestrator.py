@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, Optional
 
@@ -35,6 +36,11 @@ from backend.services.claude_agent import ClaudeAgentError, invoke_claude
 from backend.services.pipeline_status import ParseFailure, PipelineStatusBlock, parse_status_block
 
 logger = logging.getLogger(__name__)
+
+#: Per-message hook for incremental broadcast (CR-NS-018): the orchestrator calls it
+#: right after recording a dispatch-path message; the runner commits + broadcasts that
+#: one message (the engine stays WS-free). Defined here so ``claude_agent`` stays model-free.
+MessageCallback = Callable[[PipelineMessage], Awaitable[None]]
 
 # Ordered stages and the agent responsible for each (F-007 §3.1).
 STAGE_ORDER: tuple[str, ...] = (
@@ -487,6 +493,7 @@ async def invoke_agent(
     timeout: Optional[int] = None,
     on_event: Optional[claude_agent.EventCallback] = None,
     recipient: str = "director",
+    on_message: Optional[MessageCallback] = None,
 ) -> PipelineStatusBlock | ParseFailure:
     """Drive one agent turn headless and record its message.
 
@@ -530,7 +537,7 @@ async def invoke_agent(
             on_event=tagged_on_event,
         )
     except ClaudeAgentError as exc:
-        _record_message(
+        msg = _record_message(
             db,
             version_id=version_id,
             stage=stage,
@@ -540,11 +547,13 @@ async def invoke_agent(
             content=f"Agent '{role}' invocation failed: {exc}",
             payload={"error": str(exc)},
         )
+        if on_message is not None:
+            await on_message(msg)
         return ParseFailure(f"claude invocation failed: {exc}")
 
     parsed = parse_status_block(stdout)
     if isinstance(parsed, ParseFailure):
-        _record_message(
+        msg = _record_message(
             db,
             version_id=version_id,
             stage=stage,
@@ -554,6 +563,8 @@ async def invoke_agent(
             content=f"Status block parse failed for '{role}': {parsed.reason}",
             payload={"parse_error": parsed.reason},
         )
+        if on_message is not None:
+            await on_message(msg)
         return parsed
 
     # Map the agent block.kind → message kind (question/blocked → question).
@@ -566,7 +577,7 @@ async def invoke_agent(
         "notification",
     ):
         msg_kind = "gate_report"
-    _record_message(
+    msg = _record_message(
         db,
         version_id=version_id,
         stage=stage,
@@ -590,6 +601,8 @@ async def invoke_agent(
             "proposed_fix": parsed.proposed_fix,
         },
     )
+    if on_message is not None:  # incremental broadcast (CR-NS-018) — stream this turn now
+        await on_message(msg)
     return parsed
 
 
@@ -602,6 +615,7 @@ async def invoke_agent_with_parse_retry(
     prompt: str,
     on_event: Optional[claude_agent.EventCallback] = None,
     recipient: str = "director",
+    on_message: Optional[MessageCallback] = None,
 ) -> PipelineStatusBlock | ParseFailure:
     """Invoke the actor; on a status-block ``ParseFailure``, re-invoke (bounded).
 
@@ -618,7 +632,14 @@ async def invoke_agent_with_parse_retry(
     ``on_event``; the cheap re-emit retries don't stream.
     """
     result = await invoke_agent(
-        db, version_id=version_id, role=role, stage=stage, prompt=prompt, on_event=on_event, recipient=recipient
+        db,
+        version_id=version_id,
+        role=role,
+        stage=stage,
+        prompt=prompt,
+        on_event=on_event,
+        recipient=recipient,
+        on_message=on_message,
     )
     attempts = 0
     while isinstance(result, ParseFailure) and attempts < _PARSE_RETRIES:
@@ -633,6 +654,7 @@ async def invoke_agent_with_parse_retry(
                 "Pošli LEN opravený, platný <<<PIPELINE_STATUS>>> blok — rovnaký obsah, správny JSON."
             ),
             recipient=recipient,
+            on_message=on_message,
         )
     return result
 
@@ -673,12 +695,18 @@ def _commit_exists(project_root: Path, commit_hash: str) -> bool:
         return False
 
 
-async def verify_done(db: Session, version_id: uuid.UUID, block: PipelineStatusBlock) -> Optional[str]:
+async def verify_done(
+    db: Session,
+    version_id: uuid.UUID,
+    block: PipelineStatusBlock,
+    on_message: Optional[MessageCallback] = None,
+) -> Optional[str]:
     """Verify a gate_report before awaiting the Director. Reason on FAIL, else None.
 
     Mechanical checks first (deterministic); then a judgment check by invoking
     the coordinator agent. The coordinator's block must report ``kind != blocked``
-    and ``awaiting='director'`` to count as a PASS.
+    and ``awaiting='director'`` to count as a PASS. The Coordinator's judgment is a
+    real dispatch-path message → ``on_message`` streams it live (CR-NS-018).
     """
     slug = _project_slug_for_version(db, version_id)
     mech = verify_mechanical(slug, block)
@@ -694,6 +722,7 @@ async def verify_done(db: Session, version_id: uuid.UUID, block: PipelineStatusB
             f"Verifikuj DONE report fázy '{block.stage}': spec compliance + žiadny "
             "claim bez authoritative source (P-2). Ukonči <<<PIPELINE_STATUS>>> blokom (§7.2)."
         ),
+        on_message=on_message,
     )
     if isinstance(judgment, ParseFailure):
         return f"coordinator verify unparseable: {judgment.reason}"
@@ -702,7 +731,12 @@ async def verify_done(db: Session, version_id: uuid.UUID, block: PipelineStatusB
     return None
 
 
-async def _coordinator_relay(db: Session, state: PipelineState, worker_block: PipelineStatusBlock) -> Optional[str]:
+async def _coordinator_relay(
+    db: Session,
+    state: PipelineState,
+    worker_block: PipelineStatusBlock,
+    on_message: Optional[MessageCallback] = None,
+) -> Optional[str]:
     """Coordinator review of a worker's question/blocked turn → a relay for the Director.
 
     Hub-and-spoke (CR-NS-018): no worker output reaches the Director unreviewed.
@@ -727,6 +761,7 @@ async def _coordinator_relay(db: Session, state: PipelineState, worker_block: Pi
             "Over jeho doterajšiu prácu (deliverables/commits) a posúď otázku; priprav pre Directora "
             "relay — čo treba rozhodnúť. Ukonči <<<PIPELINE_STATUS>>> blokom (§7.2)."
         ),
+        on_message=on_message,
     )
     if isinstance(relay, ParseFailure):
         return None
@@ -763,8 +798,15 @@ async def run_dispatch(
     directive: Optional[str] = None,
     *,
     gate_e_dispatch: Optional[str] = None,
+    on_message: Optional[MessageCallback] = None,
 ) -> Optional[PipelineState]:
     """Run the working agent for a version and settle its status (background).
+
+    ``on_message`` (CR-NS-018) is the incremental-broadcast hook: it fires right after
+    each dispatch-path message is recorded so the runner commits + streams it live,
+    instead of batching at round end. Threaded into EVERY message-recording invoke site
+    reachable from here (the worker turn, the Coordinator relay, the verify judgment +
+    retries) — the end-of-run batch is dropped, so a missed thread = a lost message.
 
     ``gate_e_dispatch`` selects the Gate E sub-flow (F-007-gate-e §2/§5):
     ``"designer_edit"`` (Branch B ``fix`` — Coordinator-relayed edit, Designer edits
@@ -800,12 +842,18 @@ async def run_dispatch(
     # exchange — one Q&A then STOP. Not a single generic agent turn.
     if stage == "gate_e":
         return await _run_gate_e_round(
-            db, state, on_event=on_event, directive=directive, gate_e_dispatch=gate_e_dispatch
+            db, state, on_event=on_event, directive=directive, gate_e_dispatch=gate_e_dispatch, on_message=on_message
         )
 
     prompt = directive if directive is not None else _directive_for(stage)
     result = await invoke_agent_with_parse_retry(
-        db, version_id=state.version_id, role=actor, stage=stage, prompt=prompt, on_event=on_event
+        db,
+        version_id=state.version_id,
+        role=actor,
+        stage=stage,
+        prompt=prompt,
+        on_event=on_event,
+        on_message=on_message,
     )
 
     if isinstance(result, ParseFailure):
@@ -819,7 +867,7 @@ async def run_dispatch(
         # by the Coordinator first, who relays it to the Director. The Coordinator's
         # own question (kickoff) is surfaced directly — no double-review. On an
         # unparseable relay, fall back to the worker's question (never a dead-end).
-        relay = await _coordinator_relay(db, state, result) if actor != "coordinator" else None
+        relay = await _coordinator_relay(db, state, result, on_message) if actor != "coordinator" else None
         question_text = relay if relay is not None else result.question
         state.status = "blocked"
         state.next_action = f"Agent '{actor}' sa pýta: {question_text}"
@@ -827,7 +875,7 @@ async def run_dispatch(
         return state
 
     if result.kind == "gate_report":
-        reason = await _verify_with_retries(db, state, result)
+        reason = await _verify_with_retries(db, state, result, on_message=on_message)
         if reason is not None:
             state.status = "blocked"
             state.next_action = f"Verify zlyhal po retries: {reason}. Eskalované."
@@ -857,7 +905,12 @@ def _block_failed(state: PipelineState, db: Session, reason: str) -> PipelineSta
     return state
 
 
-async def _coordinator_review_gap(db: Session, state: PipelineState, designer_block: PipelineStatusBlock) -> None:
+async def _coordinator_review_gap(
+    db: Session,
+    state: PipelineState,
+    designer_block: PipelineStatusBlock,
+    on_message: Optional[MessageCallback] = None,
+) -> None:
     """Branch B upward leg (§2): the Coordinator reviews the Designer's proposed fix and
     records a recommendation for the Director. Reuses the parse-retry; its message is the
     recommendation later composed into the Coordinator-relayed ``fix`` directive."""
@@ -871,6 +924,7 @@ async def _coordinator_review_gap(db: Session, state: PipelineState, designer_bl
             "Prekontroluj návrh a daj Directorovi odporúčanie (opraviť / ponechať + prečo). "
             "Ukonči <<<PIPELINE_STATUS>>> blokom (§7.2)."
         ),
+        on_message=on_message,
     )
 
 
@@ -881,6 +935,7 @@ async def _run_gate_e_round(
     on_event: Optional[claude_agent.EventCallback] = None,
     directive: Optional[str] = None,
     gate_e_dispatch: Optional[str] = None,
+    on_message: Optional[MessageCallback] = None,
 ) -> PipelineState:
     """One Gate E per-question exchange (F-007-gate-e revised §2/§5): Director-gated.
 
@@ -902,7 +957,13 @@ async def _run_gate_e_round(
     """
     if gate_e_dispatch == "coordinator_consult":  # ask/return @ gate_e — Coordinator revises
         revised = await invoke_agent_with_parse_retry(
-            db, version_id=state.version_id, role="coordinator", stage="gate_e", prompt=directive, on_event=on_event
+            db,
+            version_id=state.version_id,
+            role="coordinator",
+            stage="gate_e",
+            prompt=directive,
+            on_event=on_event,
+            on_message=on_message,
         )
         if isinstance(revised, ParseFailure):
             return _block_failed(state, db, revised.reason)
@@ -920,6 +981,7 @@ async def _run_gate_e_round(
             prompt=directive,
             on_event=on_event,
             recipient="coordinator",
+            on_message=on_message,
         )
         if isinstance(edit, ParseFailure):
             return _block_failed(state, db, edit.reason)
@@ -939,6 +1001,7 @@ async def _run_gate_e_round(
         prompt=customer_prompt,
         on_event=on_event,
         recipient="designer",  # Z→N: the Customer's question is for the Designer
+        on_message=on_message,
     )
     if isinstance(cust, ParseFailure):
         return _block_failed(state, db, cust.reason)
@@ -961,12 +1024,13 @@ async def _run_gate_e_round(
             ),
             on_event=on_event,
             recipient="coordinator",  # N→K: the Designer's answer is for the Coordinator
+            on_message=on_message,
         )
         if isinstance(designer, ParseFailure):
             return _block_failed(state, db, designer.reason)
         state.status = "awaiting_director"
         if designer.gap_found:  # Branch B upward leg — Coordinator reviews before the Director
-            await _coordinator_review_gap(db, state, designer)
+            await _coordinator_review_gap(db, state, designer, on_message)
             state.next_action = "Director: Návrhár našiel medzeru a navrhol opravu — rozhodni Opraviť/Ponechať."
         else:  # Branch A — routine answer
             state.next_action = "Director: posúď odpoveď Návrhára (schváliť → ďalšia otázka)."
@@ -980,13 +1044,22 @@ async def _run_gate_e_round(
     return state
 
 
-async def _verify_with_retries(db: Session, state: PipelineState, block: PipelineStatusBlock) -> Optional[str]:
-    """Verify; on failure auto-return to the agent up to ``_VERIFY_RETRIES`` times."""
-    reason = await verify_done(db, state.version_id, block)
+async def _verify_with_retries(
+    db: Session,
+    state: PipelineState,
+    block: PipelineStatusBlock,
+    on_message: Optional[MessageCallback] = None,
+) -> Optional[str]:
+    """Verify; on failure auto-return to the agent up to ``_VERIFY_RETRIES`` times.
+
+    Every recorded turn here is a dispatch-path message → ``on_message`` streams each
+    live (the Coordinator judgment via :func:`verify_done`, the system auto-return, and
+    the worker's corrected report) so none is lost once the end batch is dropped."""
+    reason = await verify_done(db, state.version_id, block, on_message)
     attempts = 0
     while reason is not None and attempts < _VERIFY_RETRIES:
         attempts += 1
-        _record_message(
+        msg = _record_message(
             db,
             version_id=state.version_id,
             stage=state.current_stage,
@@ -996,17 +1069,20 @@ async def _verify_with_retries(db: Session, state: PipelineState, block: Pipelin
             content=f"Auto-return (verify {attempts}/{_VERIFY_RETRIES}): {reason}",
             payload={"verify_reason": reason},
         )
+        if on_message is not None:
+            await on_message(msg)
         retry = await invoke_agent(
             db,
             version_id=state.version_id,
             role=state.current_actor,
             stage=state.current_stage,
             prompt=f"Verify zlyhal: {reason}. Oprav a znovu ukonči <<<PIPELINE_STATUS>>> blokom (§7.2).",
+            on_message=on_message,
         )
         if isinstance(retry, ParseFailure) or retry.kind != "gate_report":
             return reason  # give up on non-report → caller escalates
         block = retry
-        reason = await verify_done(db, state.version_id, block)
+        reason = await verify_done(db, state.version_id, block, on_message)
     return reason
 
 

@@ -8,6 +8,7 @@ the runner's *logic*: new-message diff broadcasting + the unexpected-exception �
 ``blocked`` fallback.
 """
 
+import json
 import uuid
 
 from sqlalchemy import select
@@ -106,25 +107,22 @@ def _set_owner_with_chat(db_session, version, chat_id="555000111"):
     return owner
 
 
-async def test_run_broadcasts_state_and_only_new_messages(db_session, monkeypatch):
+async def test_run_broadcasts_state_and_incremental_messages(db_session, monkeypatch):
+    """CR-NS-018: each message is broadcast via on_message the moment it's recorded
+    (incremental), not batched at round end; plus the settled state_changed."""
     version = _make_version(db_session)
     _seed_working_state(db_session, version.id)
     fake_reg = _wire_runner(db_session, monkeypatch)
 
-    async def fake_run_dispatch(db, vid, on_event=None, directive=None, gate_e_dispatch=None):
+    async def fake_run_dispatch(db, vid, on_event=None, directive=None, gate_e_dispatch=None, on_message=None):
+        for author in ("coordinator", "designer"):
+            msg = orchestrator._record_message(
+                db, version_id=vid, stage="kickoff", author=author, recipient="director", kind="kickoff", content="x"
+            )
+            await on_message(msg)  # incremental broadcast, mid-dispatch (before the settle)
         st = db.execute(select(PipelineState).where(PipelineState.version_id == vid)).scalar_one()
         st.status = "awaiting_director"
         st.next_action = "Director: posúdiť."
-        db.add(
-            PipelineMessage(
-                version_id=vid,
-                stage="kickoff",
-                author="coordinator",
-                recipient="director",
-                kind="kickoff",
-                content="discovery done",
-            )
-        )
         db.flush()
         return st
 
@@ -132,15 +130,14 @@ async def test_run_broadcasts_state_and_only_new_messages(db_session, monkeypatc
 
     await pipeline_runner._run(version.id)
 
-    types = [p["type"] for _, p in fake_reg.events]
-    assert "state_changed" in types
+    kinds = [p["type"] for _, p in fake_reg.events]
+    # incremental: BOTH message_added frames arrive DURING the dispatch, before the
+    # end-of-run state_changed — not batched after it.
+    assert kinds == ["message_added", "message_added", "state_changed"]
+    added = [p["message"] for _, p in fake_reg.events if p["type"] == "message_added"]
+    assert [m["author"] for m in added] == ["coordinator", "designer"]
     state_evt = next(p for _, p in fake_reg.events if p["type"] == "state_changed")
     assert state_evt["state"]["status"] == "awaiting_director"
-    # Only the NEW coordinator message is broadcast — the pre-existing director
-    # kickoff message is not re-emitted.
-    added = [p["message"] for _, p in fake_reg.events if p["type"] == "message_added"]
-    assert len(added) == 1
-    assert added[0]["author"] == "coordinator"
 
 
 async def test_run_unexpected_exception_marks_blocked(db_session, monkeypatch):
@@ -148,7 +145,7 @@ async def test_run_unexpected_exception_marks_blocked(db_session, monkeypatch):
     _seed_working_state(db_session, version.id)
     fake_reg = _wire_runner(db_session, monkeypatch)
 
-    async def boom(db, vid, on_event=None, directive=None, gate_e_dispatch=None):
+    async def boom(db, vid, on_event=None, directive=None, gate_e_dispatch=None, on_message=None):
         raise RuntimeError("kaboom")
 
     monkeypatch.setattr(orchestrator, "run_dispatch", boom)
@@ -175,7 +172,7 @@ async def test_run_unexpected_exception_marks_blocked(db_session, monkeypatch):
 # ── presence-aware Telegram notify (CR-NS-018 Phase 5a) ───────────────────────
 
 
-async def _settle_awaiting(db, vid, on_event=None, directive=None, gate_e_dispatch=None):
+async def _settle_awaiting(db, vid, on_event=None, directive=None, gate_e_dispatch=None, on_message=None):
     st = db.execute(select(PipelineState).where(PipelineState.version_id == vid)).scalar_one()
     st.status = "awaiting_director"
     st.next_action = "Director: posúdiť fázu."
@@ -246,7 +243,7 @@ async def test_run_streams_agent_activity(db_session, monkeypatch):
     _seed_working_state(db_session, version.id)  # kickoff / coordinator
     fake_reg = _wire_runner(db_session, monkeypatch)
 
-    async def fake_run_dispatch(db, vid, on_event=None, directive=None, gate_e_dispatch=None):
+    async def fake_run_dispatch(db, vid, on_event=None, directive=None, gate_e_dispatch=None, on_message=None):
         # the agent emits a tool event mid-run → runner translates + broadcasts
         await on_event(
             {
@@ -323,3 +320,158 @@ async def test_activity_callback_uses_real_role_and_active_role(db_session, monk
     frames = [p for _, p in fake_reg.events if p["type"] == "agent_activity"]
     assert frames[0]["actor"] == "designer" and frames[0]["kind"] == "status"
     assert frames[1]["actor"] == "coordinator" and frames[1]["line"] == "číta docs/spec.md"
+
+
+# ── incremental per-message broadcast (CR-NS-018) ──────────────────────────────
+
+
+def _status_block(stage, kind="gate_report", summary="ok", awaiting="director", **extra):
+    body = {"stage": stage, "kind": kind, "summary": summary, "awaiting": awaiting}
+    body.update(extra)
+    return f"<<<PIPELINE_STATUS>>>\n{json.dumps(body)}\n<<<END_PIPELINE_STATUS>>>"
+
+
+class _SeqClaude:
+    """invoke_claude stand-in returning a fixed sequence of stdout (last repeats)."""
+
+    def __init__(self, responses):
+        self.responses = responses
+        self.n = 0
+
+    async def __call__(self, *, prompt, **kwargs):
+        r = self.responses[min(self.n, len(self.responses) - 1)]
+        self.n += 1
+        return r
+
+
+def _seed_state(db_session, version_id, stage, actor):
+    state = PipelineState(
+        version_id=version_id,
+        flow_type="new_version",
+        current_stage=stage,
+        current_actor=actor,
+        status="agent_working",
+        next_action="working",
+    )
+    db_session.add(state)
+    db_session.flush()
+    return state
+
+
+async def test_run_streams_dispatch_messages_in_order_with_parity(db_session, monkeypatch):
+    """A real gate_a dispatch (designer report → coordinator verify judgment) broadcasts
+    one message_added per turn, in order, AND live frame count == committed dispatch rows
+    (the parity check that guards the dropped end-batch from silently losing a message)."""
+    version = _make_version(db_session)
+    _seed_state(db_session, version.id, "gate_a", "designer")
+    fake_reg = _wire_runner(db_session, monkeypatch)
+    seq = _SeqClaude(
+        [
+            _status_block("gate_a", "gate_report", summary="14 endpoints"),  # designer report
+            _status_block("gate_a", "gate_report", summary="verify ok"),  # coordinator judgment
+        ]
+    )
+    monkeypatch.setattr(orchestrator, "invoke_claude", seq)
+    monkeypatch.setattr(orchestrator, "verify_mechanical", lambda slug, block: None)
+
+    await pipeline_runner._run(version.id)
+
+    added = [p["message"] for _, p in fake_reg.events if p["type"] == "message_added"]
+    assert [m["author"] for m in added] == ["designer", "coordinator"]  # incremental, in order
+    rows = db_session.execute(select(PipelineMessage).where(PipelineMessage.version_id == version.id)).scalars().all()
+    assert len(added) == len(rows)  # parity — no dispatch message dropped
+    ids = [m["id"] for m in added]
+    assert len(ids) == len(set(ids))  # no duplicate message_added
+    seqs = [m["seq"] for m in added]
+    assert seqs == sorted(seqs) and len(set(seqs)) == len(seqs)  # authoritative monotonic order
+
+
+async def test_run_gate_e_round_streams_every_turn(db_session, monkeypatch):
+    """Coverage guard: a real gate_e round (Customer question → Designer answer) streams
+    on_message for EVERY turn — proves on_message reaches the gate_e customer + designer
+    invoke sites (so dropping the end batch loses nothing on this path)."""
+    version = _make_version(db_session)
+    _seed_state(db_session, version.id, "gate_e", "customer")
+    fake_reg = _wire_runner(db_session, monkeypatch)
+    seq = _SeqClaude(
+        [
+            _status_block("gate_e", "question", summary="?", question="Je reset hesla pokrytý?"),
+            _status_block("gate_e", "answer", summary="áno, §4.2", awaiting="none"),
+        ]
+    )
+    monkeypatch.setattr(orchestrator, "invoke_claude", seq)
+    monkeypatch.setattr(orchestrator, "verify_mechanical", lambda slug, block: None)
+
+    await pipeline_runner._run(version.id)
+
+    added = [p["message"] for _, p in fake_reg.events if p["type"] == "message_added"]
+    assert [m["author"] for m in added] == ["customer", "designer"]  # both turns streamed live
+    rows = db_session.execute(select(PipelineMessage).where(PipelineMessage.version_id == version.id)).scalars().all()
+    assert len(added) == len(rows)  # parity on the gate_e path too
+
+
+async def test_on_message_commits_once_per_message(db_session, monkeypatch):
+    """Commit cadence spy (NOT a durability claim under the SAVEPOINT harness): db.commit
+    fires once per on_message + the final settle commit."""
+    version = _make_version(db_session)
+    _seed_working_state(db_session, version.id)
+    _wire_runner(db_session, monkeypatch)  # maps commit→flush
+    commits = {"n": 0}
+    flush = db_session.flush
+
+    def _counting_commit():
+        commits["n"] += 1
+        return flush()
+
+    monkeypatch.setattr(db_session, "commit", _counting_commit)
+
+    async def fake_run_dispatch(db, vid, on_event=None, directive=None, gate_e_dispatch=None, on_message=None):
+        for author in ("coordinator", "designer"):
+            msg = orchestrator._record_message(
+                db, version_id=vid, stage="kickoff", author=author, recipient="director", kind="kickoff", content="x"
+            )
+            await on_message(msg)
+        st = db.execute(select(PipelineState).where(PipelineState.version_id == vid)).scalar_one()
+        st.status = "awaiting_director"
+        db.flush()
+        return st
+
+    monkeypatch.setattr(orchestrator, "run_dispatch", fake_run_dispatch)
+
+    await pipeline_runner._run(version.id)
+
+    assert commits["n"] == 3  # 2 on_message commits + 1 final settle commit
+
+
+async def test_crash_after_message_keeps_it_and_settles_blocked(db_session, monkeypatch):
+    """Incremental persistence (the bonus): a mid-round crash AFTER a message streamed
+    leaves that message persisted, settles blocked, and broadcasts the blocked message."""
+    version = _make_version(db_session)
+    _seed_working_state(db_session, version.id)
+    fake_reg = _wire_runner(db_session, monkeypatch)
+
+    async def fake_run_dispatch(db, vid, on_event=None, directive=None, gate_e_dispatch=None, on_message=None):
+        msg = orchestrator._record_message(
+            db,
+            version_id=vid,
+            stage="kickoff",
+            author="coordinator",
+            recipient="director",
+            kind="kickoff",
+            content="partial",
+        )
+        await on_message(msg)  # streamed + committed before the crash
+        raise RuntimeError("boom mid-round")
+
+    monkeypatch.setattr(orchestrator, "run_dispatch", fake_run_dispatch)
+
+    await pipeline_runner._run(version.id)
+
+    state = db_session.execute(select(PipelineState).where(PipelineState.version_id == version.id)).scalar_one()
+    assert state.status == "blocked"  # always-settle, never agent_working
+    msgs = db_session.execute(select(PipelineMessage).where(PipelineMessage.version_id == version.id)).scalars().all()
+    assert any(m.author == "coordinator" and m.content == "partial" for m in msgs)  # pre-crash message kept
+    assert any(m.author == "system" for m in msgs)  # blocked notification recorded
+    added = [p["message"] for _, p in fake_reg.events if p["type"] == "message_added"]
+    assert any(m["author"] == "coordinator" for m in added)  # streamed incrementally
+    assert any(m["author"] == "system" for m in added)  # crash-path blocked message broadcast once

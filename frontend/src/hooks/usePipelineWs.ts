@@ -84,8 +84,10 @@ export function usePipelineWs(versionId: string | null): UsePipelineWs {
       } else if (frame.type === "message_added") {
         setBoard((prev) => {
           if (!prev) return { state: null, recent_messages: [frame.message] };
-          if (prev.recent_messages.some((m) => m.id === frame.message.id)) return prev;
-          return { ...prev, recent_messages: [...prev.recent_messages, frame.message] };
+          if (prev.recent_messages.some((m) => m.id === frame.message.id)) return prev; // id-dedupe
+          // Insert by authoritative seq (not arrival order) — robust even if frames race.
+          const next = [...prev.recent_messages, frame.message].sort((a, b) => a.seq - b.seq);
+          return { ...prev, recent_messages: next };
         });
       } else if (frame.type === "agent_activity") {
         const { stage, actor, kind, line } = frame;

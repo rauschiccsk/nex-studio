@@ -60,10 +60,6 @@ def schedule_dispatch(
     task.add_done_callback(_BG_TASKS.discard)
 
 
-def _message_ids(db, version_id: uuid.UUID) -> set[uuid.UUID]:
-    return set(db.execute(select(PipelineMessage.id).where(PipelineMessage.version_id == version_id)).scalars())
-
-
 async def _broadcast_state(version_id: uuid.UUID, state: PipelineState) -> None:
     await registry.broadcast(
         version_id,
@@ -71,21 +67,25 @@ async def _broadcast_state(version_id: uuid.UUID, state: PipelineState) -> None:
     )
 
 
-async def _broadcast_new_messages(db, version_id: uuid.UUID, pre_ids: set[uuid.UUID]) -> None:
-    new_msgs = (
-        db.execute(
-            select(PipelineMessage).where(PipelineMessage.version_id == version_id).order_by(PipelineMessage.seq.asc())
-        )
-        .scalars()
-        .all()
+async def _broadcast_message(version_id: uuid.UUID, msg: PipelineMessage) -> None:
+    await registry.broadcast(
+        version_id,
+        {"type": "message_added", "message": PipelineMessageRead.model_validate(msg).model_dump(mode="json")},
     )
-    for m in new_msgs:
-        if m.id in pre_ids:
-            continue
-        await registry.broadcast(
-            version_id,
-            {"type": "message_added", "message": PipelineMessageRead.model_validate(m).model_dump(mode="json")},
-        )
+
+
+def _message_callback(db, version_id: uuid.UUID):
+    """Build the incremental-broadcast hook (CR-NS-018): commit + broadcast one message
+    the moment it's recorded, so bubbles appear as each agent finishes — not batched at
+    round end. Commit (durability boundary) THEN broadcast; refresh first so the
+    DB-generated ``seq`` / ``created_at`` are populated on the instance."""
+
+    async def _cb(msg: PipelineMessage) -> None:
+        db.commit()
+        db.refresh(msg)
+        await _broadcast_message(version_id, msg)
+
+    return _cb
 
 
 def _activity_callback(version_id: uuid.UUID, stage: str, fallback_actor: str):
@@ -116,25 +116,31 @@ async def _run(version_id: uuid.UUID, directive: str | None = None, gate_e_dispa
     """Run one agent dispatch and broadcast the result. Owns its own session."""
     db = SessionLocal()
     try:
-        pre_ids = _message_ids(db, version_id)
         pre = db.execute(select(PipelineState).where(PipelineState.version_id == version_id)).scalar_one_or_none()
         on_event = _activity_callback(version_id, pre.current_stage, pre.current_actor) if pre else None
+        # Incremental broadcast (CR-NS-018): each dispatch message is committed + streamed
+        # via on_message the moment it's recorded — so the end batch is gone.
+        on_message = _message_callback(db, version_id)
         try:
             state = await orchestrator.run_dispatch(
-                db, version_id, on_event, directive, gate_e_dispatch=gate_e_dispatch
+                db, version_id, on_event, directive, gate_e_dispatch=gate_e_dispatch, on_message=on_message
             )
             db.commit()
         except Exception as exc:  # noqa: BLE001 — unexpected; degrade to blocked, don't hang UI.
             logger.exception("run_dispatch failed for version %s", version_id)
             db.rollback()
-            state = _mark_blocked(db, version_id, reason=str(exc))
+            # Per-message commits before the crash stay durable (incremental persistence);
+            # roll back only the uncommitted tail, then always-settle to blocked.
+            state, blocked_msg = _mark_blocked(db, version_id, reason=str(exc))
             db.commit()
+            if blocked_msg is not None:  # crash-path message broadcast once, AFTER commit
+                db.refresh(blocked_msg)  # populate DB-generated seq/created_at before serialise
+                await _broadcast_message(version_id, blocked_msg)
 
         if state is None:
             return
         db.refresh(state)
         await _broadcast_state(version_id, state)
-        await _broadcast_new_messages(db, version_id, pre_ids)
         await _maybe_notify(db, version_id, state)
     finally:
         db.close()
@@ -178,30 +184,32 @@ async def _maybe_notify(db, version_id: uuid.UUID, state: PipelineState) -> None
     await notify.send_telegram(message, chat_id)
 
 
-def _mark_blocked(db, version_id: uuid.UUID, reason: str | None = None) -> PipelineState | None:
+def _mark_blocked(
+    db, version_id: uuid.UUID, reason: str | None = None
+) -> tuple[PipelineState | None, PipelineMessage | None]:
     """Always-settle fallback when ``run_dispatch`` raises (CR-NS-018 robustness).
 
     Guarantees the board never stays ``agent_working`` after a dispatch ends — on
     any uncaught failure the state settles to ``blocked`` with a clear, recoverable
     Slovak ``next_action`` and a ``system`` message carrying the reason. The handled
     cases (claude error / parse-fail / timeout) already settle inside
-    ``invoke_agent``; this catches anything else.
-    """
+    ``invoke_agent``; this catches anything else. Returns ``(state, message)`` so the
+    caller can broadcast the crash-path message AFTER committing it (the incremental
+    hook is bypassed here — it commits, and the except path owns its own commit)."""
     state = db.execute(select(PipelineState).where(PipelineState.version_id == version_id)).scalar_one_or_none()
     if state is None:
-        return None
+        return None, None
     detail = f": {reason[:300]}" if reason else ""
     state.status = "blocked"
     state.next_action = f"Dispatch zlyhal{detail}. Skús znova alebo vráť."
-    db.add(
-        PipelineMessage(
-            version_id=version_id,
-            stage=state.current_stage,
-            author="system",
-            recipient="director",
-            kind="notification",
-            content=f"Agent dispatch failed{detail} — pipeline blocked.",
-        )
+    msg = PipelineMessage(
+        version_id=version_id,
+        stage=state.current_stage,
+        author="system",
+        recipient="director",
+        kind="notification",
+        content=f"Agent dispatch failed{detail} — pipeline blocked.",
     )
+    db.add(msg)
     db.flush()
-    return state
+    return state, msg

@@ -42,6 +42,10 @@ class PipelineMessageRead(BaseModel):
     status: str
     payload: Optional[dict[str, Any]] = None
     created_at: datetime
+    #: Monotonic insertion order (CR-NS-018). Carried in the payload so both the REST
+    #: board and the incremental WS broadcast expose the authoritative order — clients
+    #: can sort by it instead of relying on arrival timing.
+    seq: int
 
 
 class PipelineBoardRead(BaseModel):

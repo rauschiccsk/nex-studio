@@ -71,6 +71,9 @@ export interface PipelineMessage {
   status: string;
   payload: Record<string, unknown> | null;
   created_at: string;
+  // Monotonic insertion order (CR-NS-018) — authoritative ordering for both the REST
+  // board and incremental WS message_added frames; sort by it, don't trust arrival.
+  seq: number;
 }
 
 export interface PipelineBoard {
