@@ -16,7 +16,7 @@ from backend.db.models.foundation import User
 from backend.db.models.pipeline import PipelineMessage, PipelineState
 from backend.db.models.projects import Project
 from backend.db.models.versions import Version
-from backend.services import notify, orchestrator, pipeline_runner
+from backend.services import claude_agent, notify, orchestrator, pipeline_runner
 
 
 class _FakeRegistry:
@@ -270,3 +270,31 @@ async def test_run_streams_agent_activity(db_session, monkeypatch):
     assert activity[0]["actor"] == "coordinator"
     assert activity[0]["stage"] == "kickoff"
     assert activity[0]["kind"] == "tool"
+
+
+# ── robustness: a persistent transient dispatch settles blocked (CR-NS-018) ─────
+
+
+async def test_run_persistent_transient_settles_blocked(db_session, monkeypatch):
+    """The live incident: API 529 throughout a dispatch must end at `blocked`, never
+    stay `agent_working`. invoke_claude's bounded retry terminates → invoke_agent →
+    ParseFailure → run_dispatch settles blocked."""
+    version = _make_version(db_session)
+    _seed_working_state(db_session, version.id)  # kickoff / coordinator / agent_working
+    _wire_runner(db_session, monkeypatch)
+
+    async def _always_529(**kwargs):
+        raise claude_agent.ClaudeAgentError("API Error 529 Overloaded")
+
+    async def _no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(claude_agent, "_invoke_once", _always_529)
+    monkeypatch.setattr(claude_agent.asyncio, "sleep", _no_sleep)
+    monkeypatch.setattr(orchestrator, "verify_mechanical", lambda slug, block: None)
+
+    await pipeline_runner._run(version.id)
+
+    state = db_session.execute(select(PipelineState).where(PipelineState.version_id == version.id)).scalar_one()
+    assert state.status == "blocked"  # never stuck at agent_working
+    assert state.status != "agent_working"

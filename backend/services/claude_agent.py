@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Optional
@@ -21,6 +22,14 @@ from backend.config.settings import settings
 logger = logging.getLogger(__name__)
 
 PROJECTS_ROOT = Path("/opt/projects")
+
+#: Transient (retryable) API failure signatures matched against the claude stderr
+#: (CR-NS-018 robustness). A 529/overload must not kill a run — retry with backoff.
+_TRANSIENT_RE = re.compile(r"(529|overloaded|429|rate.?limit)", re.IGNORECASE)
+#: Backoff (seconds) slept BEFORE each retry on a transient error → up to
+#: len()+1 = 4 bounded attempts. Bounded so a persistent overload terminates the
+#: dispatch (settled blocked upstream) instead of an un-backed-off hammer loop.
+_TRANSIENT_BACKOFF: tuple[int, ...] = (2, 8, 20)
 
 #: Default timeout per ``claude --print`` invocation (seconds). Agent dispatch
 #: is asynchronous (CR-NS-018 fix-round), so this only backstops a *hung* agent
@@ -52,7 +61,52 @@ async def invoke_claude(
     timeout: int = CLAUDE_INVOKE_TIMEOUT,
     on_event: Optional[EventCallback] = None,
 ) -> str:
-    """Invoke ``claude -p`` with the agent's session UUID + prompt.
+    """Invoke ``claude -p`` with bounded transient-error retry (CR-NS-018 robustness).
+
+    Delegates to :func:`_invoke_once`; on a **transient** ``ClaudeAgentError``
+    (529 / overloaded / 429 / rate limit in stderr) retries with bounded backoff
+    (:data:`_TRANSIENT_BACKOFF` → up to 4 attempts) so a transient overload doesn't
+    kill a run. **Non-transient** errors fail fast (no retry). Distinct from
+    ``invoke_agent_with_parse_retry`` (which retries parse failures). See
+    :func:`_invoke_once` for the args/return contract.
+    """
+    attempts = len(_TRANSIENT_BACKOFF) + 1
+    for attempt in range(attempts):
+        try:
+            return await _invoke_once(
+                project_slug=project_slug,
+                claude_session_id=claude_session_id,
+                prompt=prompt,
+                charter_path=charter_path,
+                timeout=timeout,
+                on_event=on_event,
+            )
+        except ClaudeAgentError as exc:
+            if attempt < len(_TRANSIENT_BACKOFF) and _TRANSIENT_RE.search(str(exc)):
+                delay = _TRANSIENT_BACKOFF[attempt]
+                logger.warning(
+                    "claude transient error (attempt %d/%d) — backoff %ds: %s",
+                    attempt + 1,
+                    attempts,
+                    delay,
+                    exc,
+                )
+                await asyncio.sleep(delay)
+                continue
+            raise
+    raise AssertionError("unreachable")  # the loop always returns or raises
+
+
+async def _invoke_once(
+    *,
+    project_slug: str,
+    claude_session_id: UUID,
+    prompt: str,
+    charter_path: Optional[Path] = None,
+    timeout: int = CLAUDE_INVOKE_TIMEOUT,
+    on_event: Optional[EventCallback] = None,
+) -> str:
+    """One ``claude -p`` subprocess invocation (no retry — see :func:`invoke_claude`).
 
     Args:
         project_slug: cwd will be ``/opt/projects/<slug>/`` so claude picks up

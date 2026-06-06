@@ -16,7 +16,7 @@ from backend.db.models.orchestrator import OrchestratorSession
 from backend.db.models.pipeline import PipelineMessage, PipelineState
 from backend.db.models.projects import Project
 from backend.db.models.versions import Version
-from backend.services import orchestrator
+from backend.services import claude_agent, orchestrator
 from backend.services.pipeline_status import ParseFailure, PipelineStatusBlock
 
 
@@ -887,6 +887,35 @@ def test_gate_e_leave_directive_states_decision(db_session):
     d = orchestrator.dispatch_directive(db_session, version.id, "leave", {}, "gate_e")
     assert "ponechať" in d.lower()
     assert "Pokračuj" in d
+
+
+# ── robustness: bounded transient retry × parse-retry, then settle (CR-NS-018) ──
+
+
+async def test_persistent_transient_stays_bounded_through_parse_retry(db_session, monkeypatch):
+    """A persistent 529 must not multiply unboundedly: invoke_claude's transient
+    retry (4 attempts) nests under invoke_agent_with_parse_retry (3 invoke_agent
+    calls) → exactly 12 _invoke_once calls, then a ParseFailure (→ blocked upstream)."""
+    calls = {"n": 0}
+
+    async def _always_529(**kwargs):
+        calls["n"] += 1
+        raise claude_agent.ClaudeAgentError("API Error 529 Overloaded")
+
+    async def _no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(claude_agent, "_invoke_once", _always_529)
+    monkeypatch.setattr(claude_agent.asyncio, "sleep", _no_sleep)
+    monkeypatch.setattr(orchestrator, "verify_mechanical", lambda slug, block: None)
+
+    version, _ = _make_version(db_session)
+    result = await orchestrator.invoke_agent_with_parse_retry(
+        db_session, version_id=version.id, role="designer", stage="gate_a", prompt="go"
+    )
+    assert isinstance(result, ParseFailure)
+    expected = (1 + orchestrator._PARSE_RETRIES) * (len(claude_agent._TRANSIENT_BACKOFF) + 1)
+    assert calls["n"] == expected  # bounded, no unbounded multiplication
 
 
 # ── Gate E boundary actions + coverage/end (F-007-gate-e §3/§4, CR-NS-018 Phase 3) ─

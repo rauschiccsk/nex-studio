@@ -110,10 +110,10 @@ async def _run(version_id: uuid.UUID, directive: str | None = None, designer_edi
         try:
             state = await orchestrator.run_dispatch(db, version_id, on_event, directive, designer_edit=designer_edit)
             db.commit()
-        except Exception:  # noqa: BLE001 — unexpected; degrade to blocked, don't hang UI.
+        except Exception as exc:  # noqa: BLE001 — unexpected; degrade to blocked, don't hang UI.
             logger.exception("run_dispatch failed for version %s", version_id)
             db.rollback()
-            state = _mark_blocked(db, version_id)
+            state = _mark_blocked(db, version_id, reason=str(exc))
             db.commit()
 
         if state is None:
@@ -164,18 +164,21 @@ async def _maybe_notify(db, version_id: uuid.UUID, state: PipelineState) -> None
     await notify.send_telegram(message, chat_id)
 
 
-def _mark_blocked(db, version_id: uuid.UUID) -> PipelineState | None:
-    """Fallback when ``run_dispatch`` raises unexpectedly: block + notify.
+def _mark_blocked(db, version_id: uuid.UUID, reason: str | None = None) -> PipelineState | None:
+    """Always-settle fallback when ``run_dispatch`` raises (CR-NS-018 robustness).
 
-    The handled cases (claude error / parse-fail / timeout) already settle to
-    ``blocked`` inside ``invoke_agent``; this only catches truly unexpected
-    failures so the UI never stays stuck on ``agent_working``.
+    Guarantees the board never stays ``agent_working`` after a dispatch ends — on
+    any uncaught failure the state settles to ``blocked`` with a clear, recoverable
+    Slovak ``next_action`` and a ``system`` message carrying the reason. The handled
+    cases (claude error / parse-fail / timeout) already settle inside
+    ``invoke_agent``; this catches anything else.
     """
     state = db.execute(select(PipelineState).where(PipelineState.version_id == version_id)).scalar_one_or_none()
     if state is None:
         return None
+    detail = f": {reason[:300]}" if reason else ""
     state.status = "blocked"
-    state.next_action = "Blokované: neočakávaná chyba pri behu agenta. Eskalované Directorovi."
+    state.next_action = f"Dispatch zlyhal{detail}. Skús znova alebo vráť."
     db.add(
         PipelineMessage(
             version_id=version_id,
@@ -183,7 +186,7 @@ def _mark_blocked(db, version_id: uuid.UUID) -> PipelineState | None:
             author="system",
             recipient="director",
             kind="notification",
-            content="Agent dispatch failed unexpectedly — pipeline blocked.",
+            content=f"Agent dispatch failed{detail} — pipeline blocked.",
         )
     )
     db.flush()
