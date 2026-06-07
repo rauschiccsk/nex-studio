@@ -34,7 +34,9 @@ from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, UUID
 from backend.db.models.base import Base, TimestampMixin, UUIDMixin
 
 # Shared stage set (F-007 §3.1). String + CHECK rather than native enum.
-_STAGES = "'kickoff', 'gate_a', 'gate_b', 'gate_c', 'gate_d', 'gate_e', 'build', 'gate_g', 'release', 'done'"
+_STAGES = (
+    "'kickoff', 'gate_a', 'gate_b', 'gate_c', 'gate_d', 'gate_e', 'task_plan', 'build', 'gate_g', 'release', 'done'"
+)
 # Actors / message participants (F-007 §3.1, §4.2). ``system`` is message-only.
 _ACTORS = "'coordinator', 'designer', 'customer', 'implementer', 'auditor', 'director'"
 _PARTICIPANTS = "'coordinator', 'designer', 'customer', 'implementer', 'auditor', 'director', 'system'"

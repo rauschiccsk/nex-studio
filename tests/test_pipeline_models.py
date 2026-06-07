@@ -100,6 +100,14 @@ class TestPipelineState:
         with pytest.raises((IntegrityError, ProgrammingError)):
             db_session.flush()
 
+    def test_accepts_task_plan_stage(self, db_session):
+        # CR-NS-020 CR-1: 'task_plan' is a permissive value (foundation) — the
+        # widened ck_pipeline_state_current_stage must accept it even though the
+        # flow does not route there yet.
+        version = _make_version(db_session)
+        db_session.add(_state(version, current_stage="task_plan"))
+        db_session.flush()
+
     def test_fk_cascade_on_version_delete(self, db_session):
         version = _make_version(db_session)
         state = _state(version)
@@ -147,6 +155,12 @@ class TestPipelineMessage:
     def test_system_author_allowed(self, db_session):
         version = _make_version(db_session)
         db_session.add(_message(version, author="system", kind="notification"))
+        db_session.flush()  # no raise
+
+    def test_accepts_task_plan_stage(self, db_session):
+        # CR-NS-020 CR-1: widened ck_pipeline_message_stage accepts 'task_plan'.
+        version = _make_version(db_session)
+        db_session.add(_message(version, stage="task_plan"))
         db_session.flush()  # no raise
 
     def test_fk_cascade_on_version_delete(self, db_session):

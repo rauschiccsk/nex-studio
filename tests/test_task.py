@@ -200,6 +200,18 @@ class TestTaskModel:
         db_session.flush()
         assert task.checklist_type == "service"
 
+    def test_baseline_sha_defaults_null_and_holds_sha(self, db_session):
+        """CR-NS-020 CR-1: baseline_sha is nullable (dormant in CR-1) and holds a 40-char SHA."""
+        task = _make_task(db_session)
+        db_session.add(task)
+        db_session.flush()
+        assert task.baseline_sha is None
+
+        task.baseline_sha = "a" * 40
+        db_session.flush()
+        db_session.refresh(task)
+        assert task.baseline_sha == "a" * 40
+
     def test_title_not_nullable(self, db_session):
         """title=NULL must be rejected."""
         task = _make_task(db_session, title=None)

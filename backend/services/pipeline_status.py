@@ -43,6 +43,7 @@ STAGES = frozenset(
         "gate_c",
         "gate_d",
         "gate_e",
+        "task_plan",
         "build",
         "gate_g",
         "release",

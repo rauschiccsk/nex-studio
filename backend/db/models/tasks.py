@@ -106,6 +106,10 @@ class Task(Base, UUIDMixin, TimestampMixin):
     estimated_minutes = Column(Integer, nullable=True)
     actual_minutes = Column(Integer, nullable=True)
     checklist_type = Column(String(30), nullable=True)
+    # F-007 §4: per-task diff anchor — repo HEAD captured when the task is
+    # dispatched, so a retry still diffs against the original baseline. Written
+    # by the per-task build loop (CR-3); dormant in CR-1.
+    baseline_sha = Column(String(40), nullable=True)
 
     __table_args__ = (
         UniqueConstraint("feat_id", "number", name="uq_tasks_feat_id_number"),
