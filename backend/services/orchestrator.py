@@ -25,14 +25,14 @@ from pathlib import Path
 from typing import Any, Optional
 
 from pydantic import ValidationError
-from sqlalchemy import and_, delete, or_, select
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend.db.models.orchestrator import OrchestratorSession
 from backend.db.models.pipeline import PipelineMessage, PipelineState
 from backend.db.models.projects import Project
-from backend.db.models.tasks import Epic
+from backend.db.models.tasks import Epic, Feat, Task
 from backend.db.models.versions import Version
 from backend.schemas.epic import EpicCreate
 from backend.schemas.feat import FeatCreate
@@ -78,6 +78,11 @@ STAGE_ACTOR: dict[str, str] = {
     "release": "coordinator",
 }
 _VERIFY_RETRIES = 2
+# Per-task auto-fix bound (F-007 §6, CR-NS-020 CR-3): on a failed task the build loop
+# re-dispatches the Programmer with escalating context up to this many times; after the
+# last failure the task is marked ``failed`` and the pipeline HALTs for the Director.
+# Distinct from ``_VERIFY_RETRIES`` (a within-turn verify retry) and ``_PARSE_RETRIES``.
+_AUTO_FIX_RETRIES = 5
 # Bounded re-invokes when the agent emits an unparseable <<<PIPELINE_STATUS>>>
 # block (CR-NS-018). A single LLM JSON typo must not halt the pipeline; the
 # agent runs ``--resume`` so a retry is a cheap re-emit, not a redo of the work.
@@ -97,6 +102,7 @@ _ACTIONS = frozenset(
         "verdict",
         "uat_accept",
         "end_gate_e",
+        "end_build",
         "pause",
     }
 )
@@ -104,7 +110,17 @@ _ACTIONS = frozenset(
 # agent has settled (CR-NS-018). Guarding these stops a stale board / double-click
 # from advancing while the agent is mid-work (which skipped a mandatory gate).
 _ADVANCING_ACTIONS = frozenset(
-    {"approve", "apply_coordinator_recommendation", "fix", "leave", "verdict", "uat_accept", "return", "end_gate_e"}
+    {
+        "approve",
+        "apply_coordinator_recommendation",
+        "fix",
+        "leave",
+        "verdict",
+        "uat_accept",
+        "return",
+        "end_gate_e",
+        "end_build",
+    }
 )
 
 # Per-stage backstop timeouts (seconds) for a single headless agent turn
@@ -790,11 +806,18 @@ async def invoke_agent_with_parse_retry(
 # ---------------------------------------------------------------------------
 
 
-def verify_mechanical(slug: str, block: PipelineStatusBlock) -> Optional[str]:
+def verify_mechanical(slug: str, block: PipelineStatusBlock, baseline_sha: Optional[str] = None) -> Optional[str]:
     """Deterministic backend checks. Returns a failure reason or ``None`` (pass).
 
     Every ``commits[]`` hash must exist in the project repo (``git show``) and
     every ``deliverables[]`` path must exist on disk. No agent involved.
+
+    When ``baseline_sha`` is given (per-task build loop, F-007 §6 / CR-NS-020 CR-3),
+    additionally require the work to sit in ``baseline_sha..HEAD``: the baseline must
+    exist + be an ancestor of HEAD, and every reported commit must be new since the
+    baseline (reachable from HEAD, NOT from the baseline). This enforces "never build
+    on an unverified base" — a task's commits are scoped to its own baseline, never an
+    earlier task's. ``baseline_sha=None`` (gates / release) keeps existence-only checks.
     """
     project_root = claude_agent.PROJECTS_ROOT / slug
     for commit in block.commits:
@@ -803,6 +826,16 @@ def verify_mechanical(slug: str, block: PipelineStatusBlock) -> Optional[str]:
     for rel in block.deliverables:
         if not (project_root / rel).exists():
             return f"deliverable {rel!r} missing on disk"
+    if baseline_sha is not None:
+        if not _commit_exists(project_root, baseline_sha):
+            return f"task baseline {baseline_sha!r} not found in {slug}"
+        if not _git_ok(project_root, ["merge-base", "--is-ancestor", baseline_sha, "HEAD"]):
+            return f"task baseline {baseline_sha!r} is not an ancestor of HEAD (history diverged)"
+        for commit in block.commits:
+            if not _git_ok(project_root, ["merge-base", "--is-ancestor", commit, "HEAD"]):
+                return f"commit {commit!r} is not reachable from HEAD"
+            if _git_ok(project_root, ["merge-base", "--is-ancestor", commit, baseline_sha]):
+                return f"commit {commit!r} predates the task baseline (not in baseline..HEAD)"
     return None
 
 
@@ -819,6 +852,38 @@ def _commit_exists(project_root: Path, commit_hash: str) -> bool:
         return result.returncode == 0
     except (OSError, subprocess.SubprocessError):
         return False
+
+
+def _git_ok(project_root: Path, args: list[str]) -> bool:
+    """Run a git command in *project_root*; True iff it exits 0 (no output captured)."""
+    import subprocess
+
+    try:
+        return (
+            subprocess.run(
+                ["git", "-C", str(project_root), *args], capture_output=True, timeout=15, check=False
+            ).returncode
+            == 0
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _repo_head(project_root: Path) -> Optional[str]:
+    """Return the project repo's current HEAD SHA, or ``None`` if it can't be read."""
+    import subprocess
+
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(project_root), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        return r.stdout.strip() if r.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError):
+        return None
 
 
 async def verify_done(
@@ -970,6 +1035,11 @@ async def run_dispatch(
         return await _run_gate_e_round(
             db, state, on_event=on_event, directive=directive, gate_e_dispatch=gate_e_dispatch, on_message=on_message
         )
+
+    # Build (F-007 §6, CR-NS-020 CR-3): the continuous per-task loop — dispatches the
+    # Programmer task-by-task with mechanical verify + auto-fix, not a single opaque turn.
+    if stage == "build":
+        return await _run_build_round(db, state, on_event=on_event, directive=directive, on_message=on_message)
 
     prompt = directive if directive is not None else _directive_for(stage)
     result = await invoke_agent_with_parse_retry(
@@ -1229,6 +1299,232 @@ async def _verify_with_retries(
     return reason
 
 
+# ---------------------------------------------------------------------------
+# Build per-task loop (F-007 §6, CR-NS-020 CR-3)
+# ---------------------------------------------------------------------------
+
+
+def _build_open_findings(db: Session, version_id: uuid.UUID) -> int:
+    """Count of ``failed`` / ``in_progress`` (unverified) tasks for the version — the
+    deterministic build gate (§6). The build loop sets ``Task.status`` (``done`` on a
+    mechanical pass, ``failed`` after the auto-fix bound) — the Programmer never sets it —
+    so ``Task.status`` IS the orchestrator's structural record, not agent self-report.
+
+    A non-zero count blocks ``build → gate_g``, even on ``end_build``. ``todo`` tasks are NOT
+    counted: ``end_build`` ("zvyšok do auditu") may legitimately advance with unstarted tasks
+    remaining — only a failed (or stuck in_progress / unverified) task blocks the close."""
+    return int(
+        db.execute(
+            select(func.count())
+            .select_from(Task)
+            .join(Feat, Feat.id == Task.feat_id)
+            .join(Epic, Epic.id == Feat.epic_id)
+            .where(Epic.version_id == version_id, Task.status.in_(("failed", "in_progress")))
+        ).scalar_one()
+    )
+
+
+def _reset_failed_tasks_to_todo(db: Session, version_id: uuid.UUID) -> None:
+    """Reset the version's ``failed`` tasks back to ``todo`` (F-007 §6/§7) so the build loop
+    re-attempts them on a Director ``return`` — a fresh auto-fix budget; ``done`` stays done."""
+    feat_ids = select(Feat.id).join(Epic, Epic.id == Feat.epic_id).where(Epic.version_id == version_id)
+    db.execute(update(Task).where(Task.feat_id.in_(feat_ids), Task.status == "failed").values(status="todo"))
+    db.flush()
+
+
+def _fetch_cross_cutting_rules(db: Session, version_id: uuid.UUID) -> Optional[str]:
+    """Re-read the cross-cutting regulated-ledger invariants the Designer codified once in
+    the task_plan gate_report payload (CR-NS-020 CR-2). Injected into every per-task brief."""
+    msg = db.execute(
+        select(PipelineMessage)
+        .where(
+            PipelineMessage.version_id == version_id,
+            PipelineMessage.stage == "task_plan",
+            PipelineMessage.author == "designer",
+            PipelineMessage.kind == "gate_report",
+        )
+        .order_by(PipelineMessage.seq.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if msg is None or not msg.payload:
+        return None
+    return msg.payload.get("cross_cutting_rules")
+
+
+def _directive_for_build_task(task: Task, cross_cutting_rules: Optional[str], prior_failures: list[str]) -> str:
+    """Per-task brief for the Programmer (§6): one task, its description, the authoritative
+    spec to consult, the cross-cutting block, and (on a retry) the prior attempts' reasons."""
+    parts = [f"Programátor, postav JEDNU úlohu (TASK #{task.number}): {task.title}"]
+    if task.description:
+        parts.append(f"Popis úlohy: {task.description}")
+    parts.append("Naštuduj relevantnú sekciu autoritatívneho špecu (docs/specs/) pre túto úlohu — postav presne ju.")
+    if cross_cutting_rules:
+        parts.append(f"Prierezové pravidlá (platia pre KAŽDÚ úlohu, dodrž ich):\n{cross_cutting_rules}")
+    if prior_failures:
+        joined = "\n".join(f"- pokus {i}: {r}" for i, r in enumerate(prior_failures, 1))
+        parts.append(f"Predošlé NEÚSPEŠNÉ pokusy o túto úlohu — oprav uvedené:\n{joined}")
+    parts.append("Commitni zmeny a ukonči <<<PIPELINE_STATUS>>> blokom s commits[] + deliverables[] (§7.2).")
+    return "\n\n".join(parts)
+
+
+async def _verify_task(
+    db: Session,
+    state: PipelineState,
+    task: Task,
+    block: PipelineStatusBlock,
+    on_message: Optional[MessageCallback] = None,
+) -> Optional[str]:
+    """Per-task quality gate (§6). Returns a failure reason or ``None`` (pass).
+
+    **CR-3: deterministic mechanical verify** scoped to the task's ``baseline_sha`` (commit
+    exists + deliverables on disk + commits in ``baseline..HEAD``). **CR-4 extends THIS one
+    function** with the Auditor audit-vs-spec turn (``task_pass`` + findings) after a
+    mechanical pass — the loop, the ≤5 bound, the done/failed transitions and the HALT
+    around it stay untouched. ``on_message`` is threaded for CR-4's Auditor turn."""
+    slug = _project_slug_for_version(db, state.version_id)
+    return verify_mechanical(slug, block, task.baseline_sha)
+
+
+async def _run_build_round(
+    db: Session,
+    state: PipelineState,
+    *,
+    on_event: Optional[claude_agent.EventCallback] = None,
+    directive: Optional[str] = None,
+    on_message: Optional[MessageCallback] = None,
+) -> PipelineState:
+    """The continuous per-task build loop (F-007 §6).
+
+    Unlike a gate, build does NOT stop between successful tasks: it dispatches the
+    Programmer task-by-task in plan order, mechanically verifies each (auto-fix up to
+    ``_AUTO_FIX_RETRIES`` with escalating context), and settles to ``awaiting_director``
+    only at the end (all tasks ``done`` → final build sign-off) or on a HALT (a task
+    ``failed`` after the bound → Coordinator relays). Every turn streams live via
+    ``on_message``. ``baseline_sha`` is captured (repo HEAD) BEFORE each task's first
+    dispatch and held immutable across its retries (never build on an unverified base).
+
+    Resume-safe (Dedo 2026-06-08): a task left ``in_progress`` by a dispatch that died
+    mid-loop (e.g. a backend restart) is reclaimed to ``todo`` on entry and re-run from its
+    persisted ``baseline_sha`` (``done`` stays done; ``failed`` stays for the Director)."""
+    version_id = state.version_id
+    slug = _project_slug_for_version(db, version_id)
+    project_root = claude_agent.PROJECTS_ROOT / slug
+    feat_ids_of_version = select(Feat.id).join(Epic, Epic.id == Feat.epic_id).where(Epic.version_id == version_id)
+
+    # Resume-safety: reclaim a task orphaned mid-build.
+    db.execute(
+        update(Task).where(Task.feat_id.in_(feat_ids_of_version), Task.status == "in_progress").values(status="todo")
+    )
+    db.flush()
+
+    cross_cutting = _fetch_cross_cutting_rules(db, version_id)
+    # The Director's framed return/answer (if this is a re-dispatch) seeds the first attempt
+    # of whichever task runs first in THIS dispatch — i.e. the resumed/returned task, NOT
+    # necessarily the globally-first task — then is consumed so later turns use briefs.
+    pending_directive = directive
+
+    while True:
+        state = _get_state(db, version_id)
+        if state is None or state.status != "agent_working":
+            return state  # Director intervened (pause/return) — land cleanly at a task boundary
+        task = task_service.get_next_todo_task(db, version_id)
+        if task is None:  # no todo task remains → final build sign-off
+            state.status = "awaiting_director"
+            state.next_action = "Director: finálne schválenie buildu (→ Audit)."
+            db.flush()
+            return state
+
+        # Baseline BEFORE dispatch — captured once and immutable across the task's whole
+        # lifecycle (auto-fix retries + resume/return). A fresh task anchors to repo HEAD
+        # now; a reclaimed (orphaned in_progress) or a returned task keeps its PERSISTED
+        # baseline_sha so it re-runs against the SAME anchor (Dedo 2026-06-08), never against
+        # a moved HEAD. ORM assignment (not a Core UPDATE) keeps the in-memory object in sync
+        # so _verify_task passes the real baseline — not a stale None — to verify_mechanical.
+        if task.baseline_sha is None:
+            task.baseline_sha = _repo_head(project_root)
+        task.status = "in_progress"
+        db.flush()
+
+        prior_failures: list[str] = []
+        task_done = False
+        for attempt in range(1, _AUTO_FIX_RETRIES + 1):
+            if attempt == 1 and pending_directive is not None:
+                prompt = pending_directive  # Director's framed return/answer for the resumed task
+                pending_directive = None  # consume once — later attempts/tasks use generated briefs
+            else:
+                prompt = _directive_for_build_task(task, cross_cutting, prior_failures)
+            result = await invoke_agent_with_parse_retry(
+                db,
+                version_id=version_id,
+                role="implementer",
+                stage="build",
+                prompt=prompt,
+                on_event=on_event,
+                on_message=on_message,
+                extra_payload={"task_id": str(task.id), "task_number": task.number, "attempt": attempt},
+            )
+            if isinstance(result, ParseFailure):
+                prior_failures.append(f"neplatný status blok: {result.reason}")
+            elif result.kind in ("question", "blocked"):
+                # The Programmer cannot proceed → Coordinator relay + HALT (Director input needed).
+                relay = await _coordinator_relay(db, state, result, on_message)
+                question_text = relay if relay is not None else result.question
+                state.status = "blocked"
+                state.next_action = f"Programátor (úloha #{task.number}) sa pýta: {question_text}"
+                db.flush()
+                return state
+            else:
+                reason = await _verify_task(db, state, task, result, on_message)
+                if reason is None:
+                    db.execute(update(Task).where(Task.id == task.id).values(status="done"))
+                    db.flush()
+                    task_service.recompute_feat_status(db, task.feat_id)
+                    task_done = True
+                    break
+                prior_failures.append(reason)
+            # failed this attempt → record an auto-return + bump the feat's auto-fix counter
+            msg = _record_message(
+                db,
+                version_id=version_id,
+                stage="build",
+                author="system",
+                recipient="implementer",
+                kind="return",
+                content=f"Auto-fix {attempt}/{_AUTO_FIX_RETRIES} (úloha #{task.number}): {prior_failures[-1]}",
+                payload={"verify_reason": prior_failures[-1], "auto_fix_attempt": attempt, "task_id": str(task.id)},
+            )
+            if on_message is not None:
+                await on_message(msg)
+            db.execute(update(Feat).where(Feat.id == task.feat_id).values(auto_fix_count=Feat.auto_fix_count + 1))
+            db.flush()
+
+        if not task_done:  # auto-fix bound exhausted → task failed → HALT
+            db.execute(update(Task).where(Task.id == task.id).values(status="failed"))
+            db.flush()
+            task_service.recompute_feat_status(db, task.feat_id)
+            # Coordinator relays the failure to the Director (hub-and-spoke; §3).
+            await invoke_agent_with_parse_retry(
+                db,
+                version_id=version_id,
+                role="coordinator",
+                stage="build",
+                prompt=(
+                    f"Úloha #{task.number} '{task.title}' zlyhala po {_AUTO_FIX_RETRIES} auto-fix pokusoch. "
+                    f"Posledný dôvod: {prior_failures[-1]}. Priprav pre Directora relay — čo treba rozhodnúť "
+                    "(vrátiť na prepracovanie / konzultovať). Ukonči <<<PIPELINE_STATUS>>> blokom (§7.2)."
+                ),
+                on_event=on_event,
+                on_message=on_message,
+            )
+            state.status = "awaiting_director"
+            state.next_action = (
+                f"Úloha #{task.number} zlyhala po {_AUTO_FIX_RETRIES} pokusoch — Director: vrátiť / konzultovať."
+            )
+            db.flush()
+            return state
+        # task done → continue the loop to the next todo task (no Director click; §6)
+
+
 def _next_stage(stage: str) -> str:
     idx = STAGE_ORDER.index(stage)
     return STAGE_ORDER[min(idx + 1, len(STAGE_ORDER) - 1)]
@@ -1315,6 +1611,10 @@ async def apply_action(
             else:
                 _begin_dispatch(db, state)  # next topic — stage unchanged
             return state
+        # Build (F-007 §6): the final sign-off advances build → gate_g, but a failed /
+        # unverified task blocks the close (deterministic gate from the orchestrator's record).
+        if state.current_stage == "build" and _build_open_findings(db, version_id) > 0:
+            raise OrchestratorError("Otvorené úlohy (failed/neoverené) blokujú uzavretie buildu — najprv ich vyrieš")
         state.current_stage = _next_stage(state.current_stage)
         db.flush()
         if state.current_stage == "done":
@@ -1330,9 +1630,9 @@ async def apply_action(
         comment = payload.get("comment")
         if not comment or not str(comment).strip():
             raise OrchestratorError("return requires a non-empty payload.comment")
-        # Gate E + task_plan (§2/§5): Director ↔ Coordinator only — a return is
-        # Coordinator-relayed, never addressed to the Customer/Designer directly.
-        recipient = "coordinator" if state.current_stage in ("gate_e", "task_plan") else state.current_actor
+        # Gate E + task_plan + build (§2/§5/§6): Director ↔ Coordinator only — a return is
+        # Coordinator-relayed, never addressed to the worker directly.
+        recipient = "coordinator" if state.current_stage in ("gate_e", "task_plan", "build") else state.current_actor
         _record_message(
             db,
             version_id=version_id,
@@ -1342,6 +1642,10 @@ async def apply_action(
             kind="return",
             content=str(comment),
         )
+        # Build HALT (§6/§7): a return reworks the failed task — reset it to todo so the
+        # build loop re-attempts it (fresh ≤5 budget) with the Director's comment threaded in.
+        if state.current_stage == "build":
+            _reset_failed_tasks_to_todo(db, version_id)
         _begin_dispatch(db, state)
         return state
 
@@ -1349,9 +1653,9 @@ async def apply_action(
         text = payload.get("text")
         if not text or not str(text).strip():
             raise OrchestratorError("ask requires a non-empty payload.text")
-        # Gate E + task_plan (§2/§5): "Konzultovať s Koordinátorom" — the Director's input
-        # (question or constatation) goes to the Coordinator, never to the worker directly.
-        recipient = "coordinator" if state.current_stage in ("gate_e", "task_plan") else state.current_actor
+        # Gate E + task_plan + build (§2/§5/§6): "Konzultovať s Koordinátorom" — the Director's
+        # input (question or constatation) goes to the Coordinator, never to the worker directly.
+        recipient = "coordinator" if state.current_stage in ("gate_e", "task_plan", "build") else state.current_actor
         _record_message(
             db,
             version_id=version_id,
@@ -1493,6 +1797,28 @@ async def apply_action(
         )
         _write_gate_e_audit(db, version_id)  # §4 audit record before closing
         state.current_stage = _next_stage("gate_e")  # → task_plan
+        db.flush()
+        _begin_dispatch(db, state)
+        return state
+
+    if action == "end_build":
+        # Director ends build early ("zvyšok do auditu", F-007 §6) → advance to gate_g.
+        # Early end, but any failed/unverified task still blocks the close — no unresolved
+        # task may pass to the Auditor (deterministic gate from the orchestrator's record).
+        if state.current_stage != "build":
+            raise OrchestratorError("end_build je platné len vo fáze build")
+        if _build_open_findings(db, version_id) > 0:
+            raise OrchestratorError("Otvorené úlohy (failed/neoverené) blokujú uzavretie buildu — najprv ich vyrieš")
+        _record_message(
+            db,
+            version_id=version_id,
+            stage="build",
+            author="director",
+            recipient="implementer",
+            kind="approval",
+            content="Build ukončený Directorom (zvyšok do auditu).",
+        )
+        state.current_stage = _next_stage("build")  # → gate_g
         db.flush()
         _begin_dispatch(db, state)
         return state

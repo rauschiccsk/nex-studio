@@ -68,7 +68,8 @@ def fake_claude(monkeypatch):
     fake = FakeClaude()
     monkeypatch.setattr(orchestrator, "invoke_claude", fake)
     # Mechanical verify is filesystem/git — neutralise to "pass" by default.
-    monkeypatch.setattr(orchestrator, "verify_mechanical", lambda slug, block: None)
+    # (signature gained ``baseline_sha`` in CR-NS-020 CR-3 for the per-task diff scope.)
+    monkeypatch.setattr(orchestrator, "verify_mechanical", lambda slug, block, baseline_sha=None: None)
     return fake
 
 
@@ -1495,3 +1496,242 @@ async def test_approve_at_task_plan_advances_to_build(db_session, fake_claude):
     await orchestrator.run_dispatch(db_session, version.id)  # → awaiting_director
     state = await orchestrator.apply_action(db_session, version_id=version.id, action="approve")
     assert state.current_stage == "build"
+
+
+# ── build per-task loop (F-007 §6, CR-NS-020 CR-3) ──────────────────────────────
+
+
+def _to_build(db_session, version):
+    """Put the pipeline at build / implementer / agent_working (loop entry)."""
+    state = orchestrator._get_state(db_session, version.id)
+    state.current_stage = "build"
+    state.current_actor = "implementer"
+    state.status = "agent_working"
+    db_session.flush()
+    return state
+
+
+def _seed_one_feat(db_session, version, project, titles, *, types=None):
+    """Create 1 epic / 1 feat / N todo tasks under the version (plan order = task.number)."""
+    epic = Epic(project_id=project.id, version_id=version.id, number=1, title="E1", status="planned")
+    db_session.add(epic)
+    db_session.flush()
+    feat = Feat(epic_id=epic.id, number=1, title="F1", description="", status="todo")
+    db_session.add(feat)
+    db_session.flush()
+    tasks = []
+    for i, title in enumerate(titles, 1):
+        task = Task(
+            feat_id=feat.id,
+            number=i,
+            title=title,
+            task_type=(types[i - 1] if types else "backend"),
+            status="todo",
+        )
+        db_session.add(task)
+        tasks.append(task)
+    db_session.flush()
+    return epic, feat, tasks
+
+
+def _seed_cross_cutting(db_session, version, text):
+    """Persist the cross_cutting_rules the build loop re-reads (a task_plan gate_report)."""
+    db_session.add(
+        PipelineMessage(
+            version_id=version.id,
+            stage="task_plan",
+            author="designer",
+            recipient="director",
+            kind="gate_report",
+            content="plán",
+            payload={"cross_cutting_rules": text},
+        )
+    )
+    db_session.flush()
+
+
+def _build_report() -> str:
+    return _block(
+        stage="build", kind="gate_report", summary="hotovo", awaiting="director", commits=["c1"], deliverables=["f"]
+    )
+
+
+async def test_build_loop_runs_tasks_in_order_then_awaits_director(db_session, fake_claude, monkeypatch):
+    monkeypatch.setattr(orchestrator, "_repo_head", lambda root: "a" * 40)
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _seed_cross_cutting(db_session, version, "## Invarianty\n- podvojnosť")
+    _epic, feat, tasks = _seed_one_feat(db_session, version, project, ["T-one", "T-two"])
+    _to_build(db_session, version)
+    fake_claude.response = _build_report()
+
+    state = await orchestrator.run_dispatch(db_session, version.id)
+
+    assert state.status == "awaiting_director" and state.current_stage == "build"
+    for t in tasks:
+        db_session.refresh(t)
+        assert t.status == "done"
+        assert t.baseline_sha == "a" * 40  # baseline captured per task
+    briefs = [c["prompt"] for c in fake_claude.calls if "TASK #" in c["prompt"]]
+    assert "T-one" in briefs[0] and "T-two" in briefs[1]  # dispatched in plan order
+    assert all("podvojnosť" in b for b in briefs)  # cross-cutting block injected into every brief
+    # final sign-off advances build → gate_g
+    state = await orchestrator.apply_action(db_session, version_id=version.id, action="approve")
+    assert state.current_stage == "gate_g"
+
+
+async def test_build_auto_fix_retries_then_passes(db_session, fake_claude, monkeypatch):
+    monkeypatch.setattr(orchestrator, "_repo_head", lambda root: "b" * 40)
+    calls = {"n": 0}
+
+    def _verify(slug, block, baseline_sha=None):
+        calls["n"] += 1
+        return "diff prázdny" if calls["n"] < 3 else None  # fail twice, pass on the 3rd
+
+    monkeypatch.setattr(orchestrator, "verify_mechanical", _verify)
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _epic, feat, (task,) = _seed_one_feat(db_session, version, project, ["T"])
+    _to_build(db_session, version)
+    fake_claude.response = _build_report()
+
+    state = await orchestrator.run_dispatch(db_session, version.id)
+
+    assert state.status == "awaiting_director"
+    db_session.refresh(task)
+    assert task.status == "done"
+    returns = [
+        m
+        for m in _msgs(db_session, version.id)
+        if m.author == "system" and m.kind == "return" and "Auto-fix" in m.content
+    ]
+    assert len(returns) == 2  # two failed attempts before the pass
+    db_session.refresh(feat)
+    assert feat.auto_fix_count == 2
+
+
+async def test_build_auto_fix_exhausted_marks_failed_and_halts(db_session, fake_claude, monkeypatch):
+    monkeypatch.setattr(orchestrator, "_repo_head", lambda root: "c" * 40)
+    monkeypatch.setattr(orchestrator, "verify_mechanical", lambda slug, block, baseline_sha=None: "vždy zlyhá")
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _epic, _feat, (task,) = _seed_one_feat(db_session, version, project, ["T"])
+    _to_build(db_session, version)
+    fake_claude.response = _build_report()
+
+    state = await orchestrator.run_dispatch(db_session, version.id)
+
+    assert state.status == "awaiting_director"  # HALT
+    db_session.refresh(task)
+    assert task.status == "failed"
+    returns = [m for m in _msgs(db_session, version.id) if m.author == "system" and m.kind == "return"]
+    assert len(returns) == orchestrator._AUTO_FIX_RETRIES  # exactly 5 attempts
+    assert orchestrator._build_open_findings(db_session, version.id) == 1
+    # a Coordinator relay message was recorded for the Director
+    assert any(m.author == "coordinator" and m.stage == "build" for m in _msgs(db_session, version.id))
+    # the failed task blocks the close (approve to gate_g)
+    with pytest.raises(orchestrator.OrchestratorError):
+        await orchestrator.apply_action(db_session, version_id=version.id, action="approve")
+
+
+async def test_end_build_blocked_by_failed_task(db_session, fake_claude, monkeypatch):
+    monkeypatch.setattr(orchestrator, "_repo_head", lambda root: "d" * 40)
+    monkeypatch.setattr(orchestrator, "verify_mechanical", lambda slug, block, baseline_sha=None: "zlyhá")
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _seed_one_feat(db_session, version, project, ["T"])
+    _to_build(db_session, version)
+    fake_claude.response = _build_report()
+    await orchestrator.run_dispatch(db_session, version.id)  # → failed + HALT
+    with pytest.raises(orchestrator.OrchestratorError):
+        await orchestrator.apply_action(db_session, version_id=version.id, action="end_build")
+
+
+async def test_end_build_advances_with_unstarted_tasks(db_session, fake_claude):
+    # end_build = "zvyšok do auditu": todo tasks don't block (only failed/in_progress do).
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _seed_one_feat(db_session, version, project, ["T-a", "T-b"])  # both stay todo
+    state = _to_build(db_session, version)
+    state.status = "awaiting_director"
+    db_session.flush()
+    state = await orchestrator.apply_action(db_session, version_id=version.id, action="end_build")
+    assert state.current_stage == "gate_g"
+
+
+async def test_return_at_build_halt_resets_failed_and_reattempts(db_session, fake_claude, monkeypatch):
+    monkeypatch.setattr(orchestrator, "_repo_head", lambda root: "e" * 40)
+    monkeypatch.setattr(orchestrator, "verify_mechanical", lambda slug, block, baseline_sha=None: "zlyhá")
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _epic, _feat, (task,) = _seed_one_feat(db_session, version, project, ["T"])
+    _to_build(db_session, version)
+    fake_claude.response = _build_report()
+    await orchestrator.run_dispatch(db_session, version.id)  # → failed + HALT
+    db_session.refresh(task)
+    assert task.status == "failed"
+
+    # Director returns → failed task reset to todo → re-dispatch → now verify passes
+    monkeypatch.setattr(orchestrator, "verify_mechanical", lambda slug, block, baseline_sha=None: None)
+    await orchestrator.apply_action(
+        db_session, version_id=version.id, action="return", payload={"comment": "skús inak"}
+    )
+    db_session.refresh(task)
+    assert task.status == "todo"  # reset for re-attempt
+    n_calls_before = len(fake_claude.calls)
+    state = await orchestrator.run_dispatch(db_session, version.id, directive="Director ťa vrátil: skús inak")
+    db_session.refresh(task)
+    assert task.status == "done"
+    assert state.status == "awaiting_director"
+    # the Director's framed return reached the re-attempt brief (resumption fix, not lost)
+    reattempt_prompts = [c["prompt"] for c in fake_claude.calls[n_calls_before:]]
+    assert any("skús inak" in p for p in reattempt_prompts)
+
+
+async def test_build_resume_reclaims_orphaned_in_progress(db_session, fake_claude, monkeypatch):
+    # A dispatch that died mid-loop leaves a task in_progress; the loop reclaims it on re-entry
+    # and re-runs from its PERSISTED baseline_sha (Dedo 2026-06-08) — not a freshly-read HEAD.
+    monkeypatch.setattr(orchestrator, "_repo_head", lambda root: "f" * 40)
+    seen = {}
+
+    def _verify(slug, block, baseline_sha=None):
+        seen["baseline"] = baseline_sha
+        return None
+
+    monkeypatch.setattr(orchestrator, "verify_mechanical", _verify)
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _epic, _feat, (task,) = _seed_one_feat(db_session, version, project, ["T"])
+    task.status = "in_progress"  # orphaned by a prior (dead) dispatch
+    task.baseline_sha = "0" * 40  # the baseline captured by that prior dispatch
+    db_session.flush()
+    _to_build(db_session, version)
+    fake_claude.response = _build_report()
+    state = await orchestrator.run_dispatch(db_session, version.id)
+    db_session.refresh(task)
+    assert task.status == "done"  # reclaimed → re-run → completed
+    assert state.status == "awaiting_director"
+    assert task.baseline_sha == "0" * 40  # persisted baseline kept (not overwritten by HEAD)
+    assert seen["baseline"] == "0" * 40  # and that persisted baseline reached verify_mechanical
+
+
+async def test_build_verify_receives_captured_baseline(db_session, fake_claude, monkeypatch):
+    # Regression guard (CR-3 blocker): the captured HEAD must reach verify_mechanical as the
+    # baseline_sha — a stale in-memory Task would pass None and silently skip the diff-scope.
+    monkeypatch.setattr(orchestrator, "_repo_head", lambda root: "9" * 40)
+    seen = {}
+
+    def _verify(slug, block, baseline_sha=None):
+        seen["baseline"] = baseline_sha
+        return None
+
+    monkeypatch.setattr(orchestrator, "verify_mechanical", _verify)
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _epic, _feat, (task,) = _seed_one_feat(db_session, version, project, ["T"])
+    _to_build(db_session, version)
+    fake_claude.response = _build_report()
+    await orchestrator.run_dispatch(db_session, version.id)
+    assert seen["baseline"] == "9" * 40  # fresh task anchored to HEAD; the SHA reached verify
+    db_session.refresh(task)
+    assert task.baseline_sha == "9" * 40

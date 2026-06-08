@@ -120,6 +120,27 @@ def list_tasks(
     return list(db.execute(stmt).scalars().all())
 
 
+def get_next_todo_task(db: Session, version_id: UUID) -> Optional[Task]:
+    """Return the first ``todo`` Task for a version in plan order, or ``None`` if none remain.
+
+    Plan order is the hierarchical numbering ``Epic.number → Feat.number → Task.number``
+    (all unique within their scope, so the ordering is total — repeated calls return the
+    same task until it transitions out of ``todo``). Drives the F-007 §6 per-task build
+    loop: the orchestrator dispatches this task, and when no ``todo`` task remains the
+    build stage is complete. ``Task`` has no ``version_id`` — it joins up through
+    ``Feat → Epic → Epic.version_id``.
+    """
+    stmt = (
+        select(Task)
+        .join(Feat, Feat.id == Task.feat_id)
+        .join(Epic, Epic.id == Feat.epic_id)
+        .where(Epic.version_id == version_id, Task.status == "todo")
+        .order_by(Epic.number.asc(), Feat.number.asc(), Task.number.asc())
+        .limit(1)
+    )
+    return db.execute(stmt).scalar_one_or_none()
+
+
 def count_tasks(
     db: Session,
     *,
