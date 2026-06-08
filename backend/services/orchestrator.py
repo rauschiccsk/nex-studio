@@ -670,34 +670,15 @@ async def invoke_agent(
             on_event=tagged_on_event,
         )
     except ClaudeAgentError as exc:
-        msg = _record_message(
-            db,
-            version_id=version_id,
-            stage=stage,
-            author="system",
-            recipient="director",
-            kind="notification",
-            content=f"Agent '{role}' invocation failed: {exc}",
-            payload={"error": str(exc)},
-        )
-        if on_message is not None:
-            await on_message(msg)
+        # Return the failure SILENTLY (CR-NS-022 §2 — no raw system→director dump here). The
+        # caller decides if/how it reaches the Director: invoke_agent_with_parse_retry relays the
+        # FINAL unrecovered failure via the Coordinator in plain Slovak; internal direct callers
+        # (auditor / coordinator-judge) fold it into their own handling. Suppresses the leak where
+        # an intermediate parse-retry later succeeds.
         return ParseFailure(f"claude invocation failed: {exc}")
 
     parsed = parse_status_block(stdout)
     if isinstance(parsed, ParseFailure):
-        msg = _record_message(
-            db,
-            version_id=version_id,
-            stage=stage,
-            author="system",
-            recipient="director",
-            kind="notification",
-            content=f"Status block parse failed for '{role}': {parsed.reason}",
-            payload={"parse_error": parsed.reason},
-        )
-        if on_message is not None:
-            await on_message(msg)
         return parsed
 
     # Map the agent block.kind → message kind (question/blocked → question).
@@ -735,7 +716,8 @@ async def invoke_agent(
             # task_plan decomposition (F-007 §4/§5, CR-NS-020 CR-2). Persisted so the
             # audit trail / TaskPlanPanel can show the plan and CR-3 can re-read the
             # cross-cutting rules from this gate_report payload.
-            "plan": parsed.plan.model_dump() if parsed.plan is not None else None,
+            # mode="json" so a TaskPlanEpic.module_id UUID (CR-NS-022) serializes to a str for JSONB.
+            "plan": parsed.plan.model_dump(mode="json") if parsed.plan is not None else None,
             "cross_cutting_rules": parsed.cross_cutting_rules,
             # Per-task Auditor verdict (F-007 §6, CR-NS-020 CR-4) — persisted for CR-5's
             # per-task audit panel (the diff + findings the Director can drill into).
@@ -804,6 +786,45 @@ async def invoke_agent_with_parse_retry(
             extra_payload=extra_payload,
         )
     return result
+
+
+async def _coordinator_relay_engine_failure(
+    db: Session,
+    version_id: uuid.UUID,
+    stage: str,
+    reason: str,
+    on_message: Optional[MessageCallback] = None,
+) -> None:
+    """Relay an engine-level hard failure to the Director via the Coordinator, in plain Slovak
+    (F-007 §6/§7, CR-NS-022 §2). Called from the orchestration layer at the point it decides to
+    block, so a worker parse-exhaustion / a plan write failure reaches the Director as a plain
+    Coordinator explanation — never a raw technical dump. The Coordinator's turn
+    (``recipient=director``) IS that message. If the Coordinator itself can't run, fall back to a
+    plain ``system→director`` note (the Coordinator's own failure is handled here — no re-relay)."""
+    relay = await invoke_agent_with_parse_retry(
+        db,
+        version_id=version_id,
+        role="coordinator",
+        stage=stage,
+        prompt=(
+            f"Vo fáze '{stage}' nastalo technické zlyhanie, ktoré treba oznámiť Directorovi: {reason}. "
+            "Vysvetli mu to po slovensky, zrozumiteľne — čo sa stalo a čo môže urobiť — bez technického "
+            "žargónu a kódov. Ukonči <<<PIPELINE_STATUS>>> blokom (§7.2)."
+        ),
+        on_message=on_message,
+    )
+    if isinstance(relay, ParseFailure):
+        msg = _record_message(
+            db,
+            version_id=version_id,
+            stage=stage,
+            author="system",
+            recipient="director",
+            kind="notification",
+            content=f"Vo fáze '{stage}' nastal problém, ktorý si vyžaduje tvoju pozornosť: {reason}",
+        )
+        if on_message is not None:
+            await on_message(msg)
 
 
 # ---------------------------------------------------------------------------
@@ -1058,8 +1079,17 @@ async def run_dispatch(
     )
 
     if isinstance(result, ParseFailure):
+        # Parse-retries exhausted (CR-NS-022 §2): the Coordinator relays it to the Director in
+        # plain Slovak; the board shows a plain next_action, never the raw parser error.
+        await _coordinator_relay_engine_failure(
+            db,
+            version_id,
+            stage,
+            f"agent '{actor}' nevrátil platný výstup ani po opravách: {result.reason}",
+            on_message,
+        )
         state.status = "blocked"
-        state.next_action = f"Blokované: {result.reason}. Eskalované Directorovi."
+        state.next_action = "Blokované — Koordinátor poslal Directorovi vysvetlenie a ďalší krok."
         db.flush()
         return state
 
@@ -1081,8 +1111,12 @@ async def run_dispatch(
         # turn — the Director reviews the materialized tree himself, per Dedo 2026-06-07).
         reason = _write_task_plan(db, state, result)
         if reason is not None:
+            # Plan write failed → blocked (CR-NS-022 §2): Coordinator relays it in plain Slovak.
+            await _coordinator_relay_engine_failure(
+                db, version_id, stage, f"plán úloh sa nepodarilo zapísať: {reason}", on_message
+            )
             state.status = "blocked"
-            state.next_action = f"Plán úloh zamietnutý: {reason}. Eskalované."
+            state.next_action = "Plán úloh zamietnutý — Koordinátor poslal Directorovi vysvetlenie."
         else:
             state.status = "awaiting_director"
             state.next_action = "Director: schváliť/vrátiť plán úloh."
@@ -1092,8 +1126,10 @@ async def run_dispatch(
     if result.kind == "gate_report":
         reason = await _verify_with_retries(db, state, result, on_message=on_message)
         if reason is not None:
+            # The Coordinator already judged this (verify_done) — keep a plain next_action, no raw
+            # reason on the board (CR-NS-022 §2 refinement: no technical dump reaches the Director).
             state.status = "blocked"
-            state.next_action = f"Verify zlyhal po retries: {reason}. Eskalované."
+            state.next_action = f"Fáza '{stage}' neprešla overením — pozri správy Koordinátora a rozhodni."
         else:
             state.status = "awaiting_director"
             state.next_action = f"Director: schváliť/vrátiť fázu '{stage}'."
@@ -1114,8 +1150,11 @@ _GATE_E_NO_EDIT = (
 
 
 def _block_failed(state: PipelineState, db: Session, reason: str) -> PipelineState:
+    # Plain next_action — no raw technical reason on the board (CR-NS-022 §2 refinement). The
+    # ``reason`` is kept internal (logged); the Director acts via Vrátiť / Konzultovať.
+    logger.info("pipeline %s blocked at %s: %s", state.version_id, state.current_stage, reason)
     state.status = "blocked"
-    state.next_action = f"Blokované: {reason}. Eskalované Directorovi."
+    state.next_action = "Blokované — pozri priebeh a rozhodni (Vrátiť / Konzultovať)."
     db.flush()
     return state
 
@@ -1771,6 +1810,18 @@ async def apply_action(
         # build loop re-attempts it (fresh ≤5 budget) with the Director's comment threaded in.
         if state.current_stage == "build":
             _reset_failed_tasks_to_todo(db, version_id)
+        # task_plan re-plan (CR-NS-022 §3): a return = re-decompose. Drop the Designer's
+        # (slug, designer) session so the next dispatch is is_first → the (possibly updated)
+        # charter re-injects. The Designer re-decomposes from the on-disk spec (the --resume
+        # conversation is expendable here). Unblocks a charter fix that the stale session missed.
+        if state.current_stage == "task_plan":
+            db.execute(
+                delete(OrchestratorSession).where(
+                    OrchestratorSession.project_slug == _project_slug_for_version(db, version_id),
+                    OrchestratorSession.role == "designer",
+                )
+            )
+            db.flush()
         _begin_dispatch(db, state)
         return state
 
@@ -1898,7 +1949,7 @@ async def apply_action(
             author="system",
             recipient="director",
             kind="notification",
-            content="UAT accepted — pipeline done (prod-deploy hook deferred to Phase 5).",
+            content="UAT akceptované zákazníkom — pipeline dokončená.",
         )
         db.flush()
         return state

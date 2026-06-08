@@ -26,6 +26,7 @@ import json
 import re
 from dataclasses import dataclass
 from typing import Optional, Union
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -91,7 +92,10 @@ class TaskPlanEpic(BaseModel):
     """An epic groups ≥1 feat. ``module_id`` is optional (project-level when null)."""
 
     title: str = Field(min_length=1, max_length=500)
-    module_id: Optional[str] = None
+    # Must be a UUID (or omitted) to match EpicCreate.module_id — CR-NS-022 parse↔write parity:
+    # a stray label (e.g. "backend") now fails at PARSE with a clear error, never a cryptic
+    # write→blocked. Epics are project-level when null (NEX Ledger has no modules).
+    module_id: Optional[UUID] = None
     feats: list[TaskPlanFeat] = Field(min_length=1)
 
 

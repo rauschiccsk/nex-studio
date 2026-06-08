@@ -123,17 +123,17 @@ async def test_invoke_agent_records_message(db_session, fake_claude):
     assert msgs[0].payload["commits"] == ["abc123"]
 
 
-async def test_invoke_agent_parse_failure_escalates(db_session, fake_claude):
+async def test_invoke_agent_parse_failure_is_silent(db_session, fake_claude):
+    # CR-NS-022 §2: invoke_agent no longer records a raw system→director dump on a parse failure —
+    # it returns the ParseFailure for the dispatch layer to relay (via the Coordinator) only on the
+    # FINAL, unrecovered failure. A single invoke records NO Director-facing message (no leak).
     version, _ = _make_version(db_session)
     fake_claude.response = "no status block here"
     result = await orchestrator.invoke_agent(
         db_session, version_id=version.id, role="designer", stage="gate_a", prompt="go"
     )
     assert isinstance(result, ParseFailure)
-    msgs = _msgs(db_session, version.id)
-    assert len(msgs) == 1
-    assert msgs[0].author == "system"
-    assert msgs[0].kind == "notification"
+    assert _msgs(db_session, version.id) == []  # no raw escalation leaked to the Director
 
 
 # ── apply_action ──────────────────────────────────────────────────────────────
@@ -278,8 +278,8 @@ async def test_verify_failure_retries_then_blocks(db_session, monkeypatch):
     await orchestrator.apply_action(db_session, version_id=version.id, action="approve")
     state = await orchestrator.run_dispatch(db_session, version.id)
     assert state.status == "blocked"
-    assert "Verify zlyhal" in state.next_action
-    # auto-return messages were recorded
+    assert "neprešla overením" in state.next_action  # plain next_action (CR-NS-022 §2 — no raw reason)
+    # auto-return messages were recorded (INTERNAL system→worker, unchanged)
     returns = [m for m in _msgs(db_session, version.id) if m.kind == "return" and m.author == "system"]
     assert len(returns) >= 1
 
@@ -378,10 +378,15 @@ async def test_run_dispatch_parse_retry_exhausted_blocks(db_session, monkeypatch
     state = await orchestrator.run_dispatch(db_session, version.id)
 
     assert state.status == "blocked"
-    # primary + _PARSE_RETRIES re-invokes
-    assert len(fake.prompts) == 1 + orchestrator._PARSE_RETRIES
-    # every failed parse was escalated as a system→director notification
-    notifs = [m for m in _msgs(db_session, version.id) if m.author == "system" and m.kind == "notification"]
+    # worker (1 + _PARSE_RETRIES) + the Coordinator relay attempt (1 + _PARSE_RETRIES) — CR-NS-022 §2
+    # routes the final failure via the Coordinator instead of a raw invoke_agent dump.
+    assert len(fake.prompts) == 2 * (1 + orchestrator._PARSE_RETRIES)
+    # the relay's Coordinator also couldn't parse → a plain system→director fallback note surfaces
+    notifs = [
+        m
+        for m in _msgs(db_session, version.id)
+        if m.author == "system" and m.kind == "notification" and m.recipient == "director"
+    ]
     assert len(notifs) >= 1
 
 
@@ -1941,3 +1946,49 @@ async def test_recover_then_continue_build_reclaims_and_continues(db_session, fa
     db_session.refresh(task)
     assert task.status == "done"  # reclaimed (in_progress→todo) + re-run → completed
     assert state.status == "awaiting_director"
+
+
+# ── CR-NS-022: comms reform + re-run blocked task_plan ──────────────────────────
+
+
+async def test_parse_retry_recovers_without_director_leak(db_session, monkeypatch):
+    # §2a: an intermediate parse failure that the retry recovers must NOT leak a system→director
+    # notification — only a FINAL, unrecovered failure surfaces (and via the Coordinator).
+    fake = SequenceClaude(
+        ["garbage — no block", _block(stage="gate_a", kind="gate_report", summary="ok", awaiting="director")]
+    )
+    monkeypatch.setattr(orchestrator, "invoke_claude", fake)
+    version, _ = _make_version(db_session)
+    result = await orchestrator.invoke_agent_with_parse_retry(
+        db_session, version_id=version.id, role="designer", stage="gate_a", prompt="go"
+    )
+    assert isinstance(result, PipelineStatusBlock)  # recovered on the retry
+    assert not any(m.author == "system" and m.recipient == "director" for m in _msgs(db_session, version.id))
+
+
+async def test_return_at_task_plan_blocked_resets_designer_session(db_session, fake_claude):
+    # §3: return is reachable from task_plan/blocked and drops the stale (slug, designer) session so
+    # the next dispatch re-injects the FIXED charter. (Unblocks NEX Ledger's stale-charter task_plan.)
+    from backend.db.models.orchestrator import OrchestratorSession
+
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    state = orchestrator._get_state(db_session, version.id)
+    state.current_stage = "task_plan"
+    state.current_actor = "designer"
+    state.status = "blocked"  # the live nex-ledger condition
+    db_session.flush()
+    db_session.add(OrchestratorSession(project_slug=project.slug, role="designer", claude_session_id=uuid.uuid4()))
+    db_session.flush()
+
+    state = await orchestrator.apply_action(
+        db_session, version_id=version.id, action="return", payload={"comment": "oprav module_id a naplánuj znova"}
+    )
+
+    assert state.status == "agent_working"  # return re-dispatched from blocked
+    row = db_session.execute(
+        select(OrchestratorSession).where(
+            OrchestratorSession.project_slug == project.slug, OrchestratorSession.role == "designer"
+        )
+    ).scalar_one_or_none()
+    assert row is None  # stale session dropped → fixed charter re-injects on the next invoke

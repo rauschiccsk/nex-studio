@@ -192,3 +192,38 @@ def test_gate_e_coverage_complete_block_parses():
     )
     assert isinstance(res, PipelineStatusBlock)
     assert res.coverage_complete is True
+
+
+# ── task_plan plan parse↔write parity (CR-NS-020 / CR-NS-022 §1) ─────────────────
+
+
+def _task_plan_block(module_id=None) -> str:
+    epic = {"title": "E1", "feats": [{"title": "F1", "tasks": [{"title": "T1", "task_type": "backend"}]}]}
+    if module_id is not None:
+        epic["module_id"] = module_id
+    return _block(
+        stage="task_plan",
+        kind="gate_report",
+        summary="plán",
+        awaiting="director",
+        plan={"epics": [epic]},
+    )
+
+
+def test_task_plan_rejects_non_uuid_module_id():
+    # CR-NS-022 §1: a stray module label ("backend") must fail at PARSE with a clear UUID error,
+    # never a cryptic write→blocked (EpicCreate.module_id is Optional[UUID]).
+    res = parse_status_block(_task_plan_block(module_id="backend"))
+    assert isinstance(res, ParseFailure)
+
+
+def test_task_plan_accepts_valid_uuid_module_id():
+    res = parse_status_block(_task_plan_block(module_id="11111111-1111-1111-1111-111111111111"))
+    assert isinstance(res, PipelineStatusBlock)
+    assert str(res.plan.epics[0].module_id) == "11111111-1111-1111-1111-111111111111"
+
+
+def test_task_plan_accepts_omitted_module_id():
+    res = parse_status_block(_task_plan_block(module_id=None))
+    assert isinstance(res, PipelineStatusBlock)
+    assert res.plan.epics[0].module_id is None
