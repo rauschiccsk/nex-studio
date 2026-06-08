@@ -475,3 +475,43 @@ async def test_crash_after_message_keeps_it_and_settles_blocked(db_session, monk
     added = [p["message"] for _, p in fake_reg.events if p["type"] == "message_added"]
     assert any(m["author"] == "coordinator" for m in added)  # streamed incrementally
     assert any(m["author"] == "system" for m in added)  # crash-path blocked message broadcast once
+
+
+# ── single-flight per version (CR-NS-027 Part 0) ──────────────────────────────
+
+
+async def test_schedule_dispatch_single_flight_per_version(monkeypatch):
+    """CR-NS-027: while one _run is in-flight for a version, a 2nd schedule_dispatch for the SAME
+    version is skipped — never a 2nd concurrent loop (the incident: two tasks building on one
+    baseline). The per-version entry clears when the task completes.
+
+    Relies on schedule_dispatch being SYNCHRONOUS (it does the check-and-set + create_task before
+    returning, so the entry is written before our first ``sleep(0)``); that synchrony is also what
+    makes the guard race-free on the single-threaded event loop."""
+    import asyncio
+
+    vid = uuid.uuid4()
+    started = {"n": 0}
+    gate = asyncio.Event()
+
+    async def _fake_run(version_id, directive=None, gate_e_dispatch=None):
+        started["n"] += 1
+        await gate.wait()  # hold the task in-flight
+
+    monkeypatch.setattr(pipeline_runner, "_run", _fake_run)
+    pipeline_runner._ACTIVE_DISPATCH.pop(vid, None)  # clean slate (module-global)
+
+    pipeline_runner.schedule_dispatch(vid)
+    await asyncio.sleep(0)  # let the first task start + await the gate
+    task = pipeline_runner._ACTIVE_DISPATCH.get(vid)
+    assert task is not None and started["n"] == 1
+
+    pipeline_runner.schedule_dispatch(vid)  # duplicate while in-flight
+    await asyncio.sleep(0)
+    assert started["n"] == 1  # the 2nd call was skipped — no 2nd loop
+    assert pipeline_runner._ACTIVE_DISPATCH.get(vid) is task  # still the same in-flight task
+
+    gate.set()
+    await task
+    await asyncio.sleep(0)  # drain the done-callbacks
+    assert vid not in pipeline_runner._ACTIVE_DISPATCH  # cleared on completion → a fresh dispatch is allowed

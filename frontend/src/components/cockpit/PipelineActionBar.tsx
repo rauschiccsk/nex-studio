@@ -397,8 +397,10 @@ export function PipelineActionBar({
         </ActionRow>
       )}
 
-      {working && (
-        <ActionRow hint="Pozastaví pipeline.">
+      {/* Pause is build-only (CR-NS-027): only the build loop has a cooperative task boundary to
+          stop at — a single-turn gate would silently complete, so we don't offer Pauza there. */}
+      {working && current_stage === "build" && (
+        <ActionRow hint="Pozastaví build po dokončení aktuálnej úlohy.">
           <button
             onClick={() => onAction("pause")}
             disabled={inFlight}

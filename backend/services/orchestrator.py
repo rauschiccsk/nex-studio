@@ -1560,7 +1560,14 @@ async def _run_build_round(
     pending_directive = directive
 
     while True:
+        # CR-NS-027 visibility crux: SessionLocal is expire_on_commit=False, so after the loop's
+        # per-message commits the identity-mapped PipelineState keeps its STALE attributes — a plain
+        # _get_state returns the cached object and would never observe a Director's mid-build commit.
+        # db.refresh forces a fresh row read; Postgres READ COMMITTED then sees the committed status
+        # (e.g. a 'paused' set by the Director's separate request session) → the loop stops cleanly.
         state = _get_state(db, version_id)
+        if state is not None:
+            db.refresh(state)
         if state is None or state.status != "agent_working":
             return state  # Director intervened (pause/return) — land cleanly at a task boundary
         task = task_service.get_next_todo_task(db, version_id)
@@ -1758,12 +1765,28 @@ async def apply_action(
     # working. The advancing actions need a settled agent (awaiting_director or a
     # blocked ratify-out-of-a-question); answer needs an actual question (blocked);
     # pause is only meaningful while the agent works.
-    if action in _ADVANCING_ACTIONS and state.status not in ("awaiting_director", "blocked"):
+    # 'paused' (CR-NS-027) is a settled, Director-actionable state — the build loop has stopped at a
+    # task boundary — so the advancing-action guard lets it through (the resume pair continue_build /
+    # end_build live in _ADVANCING_ACTIONS); the dedicated paused guard just below restricts WHICH.
+    if action in _ADVANCING_ACTIONS and state.status not in ("awaiting_director", "blocked", "paused"):
         raise OrchestratorError("Agent ešte pracuje — počkaj na jeho výstup")
     if action == "answer" and state.status != "blocked":
         raise OrchestratorError("Agent sa na nič nepýta — odpoveď nie je na mieste")
     if action == "pause" and state.status != "agent_working":
         raise OrchestratorError("Pauza je možná len počas práce agenta")
+    # Pause is build-only (CR-NS-027 decision A): only the build loop has a cooperative task boundary
+    # to stop at — a single-turn gate has no boundary, so a gate-pause would be a silent no-op.
+    if action == "pause" and state.current_stage != "build":
+        raise OrchestratorError("Pauza je možná len počas buildu")
+    # From 'paused' (CR-NS-027) ONLY the resume pair is valid: continue_build (re-dispatch the loop) or
+    # end_build (skip the rest → gate_g). Everything else must NOT silently un-pause — in particular
+    # 'ask' is not in _ADVANCING_ACTIONS, so without this it would fall through to its handler, call
+    # _begin_dispatch and flip the status back to agent_working (the route would then re-dispatch).
+    # The Director resumes deliberately, never as a side effect of asking/answering/returning.
+    if state.status == "paused" and action not in ("continue_build", "end_build"):
+        raise OrchestratorError(
+            "Build je pozastavený — pokračuj cez 'Pokračovať v builde' alebo ho ukonči (Ukončiť build)"
+        )
 
     if action == "approve":
         _record_message(
@@ -2039,7 +2062,12 @@ async def apply_action(
         _begin_dispatch(db, state)  # stage stays build; status → agent_working; the route schedules it
         return state
 
-    # action == "pause"
-    state.next_action = f"Pozastavené Directorom (fáza '{state.current_stage}')."
+    # action == "pause" (CR-NS-027): a genuine paused status, not just a label. The running build
+    # loop re-reads state at its next task boundary (db.refresh, READ COMMITTED) and, seeing a status
+    # other than agent_working, settles + stops cleanly — the current task finishes, no mid-task kill.
+    # Leaving agent_working also stops the action route from re-dispatching (the no-op-pause bug that
+    # spawned a 2nd loop). Resume via continue_build.
+    state.status = "paused"
+    state.next_action = "Pozastavené Directorom — pokračuj cez 'Pokračovať v builde'."
     db.flush()
     return state

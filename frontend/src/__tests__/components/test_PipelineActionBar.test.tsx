@@ -87,9 +87,17 @@ describe("PipelineActionBar — gate action clarity", () => {
     expect(screen.queryByText(APPROVE)).not.toBeInTheDocument();
   });
 
-  it("while agent_working shows Pauza (no ratify buttons)", () => {
-    render(<PipelineActionBar state={mkState("kickoff", "agent_working")} inFlight={false} onAction={vi.fn()} />);
+  it("while build is agent_working shows Pauza (no ratify buttons)", () => {
+    // CR-NS-027: Pauza is build-only now. At build/agent_working it shows; ratify/start never leak.
+    render(<PipelineActionBar state={mkState("build", "agent_working")} inFlight={false} onAction={vi.fn()} />);
     expect(screen.getByText("Pauza")).toBeInTheDocument();
+    expect(screen.queryByText(APPROVE)).not.toBeInTheDocument();
+    expect(screen.queryByText("Spustiť")).not.toBeInTheDocument();
+  });
+
+  it("while a gate is agent_working shows no controls (Pauza is build-only)", () => {
+    render(<PipelineActionBar state={mkState("kickoff", "agent_working")} inFlight={false} onAction={vi.fn()} />);
+    expect(screen.queryByText("Pauza")).not.toBeInTheDocument();
     expect(screen.queryByText(APPROVE)).not.toBeInTheDocument();
     expect(screen.queryByText("Spustiť")).not.toBeInTheDocument();
   });
@@ -312,5 +320,20 @@ describe("PipelineActionBar — task_plan ratify gate (CR-NS-023)", () => {
   it("does not show the ratify gate while task_plan is agent_working", () => {
     render(<PipelineActionBar state={mkState("task_plan", "agent_working")} inFlight={false} onAction={vi.fn()} />);
     expect(screen.queryByText("Schváliť podľa Návrhára")).not.toBeInTheDocument();
+  });
+});
+
+describe("PipelineActionBar — pause is build-only (CR-NS-027)", () => {
+  it("offers Pauza at build/agent_working and fires onAction('pause')", () => {
+    const onAction = vi.fn();
+    render(<PipelineActionBar state={mkState("build", "agent_working")} inFlight={false} onAction={onAction} />);
+    expect(screen.getByText("Pauza")).toBeInTheDocument();
+    screen.getByText("Pauza").click();
+    expect(onAction).toHaveBeenCalledWith("pause");
+  });
+
+  it("does not offer Pauza at a gate (no cooperative boundary there)", () => {
+    render(<PipelineActionBar state={mkState("gate_a", "agent_working")} inFlight={false} onAction={vi.fn()} />);
+    expect(screen.queryByText("Pauza")).not.toBeInTheDocument();
   });
 });

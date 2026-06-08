@@ -9,7 +9,7 @@ import json
 import uuid
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from backend.db.models.foundation import User
 from backend.db.models.orchestrator import OrchestratorSession
@@ -261,14 +261,34 @@ async def test_uat_accept_done(db_session, fake_claude):
     assert any(m.kind == "notification" for m in _msgs(db_session, version.id))
 
 
-async def test_pause_freezes(db_session, fake_claude):
+async def test_pause_at_build_sets_paused(db_session, fake_claude):
+    # CR-NS-027: pause at build/agent_working sets a genuine 'paused' status (not just a next_action
+    # label) so the build loop stops at its next task boundary; leaving agent_working also stops the
+    # action route from re-dispatching (the no-op-pause bug that spawned a 2nd loop).
     version, _ = _make_version(db_session)
     await orchestrator.apply_action(db_session, version_id=version.id, action="start")
-    before = db_session.execute(select(PipelineState).where(PipelineState.version_id == version.id)).scalar_one()
-    prev_status = before.status
+    _to_build(db_session, version)  # build / agent_working
     state = await orchestrator.apply_action(db_session, version_id=version.id, action="pause")
-    assert state.status == prev_status
+    assert state.status == "paused"
     assert "Pozastavené" in state.next_action
+
+
+async def test_pause_rejected_outside_build(db_session, fake_claude):
+    # CR-NS-027 (decision A): pause is build-only — a single-turn gate has no cooperative boundary.
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")  # kickoff / agent_working
+    with pytest.raises(orchestrator.OrchestratorError):
+        await orchestrator.apply_action(db_session, version_id=version.id, action="pause")
+    # also at a gate (any non-build stage) — the build-only guard blocks it universally
+    st = orchestrator._get_state(db_session, version.id)
+    st.current_stage = "gate_a"
+    st.current_actor = "designer"
+    st.status = "agent_working"
+    db_session.flush()
+    with pytest.raises(orchestrator.OrchestratorError):
+        await orchestrator.apply_action(db_session, version_id=version.id, action="pause")
+    st = orchestrator._get_state(db_session, version.id)
+    assert st.status == "agent_working"  # unchanged
 
 
 # ── verify retries → blocked ──────────────────────────────────────────────────
@@ -1687,6 +1707,40 @@ async def test_build_task_start_notification_not_repeated_on_auto_fix(db_session
     assert len(autofix) == 2  # the retries are separate return messages, not start notifications
 
 
+async def test_build_pause_observed_at_task_boundary(db_session, fake_claude, monkeypatch):
+    # CR-NS-027 (the visibility crux): a pause committed mid-build by the Director's SEPARATE request
+    # session must be observed by the bg loop. SessionLocal is expire_on_commit=False, so the loop's
+    # db.refresh(state) is load-bearing. We simulate the separate commit with a Core UPDATE — it
+    # bypasses the ORM identity map, so the cached state.status stays 'agent_working' and ONLY
+    # db.refresh can see the change. Expect: task #1 finishes cleanly, the loop stops at the boundary,
+    # task #2 is never dispatched (stays todo), final status 'paused'. (Without db.refresh this fails:
+    # the cached agent_working would carry the loop into task #2.)
+    monkeypatch.setattr(orchestrator, "_repo_head", lambda root: "a" * 40)
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _seed_cross_cutting(db_session, version, "## Invarianty")
+    _epic, _feat, tasks = _seed_one_feat(db_session, version, project, ["T-one", "T-two"])
+    _to_build(db_session, version)
+
+    def _resp(prompt: str) -> str:
+        if prompt.startswith("Programátor"):
+            db_session.execute(
+                update(PipelineState).where(PipelineState.version_id == version.id).values(status="paused")
+            )
+            db_session.flush()
+        return _audit(True) if prompt.startswith("Audítor") else _build_report()
+
+    fake_claude.response = _resp
+
+    state = await orchestrator.run_dispatch(db_session, version.id)
+
+    assert state.status == "paused"  # the loop observed the committed pause and settled
+    for t in tasks:
+        db_session.refresh(t)
+    assert tasks[0].status == "done"  # task #1 finished cleanly (no mid-task kill)
+    assert tasks[1].status == "todo"  # task #2 never dispatched — pause took effect at the boundary
+
+
 async def test_build_auto_fix_retries_then_passes(db_session, fake_claude, monkeypatch):
     monkeypatch.setattr(orchestrator, "_repo_head", lambda root: "b" * 40)
     calls = {"n": 0}
@@ -1948,6 +2002,54 @@ async def test_continue_build_resumes_at_halt(db_session, fake_claude, monkeypat
     assert state.status == "agent_working"  # re-dispatch initiated (the route then schedules the loop)
     cont = [m for m in _msgs(db_session, version.id) if m.kind == "approval" and "pokračuje" in m.content]
     assert cont and cont[-1].author == "director" and cont[-1].recipient == "coordinator"  # §6/§7 rule
+
+
+async def test_continue_build_resumes_from_paused(db_session, fake_claude):
+    # CR-NS-027: continue_build is valid from 'paused' ('paused' is in the advancing-action allow-list)
+    # and re-dispatches the loop → agent_working (the pause↔resume pair).
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _seed_one_feat(db_session, version, project, ["T"])
+    state = _to_build(db_session, version)
+    state.status = "paused"  # Director paused the build
+    db_session.flush()
+
+    state = await orchestrator.apply_action(db_session, version_id=version.id, action="continue_build")
+
+    assert state.current_stage == "build"
+    assert state.status == "agent_working"  # resumed — the route then schedules the loop
+
+
+async def test_end_build_from_paused_advances_to_gate_g(db_session, fake_claude):
+    # CR-NS-027: end_build is the other half of the resume pair valid from 'paused' — skip the rest →
+    # gate_g (todo tasks don't block end_build).
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _seed_one_feat(db_session, version, project, ["T-a", "T-b"])  # stay todo
+    state = _to_build(db_session, version)
+    state.status = "paused"
+    db_session.flush()
+
+    state = await orchestrator.apply_action(db_session, version_id=version.id, action="end_build")
+
+    assert state.current_stage == "gate_g"
+
+
+async def test_ask_rejected_from_paused(db_session, fake_claude):
+    # CR-NS-027: from 'paused' only continue_build / end_build are valid. 'ask' (not in
+    # _ADVANCING_ACTIONS) must NOT silently un-pause — without the dedicated paused guard it would fall
+    # to its handler, call _begin_dispatch and flip the status back to agent_working.
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _seed_one_feat(db_session, version, project, ["T"])
+    state = _to_build(db_session, version)
+    state.status = "paused"
+    db_session.flush()
+
+    with pytest.raises(orchestrator.OrchestratorError):
+        await orchestrator.apply_action(db_session, version_id=version.id, action="ask", payload={"text": "otázka?"})
+    st = orchestrator._get_state(db_session, version.id)
+    assert st.status == "paused"  # still paused — ask did not un-pause
 
 
 async def test_continue_build_rejected_outside_build(db_session, fake_claude):

@@ -39,6 +39,14 @@ _NOTIFY_STATUSES = ("awaiting_director", "blocked")
 # (mirrors the idle/retention tasks in ``main.py``). Discarded on completion.
 _BG_TASKS: set[asyncio.Task] = set()
 
+# At most one in-flight dispatch per version (CR-NS-027). The event loop is single-threaded, so the
+# check-and-set in ``schedule_dispatch`` is race-free. This is the concurrency fix for the incident:
+# an action that left ``agent_working`` (the no-op pause) re-dispatched while a build loop was already
+# running, spawning a SECOND loop — two tasks then built concurrently on the same baseline and their
+# ``baseline..HEAD`` audit diffs overlapped. The guard skips the duplicate; the entry is popped when
+# the task completes.
+_ACTIVE_DISPATCH: dict[uuid.UUID, asyncio.Task] = {}
+
 
 def schedule_dispatch(
     version_id: uuid.UUID, directive: str | None = None, *, gate_e_dispatch: str | None = None
@@ -54,10 +62,26 @@ def schedule_dispatch(
     ``gate_e_dispatch`` selects the Gate E sub-flow: ``"designer_edit"`` (Branch B
     ``fix`` — Designer edits then continues), ``"coordinator_consult"`` (``ask`` /
     ``return`` @ gate_e — the Coordinator revises its recommendation), or ``None``.
+
+    Single-flight per version (CR-NS-027): if a dispatch for ``version_id`` is already
+    in-flight, skip this one (log + return) rather than starting a second concurrent loop.
     """
+    active = _ACTIVE_DISPATCH.get(version_id)
+    if active is not None and not active.done():
+        logger.warning(
+            "schedule_dispatch: a dispatch for version %s is already in-flight — skipping duplicate", version_id
+        )
+        return
     task = asyncio.create_task(_run(version_id, directive, gate_e_dispatch))
+    _ACTIVE_DISPATCH[version_id] = task
     _BG_TASKS.add(task)
     task.add_done_callback(_BG_TASKS.discard)
+
+    def _clear_active(t: asyncio.Task) -> None:
+        if _ACTIVE_DISPATCH.get(version_id) is t:
+            del _ACTIVE_DISPATCH[version_id]
+
+    task.add_done_callback(_clear_active)
 
 
 async def _broadcast_state(version_id: uuid.UUID, state: PipelineState) -> None:

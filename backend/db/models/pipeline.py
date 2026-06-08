@@ -77,7 +77,7 @@ class PipelineState(Base, UUIDMixin, TimestampMixin):
             name="ck_pipeline_state_current_actor",
         ),
         CheckConstraint(
-            "status IN ('agent_working', 'awaiting_director', 'blocked', 'done')",
+            "status IN ('agent_working', 'awaiting_director', 'blocked', 'paused', 'done')",
             name="ck_pipeline_state_status",
         ),
     )
