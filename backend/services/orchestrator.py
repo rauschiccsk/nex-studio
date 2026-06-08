@@ -814,6 +814,9 @@ async def _coordinator_relay_engine_failure(
         on_message=on_message,
     )
     if isinstance(relay, ParseFailure):
+        # Even the fallback must NOT leak the raw reason to the Director (CR-NS-022 §2) — keep it
+        # plain Slovak and log the raw detail instead (mirrors _block_failed).
+        logger.warning("engine-failure relay fallback (%s): %s", stage, reason)
         msg = _record_message(
             db,
             version_id=version_id,
@@ -821,7 +824,10 @@ async def _coordinator_relay_engine_failure(
             author="system",
             recipient="director",
             kind="notification",
-            content=f"Vo fáze '{stage}' nastal problém, ktorý si vyžaduje tvoju pozornosť: {reason}",
+            content=(
+                f"Vo fáze '{stage}' nastal problém, ktorý si vyžaduje tvoju pozornosť — "
+                "skús akciu zopakovať; podrobnosti sú v zázname."
+            ),
         )
         if on_message is not None:
             await on_message(msg)

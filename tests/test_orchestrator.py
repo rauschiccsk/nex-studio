@@ -388,6 +388,10 @@ async def test_run_dispatch_parse_retry_exhausted_blocks(db_session, monkeypatch
         if m.author == "system" and m.kind == "notification" and m.recipient == "director"
     ]
     assert len(notifs) >= 1
+    # CR-NS-022 (fix): even the fallback must NOT leak the raw reason — plain Slovak only.
+    fb = notifs[-1].content
+    assert "podrobnosti sú v zázname" in fb  # plain user-facing phrase
+    assert "PIPELINE_STATUS" not in fb and "no PIPELINE_STATUS block found" not in fb  # no raw dump
 
 
 # ── apply_coordinator_recommendation (CR-NS-018: one-click accept Coordinator fix) ─
