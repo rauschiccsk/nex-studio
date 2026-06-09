@@ -49,6 +49,21 @@ describe("ExchangePanel banner", () => {
   });
 });
 
+describe("ExchangePanel — unified banner colours (CR-NS-028)", () => {
+  it("agent_working banner uses the blue tone (not emerald)", () => {
+    render(<ExchangePanel board={mkBoard("gate_a", "designer", "agent_working")} inFlight={false} activity={[]} onAction={vi.fn()} />);
+    const banner = screen.getByText("Návrhár pracuje na fáze Rozsah").closest("div")!;
+    expect(banner).toHaveClass("bg-sky-500/10"); // blue = working
+    expect(banner).not.toHaveClass("bg-emerald-500/10"); // no emerald-for-working
+  });
+
+  it("done banner uses the green tone", () => {
+    render(<ExchangePanel board={mkBoard("release", "director", "done")} inFlight={false} activity={[]} onAction={vi.fn()} />);
+    const banner = screen.getByText("Hotovo").closest("div")!;
+    expect(banner).toHaveClass("bg-emerald-500/10"); // green = done
+  });
+});
+
 describe("ExchangePanel — live activity feed below the thread (CR-NS-026)", () => {
   it("renders the activity feed AFTER the thread and ABOVE the action bar while agent_working", () => {
     render(

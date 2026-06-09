@@ -14,7 +14,7 @@ import type {
   TaskPlanFeatNode,
 } from "../../types/task-plan";
 import type { PipelineMessage } from "../../services/api/pipeline";
-import { TASK_STATUS_LABELS } from "./labels";
+import { TASK_STATUS_LABELS, TASK_STATUS_TONE, TONE_DOT } from "./labels";
 
 interface Props {
   versionId: string;
@@ -22,18 +22,12 @@ interface Props {
   messages: PipelineMessage[];
 }
 
-const STATUS_DOT: Record<string, string> = {
-  planned: "bg-slate-500",
-  todo: "bg-slate-500",
-  in_progress: "bg-amber-400",
-  done: "bg-emerald-500",
-  failed: "bg-red-500",
-};
-
 function StatusBadge({ status }: { status: string }) {
+  // Dot colour from the unified palette (CR-NS-028): in_progress=blue, done=green, todo/planned=amber,
+  // failed=red — never amber-for-in_progress.
   return (
     <span className="inline-flex flex-shrink-0 items-center gap-1 text-[10px] text-slate-400">
-      <span className={`h-1.5 w-1.5 rounded-full ${STATUS_DOT[status] ?? "bg-slate-600"}`} />
+      <span className={`h-1.5 w-1.5 rounded-full ${TONE_DOT[TASK_STATUS_TONE[status] ?? "neutral"]}`} />
       {TASK_STATUS_LABELS[status] ?? status}
     </span>
   );
@@ -53,6 +47,10 @@ function rollupStatus(tasks: TaskPlanTaskNode[], dbStatus: string, resting: stri
   if (tasks.some((t) => t.status === "in_progress")) return "in_progress";
   if (tasks.some((t) => t.status === "failed")) return "failed";
   if (tasks.every((t) => t.status === "done")) return "done";
+  // Partially built (some done, none active) — e.g. a paused node with skeleton+auth done, rest todo —
+  // reads as in_progress, NOT resting (CR-NS-028): any started work means it's underway. Only an
+  // all-todo node stays at the resting label (truly not started).
+  if (tasks.some((t) => t.status === "done")) return "in_progress";
   return resting;
 }
 
@@ -154,9 +152,8 @@ export default function TaskPlanPanel({ versionId, messages }: Props) {
           <div className="h-2 w-full overflow-hidden rounded-full bg-slate-800/80">
             <div
               data-testid="taskplan-progress-fill"
-              className={`h-full rounded-full bg-gradient-to-r transition-[width] duration-500 ease-out ${
-                pct === 100 ? "from-emerald-500 to-emerald-400" : "from-amber-500 to-amber-300"
-              }`}
+              // Always green (CR-NS-028): the fill shows completed progress, and green = done.
+              className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-emerald-400 transition-[width] duration-500 ease-out"
               style={{ width: `${pct}%` }}
             />
           </div>
@@ -224,7 +221,7 @@ export default function TaskPlanPanel({ versionId, messages }: Props) {
                                 onClick={() => setSelectedTaskId(isSelected ? null : task.id)}
                                 className={`ml-6 flex w-[calc(100%-1.5rem)] items-center justify-between gap-2 rounded px-1 py-0.5 text-left hover:bg-slate-800/60 ${
                                   isSelected ? "bg-slate-800" : ""
-                                } ${isCurrent ? "ring-1 ring-amber-400/40" : ""}`}
+                                } ${isCurrent ? "ring-1 ring-sky-400/40" : ""}`}
                               >
                                 <span className="flex min-w-0 items-center gap-1.5 text-slate-400">
                                   <span className="truncate">

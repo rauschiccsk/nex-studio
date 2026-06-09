@@ -7,19 +7,11 @@ import type {
   PipelineActionName,
   PipelineBoard,
   PipelineState,
-  PipelineStatus,
 } from "../../services/api/pipeline";
 import PipelineActionBar from "./PipelineActionBar";
 import PipelineActivityFeed from "./PipelineActivityFeed";
 import PipelineMessageBubble from "./PipelineMessageBubble";
-import { ROLE_LABELS, STAGE_LABELS } from "./labels";
-
-const STATUS_BANNER: Record<PipelineStatus, string> = {
-  awaiting_director: "border-amber-500/40 bg-amber-500/10 text-amber-200",
-  blocked: "border-red-500/40 bg-red-500/10 text-red-200",
-  agent_working: "border-emerald-500/30 bg-emerald-500/10 text-emerald-200",
-  done: "border-slate-600/40 bg-slate-700/10 text-slate-300",
-};
+import { PIPELINE_STATUS_TONE, ROLE_LABELS, STAGE_LABELS, TONE_BANNER } from "./labels";
 
 // Compose the banner from machine values + Slovak display labels — never render
 // the raw backend ``next_action`` (it embeds machine tokens like 'coordinator').
@@ -57,7 +49,9 @@ export function ExchangePanel({ board, inFlight, activity, onAction }: Props) {
     threadRef.current?.scrollTo?.({ top: threadRef.current.scrollHeight });
   }, [recent_messages.length]);
 
-  const banner = state ? STATUS_BANNER[state.status] : "";
+  // Banner tone from the unified palette (CR-NS-028): agent_working=blue, awaiting=amber, blocked=red,
+  // done=green — never emerald-for-working.
+  const banner = state ? TONE_BANNER[PIPELINE_STATUS_TONE[state.status] ?? "neutral"] : "";
   // An error-block (agent crash/timeout) escalates via a system notification —
   // its last message is authored by "system" (an agent question is authored by
   // the agent role). Drives the "Skús znova" retry vs answer/approve choice.

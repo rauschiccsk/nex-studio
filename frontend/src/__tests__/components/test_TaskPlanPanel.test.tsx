@@ -132,7 +132,7 @@ describe("TaskPlanPanel — build progress indicator (CR-NS-025 Part 2 / CR-NS-0
     expect(await screen.findByText(/Stav:/)).toBeInTheDocument(); // renamed from "Postup" (CR-NS-026)
     expect(screen.getByText(/3\/8 úloh/)).toBeInTheDocument();
     expect(screen.getByText(/38 %/)).toBeInTheDocument();
-    expect(screen.getByTestId("taskplan-progress-fill")).toHaveClass("from-amber-500"); // <100 → amber
+    expect(screen.getByTestId("taskplan-progress-fill")).toHaveClass("from-emerald-500"); // always green (CR-NS-028)
   });
 
   it("shows 100 % and a green bar when all tasks are done", async () => {
@@ -140,7 +140,7 @@ describe("TaskPlanPanel — build progress indicator (CR-NS-025 Part 2 / CR-NS-0
     render(<TaskPlanPanel versionId="v1" messages={[]} />);
     expect(await screen.findByText(/3\/3 úloh/)).toBeInTheDocument();
     expect(screen.getByText(/100 %/)).toBeInTheDocument();
-    expect(screen.getByTestId("taskplan-progress-fill")).toHaveClass("from-emerald-500"); // 100 → green
+    expect(screen.getByTestId("taskplan-progress-fill")).toHaveClass("from-emerald-500"); // green @100 too
   });
 
   it("surfaces the failed count in red when any task failed", async () => {
@@ -206,6 +206,15 @@ describe("TaskPlanPanel — parent-status rollup from descendant tasks (CR-NS-02
     expect(screen.getAllByText("Čaká").length).toBeGreaterThanOrEqual(1); // feat + tasks at todo
   });
 
+  it("treats a partially-built node (some done, none active) as in_progress, not resting (CR-NS-028)", async () => {
+    vi.mocked(getTaskPlan).mockResolvedValue(planWith(["done", "todo"]));
+    render(<TaskPlanPanel versionId="v1" messages={[]} />);
+    // epic + feat roll up to in_progress ("Prebieha") because some work is done — a paused, partially
+    // built node must NOT read "Naplánované"/"Čaká" (not-started). The tasks stay done/todo.
+    expect((await screen.findAllByText("Prebieha")).length).toBeGreaterThanOrEqual(2); // epic + feat
+    expect(screen.queryByText("Naplánované")).not.toBeInTheDocument(); // epic is NOT resting
+  });
+
   it("falls back to the DB node status when a feat/epic has no tasks (no false 'todo')", async () => {
     // Review-found edge: with zero tasks the children tell us nothing, so trust the authoritative DB
     // status — a done feat/epic with an empty tasks array must read "Hotovo", never "Čaká"/"Naplánované".
@@ -227,5 +236,39 @@ describe("TaskPlanPanel — parent-status rollup from descendant tasks (CR-NS-02
     expect((await screen.findAllByText("Hotovo")).length).toBeGreaterThanOrEqual(2); // epic + feat via DB fallback
     expect(screen.queryByText("Čaká")).not.toBeInTheDocument();
     expect(screen.queryByText("Naplánované")).not.toBeInTheDocument();
+  });
+});
+
+describe("TaskPlanPanel — unified status colours (CR-NS-028)", () => {
+  // The status dot colour comes from the shared palette: in_progress=blue(sky), todo/planned=amber,
+  // done=green(emerald), failed=red. Single-status plans → epic+feat+task all share that one tone.
+  it("in_progress → blue dot, never amber", async () => {
+    vi.mocked(getTaskPlan).mockResolvedValue(planWith(["in_progress"]));
+    const { container } = render(<TaskPlanPanel versionId="v1" messages={[]} />);
+    await screen.findAllByText("Prebieha");
+    expect(container.querySelector(".bg-sky-500")).toBeInTheDocument(); // blue
+    expect(container.querySelector(".bg-amber-400")).not.toBeInTheDocument(); // no amber-for-in_progress
+  });
+
+  it("todo/planned → amber dot, never blue", async () => {
+    vi.mocked(getTaskPlan).mockResolvedValue(planWith(["todo"]));
+    const { container } = render(<TaskPlanPanel versionId="v1" messages={[]} />);
+    await screen.findAllByText("Čaká");
+    expect(container.querySelector(".bg-amber-400")).toBeInTheDocument(); // yellow
+    expect(container.querySelector(".bg-sky-500")).not.toBeInTheDocument();
+  });
+
+  it("done → green dot", async () => {
+    vi.mocked(getTaskPlan).mockResolvedValue(planWith(["done"]));
+    const { container } = render(<TaskPlanPanel versionId="v1" messages={[]} />);
+    await screen.findAllByText("Hotovo");
+    expect(container.querySelector(".bg-emerald-500")).toBeInTheDocument(); // green
+  });
+
+  it("failed → red dot", async () => {
+    vi.mocked(getTaskPlan).mockResolvedValue(planWith(["failed"]));
+    const { container } = render(<TaskPlanPanel versionId="v1" messages={[]} />);
+    await screen.findAllByText("Zlyhalo");
+    expect(container.querySelector(".bg-red-500")).toBeInTheDocument(); // red
   });
 });

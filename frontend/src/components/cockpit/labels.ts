@@ -57,6 +57,60 @@ export const TASK_STATUS_LABELS: Record<string, string> = {
   failed: "Zlyhalo",
 };
 
+// ── Unified cockpit status palette (CR-NS-028) ────────────────────────────────
+// ONE colour means exactly one thing across the whole cockpit, so it can't drift:
+//   green (emerald) = done / ok / pass
+//   blue  (sky)     = in_progress / working / currently active
+//   amber (yellow)  = waiting / todo / planned / awaiting_director
+//   red             = error / fail / blocked
+//   neutral (slate) = idle / inactive
+// Components map a status → a tone here (single source of truth), then a tone → their
+// own class shape (dot / text / banner) via the TONE_* maps below.
+export type StatusTone = "green" | "blue" | "amber" | "red" | "neutral";
+
+// Task/node lifecycle status (tasks.status, and derived feat/epic) → tone.
+export const TASK_STATUS_TONE: Record<string, StatusTone> = {
+  done: "green",
+  in_progress: "blue",
+  planned: "amber",
+  todo: "amber",
+  failed: "red",
+};
+
+// Pipeline state status (pipeline_state.status) → tone.
+export const PIPELINE_STATUS_TONE: Record<string, StatusTone> = {
+  agent_working: "blue",
+  awaiting_director: "amber",
+  blocked: "red",
+  done: "green",
+};
+
+// Tone → class shape. Centralising the colour VALUES too (not just the semantic
+// assignment) keeps "blue" the same blue everywhere.
+export const TONE_DOT: Record<StatusTone, string> = {
+  green: "bg-emerald-500",
+  blue: "bg-sky-500",
+  amber: "bg-amber-400",
+  red: "bg-red-500",
+  neutral: "bg-slate-500",
+};
+
+export const TONE_TEXT: Record<StatusTone, string> = {
+  green: "text-emerald-400",
+  blue: "text-sky-400",
+  amber: "text-amber-400",
+  red: "text-red-400",
+  neutral: "text-slate-600",
+};
+
+export const TONE_BANNER: Record<StatusTone, string> = {
+  green: "border-emerald-500/40 bg-emerald-500/10 text-emerald-200",
+  blue: "border-sky-500/40 bg-sky-500/10 text-sky-200",
+  amber: "border-amber-500/40 bg-amber-500/10 text-amber-200",
+  red: "border-red-500/40 bg-red-500/10 text-red-200",
+  neutral: "border-slate-600/40 bg-slate-700/10 text-slate-300",
+};
+
 // Canonical stage order — mirrors backend orchestrator.STAGE_ORDER. Shared so the
 // rail and the action bar don't each keep a copy (DRY).
 export const STAGE_ORDER: PipelineStage[] = [

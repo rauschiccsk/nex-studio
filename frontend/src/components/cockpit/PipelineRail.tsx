@@ -6,7 +6,8 @@ import type {
   PipelineBoard,
   PipelineState,
 } from "../../services/api/pipeline";
-import { ROLE_LABELS, STAGE_CODES, STAGE_LABELS, STAGE_ORDER } from "./labels";
+import type { StatusTone } from "./labels";
+import { ROLE_LABELS, STAGE_CODES, STAGE_LABELS, STAGE_ORDER, TONE_TEXT } from "./labels";
 
 // The agent actually active (CR-NS-018): while working = the real streaming role
 // (latest activity frame, fallback the stage actor); at rest = who just acted
@@ -38,11 +39,13 @@ const AGENTS: { actor: PipelineActor; emoji: string }[] = [
 
 type ChipStatus = "idle" | "working" | "awaiting" | "blocked";
 
-const CHIP_STYLE: Record<ChipStatus, string> = {
-  idle: "text-slate-600",
-  working: "text-emerald-400",
-  awaiting: "text-amber-400",
-  blocked: "text-red-400",
+// Chip colour from the unified palette (CR-NS-028): working=blue, awaiting=amber, blocked=red,
+// idle=neutral — never emerald-for-working.
+const CHIP_TONE: Record<ChipStatus, StatusTone> = {
+  idle: "neutral",
+  working: "blue",
+  awaiting: "amber",
+  blocked: "red",
 };
 
 const CHIP_LABEL: Record<ChipStatus, string> = {
@@ -126,7 +129,7 @@ export function PipelineRail({ state, activeAgent = null }: Props) {
                   <span aria-hidden="true">{emoji}</span>
                   {ROLE_LABELS[actor]}
                 </span>
-                <span className={`font-mono text-[10px] ${CHIP_STYLE[s]}`}>{CHIP_LABEL[s]}</span>
+                <span className={`font-mono text-[10px] ${TONE_TEXT[CHIP_TONE[s]]}`}>{CHIP_LABEL[s]}</span>
               </li>
             );
           })}

@@ -26,7 +26,9 @@ export function PipelineActivityFeed({ activity }: Props) {
 
   return (
     <div className="flex max-h-32 flex-col overflow-y-auto border-b border-slate-800 bg-slate-950/60 px-4 py-2">
-      <div className="mb-1 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-400">
+      {/* Blue = working (CR-NS-028): this feed only renders while the agent is working, so its accent
+          follows the "in_progress/working = blue" taxonomy — not emerald (which means done). */}
+      <div className="mb-1 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-sky-400">
         <Loader2 className="h-3 w-3 animate-spin" />
         Živá aktivita agenta
       </div>
