@@ -39,6 +39,23 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+// Roll a parent's DISPLAYED status UP from its descendant tasks (CR-NS-026). The DB feat.status /
+// epic.status lag the build loop (the orchestrator recomputes feat status, but the tree fetch can be
+// a beat behind), so WHEN there are children the badge is derived from them — always consistent with
+// the tasks and the % indicator. Precedence: any in_progress wins, else any failed, else all-done,
+// else the parent's resting label ("todo" for a feat, "planned" for an epic — epics use
+// planned/in_progress/done). When there are NO tasks to derive from (a feat/epic not yet materialized,
+// or genuinely empty), the children tell us nothing, so we fall back to the authoritative DB node
+// status `dbStatus` rather than wrongly showing the resting label (review: a done node with an empty
+// tasks array must not read as "todo").
+function rollupStatus(tasks: TaskPlanTaskNode[], dbStatus: string, resting: string): string {
+  if (tasks.length === 0) return dbStatus;
+  if (tasks.some((t) => t.status === "in_progress")) return "in_progress";
+  if (tasks.some((t) => t.status === "failed")) return "failed";
+  if (tasks.every((t) => t.status === "done")) return "done";
+  return resting;
+}
+
 interface AuditView {
   task_pass?: boolean;
   findings?: string[];
@@ -126,17 +143,20 @@ export default function TaskPlanPanel({ versionId, messages }: Props) {
       </div>
 
       {showProgress && (
-        <div className="flex-shrink-0 border-b border-slate-800 px-3 py-2">
-          <div className="mb-1 text-[10px] text-slate-400">
-            <span>
-              Postup: {doneCount}/{totalCount} úloh ({pct} %)
+        <div className="flex-shrink-0 border-b border-slate-800 px-3 py-2.5">
+          <div className="mb-1.5 flex items-baseline justify-between gap-2 text-[11px]">
+            <span className="text-slate-400">
+              Stav: <span className="text-slate-300">{doneCount}/{totalCount} úloh</span>
+              {failedCount > 0 && <span className="font-medium text-red-400"> · {failedCount} zlyhané</span>}
             </span>
-            {failedCount > 0 && <span className="text-red-400"> · {failedCount} zlyhané</span>}
+            <span className="font-semibold tabular-nums text-slate-100">{pct} %</span>
           </div>
-          <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
+          <div className="h-2 w-full overflow-hidden rounded-full bg-slate-800/80">
             <div
               data-testid="taskplan-progress-fill"
-              className={`h-full rounded-full transition-all ${pct === 100 ? "bg-emerald-500" : "bg-amber-400"}`}
+              className={`h-full rounded-full bg-gradient-to-r transition-[width] duration-500 ease-out ${
+                pct === 100 ? "from-emerald-500 to-emerald-400" : "from-amber-500 to-amber-300"
+              }`}
               style={{ width: `${pct}%` }}
             />
           </div>
@@ -155,6 +175,11 @@ export default function TaskPlanPanel({ versionId, messages }: Props) {
         ) : (
           plan.plan.map((epic: TaskPlanEpicNode) => {
             const epicCollapsed = collapsed.has(epic.id);
+            const epicStatus = rollupStatus(
+              epic.feats.flatMap((f) => f.tasks),
+              epic.status,
+              "planned",
+            );
             return (
               <div key={epic.id} className="mb-1">
                 <button
@@ -167,12 +192,13 @@ export default function TaskPlanPanel({ versionId, messages }: Props) {
                       {epic.number}. {epic.title}
                     </span>
                   </span>
-                  <StatusBadge status={epic.status} />
+                  <StatusBadge status={epicStatus} />
                 </button>
 
                 {!epicCollapsed &&
                   epic.feats.map((feat: TaskPlanFeatNode) => {
                     const featCollapsed = collapsed.has(feat.id);
+                    const featStatus = rollupStatus(feat.tasks, feat.status, "todo");
                     return (
                       <div key={feat.id} className="ml-3">
                         <button
@@ -185,7 +211,7 @@ export default function TaskPlanPanel({ versionId, messages }: Props) {
                               {feat.number}. {feat.title}
                             </span>
                           </span>
-                          <StatusBadge status={feat.status} />
+                          <StatusBadge status={featStatus} />
                         </button>
 
                         {!featCollapsed &&

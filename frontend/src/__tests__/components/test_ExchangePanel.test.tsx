@@ -48,3 +48,34 @@ describe("ExchangePanel banner", () => {
     expect(screen.getByText("Na rade: Director — odpovedz Návrhár-ovi")).toBeInTheDocument();
   });
 });
+
+describe("ExchangePanel — live activity feed below the thread (CR-NS-026)", () => {
+  it("renders the activity feed AFTER the thread and ABOVE the action bar while agent_working", () => {
+    render(
+      <ExchangePanel
+        board={mkBoard("build", "implementer", "agent_working")}
+        inFlight={false}
+        activity={[{ stage: "build", actor: "implementer", kind: "tool", line: "číta docs/spec.md" }]}
+        onAction={vi.fn()}
+      />,
+    );
+    const thread = screen.getByText("Zatiaľ žiadne správy v pipeline.");
+    const feed = screen.getByText("Živá aktivita agenta");
+    const actionBar = screen.getByText("Pauza"); // build/agent_working action (CR-NS-027)
+    // DOM order top-to-bottom: thread → live activity → action bar
+    expect(thread.compareDocumentPosition(feed) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(feed.compareDocumentPosition(actionBar) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("does not render the activity feed when not agent_working", () => {
+    render(
+      <ExchangePanel
+        board={mkBoard("build", "implementer", "awaiting_director")}
+        inFlight={false}
+        activity={[{ stage: "build", actor: "implementer", kind: "tool", line: "x" }]}
+        onAction={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText("Živá aktivita agenta")).not.toBeInTheDocument();
+  });
+});

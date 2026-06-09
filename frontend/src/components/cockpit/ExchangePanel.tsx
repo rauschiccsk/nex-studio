@@ -104,12 +104,6 @@ export function ExchangePanel({ board, inFlight, activity, onAction }: Props) {
         </div>
       )}
 
-      {state?.status === "agent_working" && (
-        <div className="flex-shrink-0">
-          <PipelineActivityFeed activity={activity} />
-        </div>
-      )}
-
       <div ref={threadRef} className="flex-1 space-y-2 overflow-y-auto p-4">
         {recent_messages.length === 0 ? (
           <div className="py-8 text-center text-xs text-slate-500">
@@ -119,6 +113,14 @@ export function ExchangePanel({ board, inFlight, activity, onAction }: Props) {
           recent_messages.map((m) => <PipelineMessageBubble key={m.id} message={m} />)
         )}
       </div>
+
+      {/* Live activity feed BELOW the thread (CR-NS-026): flow reads top-to-bottom banner → thread →
+          live activity → action bar, so the streaming action sits right above the controls. */}
+      {state?.status === "agent_working" && (
+        <div className="flex-shrink-0">
+          <PipelineActivityFeed activity={activity} />
+        </div>
+      )}
 
       <div className="flex-shrink-0 border-t border-slate-800 p-3">
         <PipelineActionBar
