@@ -227,3 +227,16 @@ def test_task_plan_accepts_omitted_module_id():
     res = parse_status_block(_task_plan_block(module_id=None))
     assert isinstance(res, PipelineStatusBlock)
     assert res.plan.epics[0].module_id is None
+
+
+def test_parse_failure_names_the_exact_missing_field():
+    # WS-B3 (CR-NS-029): a task_type omission → the ParseFailure reason names the EXACT field + index
+    # (so the parse-retry re-prompt is actionable and the agent fixes it on the first retry), not a
+    # raw stringified Pydantic error array.
+    epic = {"title": "E1", "feats": [{"title": "F1", "tasks": [{"title": "T1"}]}]}  # task_type omitted
+    block = _block(stage="task_plan", kind="gate_report", summary="plán", awaiting="director", plan={"epics": [epic]})
+    res = parse_status_block(block)
+    assert isinstance(res, ParseFailure)
+    # the exact dotted+indexed path, not a stringified error array
+    assert "plan.epics[0].feats[0].tasks[0].task_type" in res.reason
+    assert "[{" not in res.reason  # NOT the raw `exc.errors()` list dump

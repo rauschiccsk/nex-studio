@@ -390,8 +390,9 @@ async def test_run_dispatch_parse_retry_recovers(db_session, monkeypatch):
     state = await orchestrator.run_dispatch(db_session, version.id)
 
     assert state.status == "awaiting_director"
-    # the retry prompt fed the JSON error back to the agent
-    assert any("nebol platný JSON" in p for p in fake.prompts)
+    # the retry prompt fed the failure reason back to the agent (CR-NS-029: assert the stable re-prompt
+    # prefix, robust to the reason text — 35d1a28 rewrote the re-prompt away from the old "nebol platný JSON").
+    assert any("sa nepodarilo spracovať" in p for p in fake.prompts)
     assert len(fake.prompts) == 2  # primary + one recovery re-emit
 
 
@@ -2213,3 +2214,52 @@ async def test_return_at_task_plan_blocked_also_keeps_session(db_session, fake_c
         )
     ).scalar_one_or_none()
     assert row is not None and row.claude_session_id == seeded_id  # kept → --resume, no charter re-inject
+
+
+async def test_start_resets_all_agent_sessions(db_session, fake_claude):
+    # WS-B1 (CR-NS-029): a new-version kickoff ("start") drops ALL of the project's OrchestratorSession
+    # rows so every agent starts fresh — no stale cross-version --resume context.
+    from backend.db.models.orchestrator import OrchestratorSession
+
+    version, project = _make_version(db_session)
+    for role in ("designer", "coordinator", "implementer", "auditor", "customer"):
+        db_session.add(OrchestratorSession(project_slug=project.slug, role=role, claude_session_id=uuid.uuid4()))
+    db_session.flush()
+
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+
+    rows = (
+        db_session.execute(select(OrchestratorSession).where(OrchestratorSession.project_slug == project.slug))
+        .scalars()
+        .all()
+    )
+    assert rows == []  # all 5 agent sessions reset on kickoff
+
+
+async def test_regate_preserves_agent_sessions(db_session, fake_claude):
+    # WS-B1 / Director decision D2: a re-gate (verdict FAIL → rewind) PRESERVES sessions — it's a
+    # refinement, not a fresh start, and never reaches the "start" reset branch.
+    from backend.db.models.orchestrator import OrchestratorSession
+
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    seeded_id = uuid.uuid4()
+    db_session.add(OrchestratorSession(project_slug=project.slug, role="designer", claude_session_id=seeded_id))
+    db_session.flush()
+    state = orchestrator._get_state(db_session, version.id)
+    state.current_stage = "gate_g"
+    state.current_actor = "auditor"
+    state.status = "awaiting_director"
+    db_session.flush()
+
+    state = await orchestrator.apply_action(
+        db_session, version_id=version.id, action="verdict", payload={"verdict": "FAIL", "entry_stage": "gate_a"}
+    )
+
+    assert state.is_regate is True and state.current_stage == "gate_a"  # re-gate rewound
+    row = db_session.execute(
+        select(OrchestratorSession).where(
+            OrchestratorSession.project_slug == project.slug, OrchestratorSession.role == "designer"
+        )
+    ).scalar_one_or_none()
+    assert row is not None and row.claude_session_id == seeded_id  # session kept (D2)

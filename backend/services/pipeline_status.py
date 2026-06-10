@@ -160,6 +160,23 @@ class ParseFailure:
 ParseResult = Union[PipelineStatusBlock, ParseFailure]
 
 
+def _format_validation_errors(exc: ValidationError) -> str:
+    """Render a Pydantic ValidationError as compact ``loc: msg`` entries naming the exact field + index
+    (WS-B3, CR-NS-029), e.g. ``plan.epics[0].feats[1].tasks[2].task_type: Field required`` — so the
+    parse-retry re-prompt tells the agent EXACTLY which field to fix, instead of dumping the raw error
+    array (which caused the multi-round task_type-omission loops)."""
+    entries = []
+    for err in exc.errors(include_url=False):
+        loc = ""
+        for part in err["loc"]:
+            if isinstance(part, int):
+                loc += f"[{part}]"
+            else:
+                loc += f".{part}" if loc else str(part)
+        entries.append(f"{loc}: {err['msg']}")
+    return "; ".join(entries)
+
+
 def parse_status_block(stdout: str) -> ParseResult:
     """Parse the single PIPELINE_STATUS block from an agent's stdout.
 
@@ -183,7 +200,9 @@ def parse_status_block(stdout: str) -> ParseResult:
     try:
         block = PipelineStatusBlock.model_validate(data)
     except ValidationError as exc:
-        return ParseFailure(f"status block schema invalid: {exc.errors(include_url=False)}")
+        # WS-B3: name the exact field(s) so the parse-retry re-prompt (orchestrator.py, which
+        # interpolates this reason) tells the agent what to fix — not a stringified error array.
+        return ParseFailure(f"status block schema invalid — {_format_validation_errors(exc)}")
 
     if block.stage not in STAGES:
         return ParseFailure(f"unknown stage {block.stage!r}")

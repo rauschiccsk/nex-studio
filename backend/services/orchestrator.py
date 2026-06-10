@@ -1763,6 +1763,17 @@ async def apply_action(
             content="Spustenie pipeline.",
             payload={"flow_type": flow_type},
         )
+        # WS-B1 (CR-NS-029): a new-version kickoff starts every agent fresh — drop all of the project's
+        # OrchestratorSession rows so no stale cross-version --resume context leaks in. Per Director
+        # decision D2, a re-gate (verdict FAIL → rewind, below) must PRESERVE sessions — and it does
+        # automatically: re-gate mutates existing state, it never reaches this "start" branch (which is
+        # gated on state is None), so only a genuine kickoff resets.
+        db.execute(
+            delete(OrchestratorSession).where(
+                OrchestratorSession.project_slug == _project_slug_for_version(db, version_id)
+            )
+        )
+        db.flush()
         _begin_dispatch(db, state)
         return state
 
