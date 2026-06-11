@@ -189,8 +189,10 @@ async def _maybe_notify(db, version_id: uuid.UUID, state: PipelineState) -> None
     """
     if state.status not in _NOTIFY_STATUSES:
         return
-    if registry.present_director_ids(version_id):
-        return  # a Director is already on the board — no out-of-band nudge
+    if registry.active_director_ids(version_id):
+        # a Director is on the board AND not "away" (E6, CR-NS-038) — no out-of-band nudge. An away
+        # Director (board open but stepped away) is NOT active, so the ping fires.
+        return
     chat_id = _owner_chat_id(db, version_id)
     if not chat_id:
         logger.info("version %s: no owner telegram_chat_id — skip notify", version_id)

@@ -11,6 +11,7 @@ All Director-only (``require_ri_role`` / ``verify_ws_token`` + ``role == 'ri'``)
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 
@@ -248,6 +249,22 @@ async def open_debug_terminal(
     return AgentTerminalSessionRead.model_validate(row)
 
 
+async def _apply_ws_presence_frame(version_id: uuid.UUID, websocket: WebSocket, raw: str) -> None:
+    """Act on an inbound board-WS frame (E6, CR-NS-038). The ONLY actionable frame is the presence
+    annotation ``{"type":"presence","away":<bool>}`` → :meth:`registry.set_away`; any other or
+    malformed frame is ignored SILENTLY. Never raises — the caller's loop must keep draining so a
+    real ``WebSocketDisconnect`` still surfaces."""
+    try:
+        msg = json.loads(raw)
+    except (ValueError, TypeError):
+        return  # non-JSON frame — ignore
+    # A presence frame is acted on ONLY when well-formed: type "presence" + an explicit BOOL `away`.
+    # A frame missing/with a non-bool `away` is malformed → ignored (don't coerce None→False, which
+    # would silently clear "away" off a bad frame).
+    if isinstance(msg, dict) and msg.get("type") == "presence" and isinstance(msg.get("away"), bool):
+        await registry.set_away(version_id, websocket, msg["away"])
+
+
 @router.websocket("/ws/{version_id}")
 async def pipeline_ws(
     websocket: WebSocket,
@@ -272,10 +289,10 @@ async def pipeline_ws(
     await registry.connect(version_id, websocket, user.id)
     try:
         await websocket.send_json({"type": "state_changed", "board": snapshot})
-        # Actions flow through POST; inbound WS frames are ignored (drain to
-        # detect disconnect).
+        # Actions flow through POST. Inbound frames carry only the E6 presence annotation
+        # (CR-NS-038) — handled silently; the loop still drains to detect disconnect, exactly as before.
         while True:
-            await websocket.receive_text()
+            await _apply_ws_presence_frame(version_id, websocket, await websocket.receive_text())
     except WebSocketDisconnect:
         pass
     finally:

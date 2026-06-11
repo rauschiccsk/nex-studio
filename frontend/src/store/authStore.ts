@@ -15,6 +15,7 @@ import { persist } from "zustand/middleware";
 import { TOKEN_STORAGE_KEY, registerAuthCallback } from "@/services/api";
 import type { AuthUser } from "@/services/api/auth";
 import { loginApi, logoutApi, getMeApi } from "@/services/api/auth";
+import { usePresenceStore } from "@/store/usePresenceStore";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -53,6 +54,10 @@ export const useAuthStore = create<AuthState>()(
         }
 
         set({ token: res.access_token, user: res.user });
+
+        // E6 (CR-NS-038): a fresh login starts "at computer" — never silently carry a persisted
+        // "away" from a prior session into a new one.
+        usePresenceStore.getState().setIsAway(false);
       },
 
       async logout(): Promise<void> {

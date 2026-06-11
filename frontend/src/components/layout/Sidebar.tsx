@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuthStore } from "@/store/authStore";
 import { useActiveContextStore } from "@/store/activeContextStore";
+import { usePresenceStore } from "@/store/usePresenceStore";
 import { getAvailableRolesApi, type AgentRole, type AvailableRoles } from "@/services/api/agentTerminal";
 import { usePipelineWs } from "@/hooks/usePipelineWs";
 
@@ -147,6 +148,8 @@ export default function Sidebar() {
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
+  const isAway = usePresenceStore((s) => s.isAway);
+  const setIsAway = usePresenceStore((s) => s.setIsAway);
   const selectedProject = useActiveContextStore((s) => s.selectedProject);
   const selectedVersion = useActiveContextStore((s) => s.selectedVersion);
   const setSelectedProject = useActiveContextStore((s) => s.setSelectedProject);
@@ -318,6 +321,26 @@ export default function Sidebar() {
 
       {/* User */}
       <div className="p-3 border-t border-slate-800">
+        {/* E6 (CR-NS-038): Director-only Telegram presence toggle. "Preč" → agent-needs-Director
+            events ping Telegram even with the cockpit open. Collapsed sidebar → icon only. */}
+        {user?.role === "ri" && (
+          <button
+            onClick={() => setIsAway(!isAway)}
+            title={
+              isAway
+                ? "Preč — upozornenia na Telegram zapnuté aj s otvoreným cockpitom. Klikni pre „Pri počítači“."
+                : "Pri počítači — bez Telegram upozornení (vidíš cockpit). Klikni pred odchodom od počítača."
+            }
+            className={`flex items-center gap-2 w-full rounded-lg px-2 py-1.5 mb-1 text-xs transition-colors ${
+              isAway
+                ? "bg-amber-500/10 text-amber-300 hover:bg-amber-500/20"
+                : "text-slate-400 hover:bg-slate-800/60"
+            } ${collapsed ? "justify-center" : ""}`}
+          >
+            <span className="text-sm leading-none">{isAway ? "🌙" : "🟢"}</span>
+            {!collapsed && <span>{isAway ? "Preč" : "Pri počítači"}</span>}
+          </button>
+        )}
         <div className={`flex items-center gap-2.5 px-2 py-1.5 rounded-lg ${collapsed ? "justify-center" : ""}`}>
           <div className="w-7 h-7 rounded-full bg-primary-600 flex items-center justify-center text-xs font-bold shrink-0">
             {initials}

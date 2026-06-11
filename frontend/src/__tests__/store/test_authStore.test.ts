@@ -19,6 +19,7 @@ vi.mock("@/services/api", () => ({
 }));
 
 import { useAuthStore } from "@/store/authStore";
+import { usePresenceStore } from "@/store/usePresenceStore";
 import { loginApi, logoutApi, getMeApi } from "@/services/api/auth";
 import type { AuthUser, LoginResponse } from "@/services/api/auth";
 
@@ -83,6 +84,15 @@ describe("authStore", () => {
     expect(window.localStorage.getItem("nex_studio_token")).toBe(
       "jwt.token.here",
     );
+  });
+
+  it("login resets the presence away flag to false (E6, CR-NS-038)", async () => {
+    (loginApi as Mock).mockResolvedValue(fakeLoginResponse);
+    usePresenceStore.setState({ isAway: true }); // a persisted "away" from a prior session
+
+    await useAuthStore.getState().login("zoltan", "secret");
+
+    expect(usePresenceStore.getState().isAway).toBe(false); // fresh login starts at-computer
   });
 
   it("login propagates API errors", async () => {

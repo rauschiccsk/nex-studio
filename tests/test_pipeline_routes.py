@@ -17,7 +17,7 @@ from backend.db.models.projects import Project
 from backend.db.models.versions import Version
 from backend.db.session import get_db
 from backend.services import orchestrator, pipeline_runner
-from backend.services.pipeline_ws import registry
+from backend.services.pipeline_ws import _Conn, registry
 
 
 def _block(stage="kickoff", kind="done", summary="ok", awaiting="director", **extra) -> str:
@@ -332,7 +332,7 @@ def test_post_action_broadcasts_to_registered_socket(client, db_session):
     version = _make_version(db_session, client._ri)
     ws = _FakeWS()
     # Register a live socket directly (test setup — bypass the async connect lock).
-    registry._conns[version.id].add((ws, client._ri.id))
+    registry._conns[version.id][ws] = _Conn(user_id=client._ri.id)
 
     client.post(f"/api/v1/pipeline/{version.id}/action", json={"action": "start"})
 

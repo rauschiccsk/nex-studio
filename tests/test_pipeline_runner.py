@@ -24,12 +24,17 @@ class _FakeRegistry:
     def __init__(self):
         self.events: list = []
         self.present: set = set()
+        self.away: bool = False  # E6 (CR-NS-038): when True, a present Director is NOT active
 
     async def broadcast(self, vid, payload):
         self.events.append((vid, payload))
 
     def present_director_ids(self, vid):
         return self.present
+
+    def active_director_ids(self, vid):
+        # present AND not away (E6) — what the notify gate reads
+        return set() if self.away else self.present
 
 
 def _make_version(db_session) -> Version:
@@ -221,6 +226,23 @@ async def test_notify_suppressed_when_director_present(db_session, monkeypatch):
     await pipeline_runner._run(version.id)
 
     assert sent == []
+
+
+async def test_notify_fires_when_director_present_but_away(db_session, monkeypatch):
+    # E6 (CR-NS-038): board open but the Director marked "away" → active_director_ids is empty → the
+    # Telegram nudge fires anyway (the whole point of the away toggle).
+    version = _make_version(db_session)
+    _seed_working_state(db_session, version.id)
+    _set_owner_with_chat(db_session, version, chat_id="999")
+    fake_reg = _wire_runner(db_session, monkeypatch)
+    fake_reg.present = {uuid.uuid4()}  # board socket open
+    fake_reg.away = True  # but stepped away
+    monkeypatch.setattr(orchestrator, "run_dispatch", _settle_awaiting)
+    sent = _capture_sends(monkeypatch)
+
+    await pipeline_runner._run(version.id)
+
+    assert len(sent) == 1 and sent[0][1] == "999"
 
 
 async def test_notify_noop_when_no_chat_id(db_session, monkeypatch):

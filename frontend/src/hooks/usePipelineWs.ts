@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useAuthStore } from "../store/authStore";
+import { usePresenceStore } from "../store/usePresenceStore";
 import {
   buildPipelineWsUrl,
   getPipelineBoardApi,
@@ -29,6 +30,7 @@ export interface UsePipelineWs {
 
 export function usePipelineWs(versionId: string | null): UsePipelineWs {
   const token = useAuthStore((s) => s.token);
+  const isAway = usePresenceStore((s) => s.isAway);
   const [board, setBoard] = useState<PipelineBoard | null>(null);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -62,6 +64,14 @@ export function usePipelineWs(versionId: string | null): UsePipelineWs {
       if (!cancelled) {
         setConnected(true);
         setError(null);
+        // E6 (CR-NS-038): a fresh connection inherits the current away state. Read the LIVE value
+        // (getState) — this effect is keyed on [versionId, token], not isAway, so the closure value
+        // could be stale; the separate effect below pushes subsequent toggles.
+        try {
+          ws.send(JSON.stringify({ type: "presence", away: usePresenceStore.getState().isAway }));
+        } catch {
+          /* socket race — the toggle effect will resend on the next change */
+        }
       }
     };
 
@@ -113,6 +123,19 @@ export function usePipelineWs(versionId: string | null): UsePipelineWs {
       wsRef.current = null;
     };
   }, [versionId, token]);
+
+  // E6 (CR-NS-038): push the away state live whenever it toggles, over the EXISTING socket — no
+  // reconnect. On first mount / before open this no-ops (the onopen handler sends the initial state).
+  useEffect(() => {
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      try {
+        ws.send(JSON.stringify({ type: "presence", away: isAway }));
+      } catch {
+        /* socket race — ignored */
+      }
+    }
+  }, [isAway]);
 
   const replaceBoard = useCallback((b: PipelineBoard) => setBoard(b), []);
 
