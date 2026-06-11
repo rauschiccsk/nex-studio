@@ -742,6 +742,146 @@ async def test_accept_merged_rejected_without_failed_task(db_session, fake_claud
         await orchestrator.apply_action(db_session, version_id=version.id, action="accept_merged")
 
 
+# ── E7: Coordinator-as-operator — structured directive + executable actions (F-008, CR-NS-032) ─────
+
+
+def _coord_directive(**over):
+    d = {
+        "triage_class": "programmer_guidance",
+        "proposed_action": "coordinator_reset_task",
+        "target": {},
+        "params": {},
+        "rationale": "r",
+        "confidence": 0.9,
+    }
+    d.update(over)
+    return d
+
+
+def _seed_coordinator_directive(db_session, version_id, directive):
+    db_session.add(
+        PipelineMessage(
+            version_id=version_id,
+            stage="build",
+            author="coordinator",
+            recipient="director",
+            kind="gate_report",
+            content="Koordinátor: relay",
+            payload={"coordinator_directive": directive},
+        )
+    )
+    db_session.flush()
+
+
+def test_coordinator_directive_executable_gate():
+    # F-008 §9: execute only an executable action, non-director_decision, confidence ≥ 0.80; else relay.
+    assert orchestrator._coordinator_directive_executable(_coord_directive()) is True
+    assert orchestrator._coordinator_directive_executable(_coord_directive(confidence=0.5)) is False
+    assert orchestrator._coordinator_directive_executable(_coord_directive(triage_class="director_decision")) is False
+    assert orchestrator._coordinator_directive_executable(_coord_directive(proposed_action="relay")) is False
+    assert orchestrator._coordinator_directive_executable(None) is False
+
+
+async def _build_at_halt(db_session, fake_claude):
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _epic, _feat, (task,) = _seed_one_feat(db_session, version, project, ["T"])
+    task.status = "failed"
+    db_session.flush()
+    state = _to_build(db_session, version)
+    state.status = "awaiting_director"
+    db_session.flush()
+    return version, project, task
+
+
+async def test_apply_coordinator_recommendation_executes_reset_task(db_session, fake_claude):
+    # F-008 §9 (the no-op fix): an executable directive RUNS its executor (not advisory text).
+    version, _project, task = await _build_at_halt(db_session, fake_claude)
+    _seed_coordinator_directive(
+        db_session,
+        version.id,
+        _coord_directive(proposed_action="coordinator_reset_task", target={"task_id": str(task.id)}),
+    )
+    state = await orchestrator.apply_action(
+        db_session, version_id=version.id, action="apply_coordinator_recommendation"
+    )
+    db_session.refresh(task)
+    assert task.status == "todo"  # executed (reset), not relayed
+    assert state.status == "agent_working"  # re-dispatched
+    assert any(
+        m.kind == "approval" and "Vykonaný Koordinátorov návrh" in m.content for m in _msgs(db_session, version.id)
+    )
+
+
+async def test_apply_coordinator_recommendation_executes_move_baseline(db_session, fake_claude, monkeypatch):
+    monkeypatch.setattr(orchestrator, "_repo_parent", lambda root, commit: "p" * 40)
+    version, _project, task = await _build_at_halt(db_session, fake_claude)
+    task.baseline_sha = "m" * 40
+    db_session.flush()
+    _seed_coordinator_directive(
+        db_session,
+        version.id,
+        _coord_directive(
+            proposed_action="coordinator_move_baseline", target={"task_id": str(task.id), "commit": "m" * 40}
+        ),
+    )
+    await orchestrator.apply_action(db_session, version_id=version.id, action="apply_coordinator_recommendation")
+    db_session.refresh(task)
+    assert task.baseline_sha == "p" * 40 and task.status == "todo"  # baseline moved to parent + re-verify
+
+
+async def test_apply_coordinator_recommendation_relay_when_not_executable(db_session, fake_claude):
+    # A director_decision / low-confidence directive is a PURE relay — no execution, advisory approval.
+    version, _project, task = await _build_at_halt(db_session, fake_claude)
+    _seed_coordinator_directive(
+        db_session, version.id, _coord_directive(triage_class="director_decision", proposed_action="relay")
+    )
+    await orchestrator.apply_action(db_session, version_id=version.id, action="apply_coordinator_recommendation")
+    db_session.refresh(task)
+    assert task.status == "failed"  # NOT executed — left for the Director to decide
+    assert any(m.kind == "approval" and "Schválené odporúčania" in m.content for m in _msgs(db_session, version.id))
+
+
+async def test_coordinator_clear_session_executor(db_session, fake_claude):
+    from backend.db.models.orchestrator import OrchestratorSession
+
+    version, project, _task = await _build_at_halt(db_session, fake_claude)
+    db_session.add(OrchestratorSession(project_slug=project.slug, role="designer", claude_session_id=uuid.uuid4()))
+    db_session.flush()
+    _seed_coordinator_directive(
+        db_session,
+        version.id,
+        _coord_directive(proposed_action="coordinator_clear_session", target={"role": "designer"}),
+    )
+    await orchestrator.apply_action(db_session, version_id=version.id, action="apply_coordinator_recommendation")
+    row = db_session.execute(
+        select(OrchestratorSession).where(
+            OrchestratorSession.project_slug == project.slug, OrchestratorSession.role == "designer"
+        )
+    ).scalar_one_or_none()
+    assert row is None  # session cleared
+
+
+async def test_coordinator_escalate_dedo_writes_and_is_non_blocking(db_session, fake_claude, monkeypatch, tmp_path):
+    monkeypatch.setattr(orchestrator.claude_agent, "PROJECTS_ROOT", tmp_path)
+    version, project, _task = await _build_at_halt(db_session, fake_claude)
+    _seed_coordinator_directive(
+        db_session,
+        version.id,
+        _coord_directive(
+            triage_class="nex_studio_bug",
+            proposed_action="coordinator_escalate_dedo",
+            params={"topic": "merged-dead-end"},
+        ),
+    )
+    state = await orchestrator.apply_action(
+        db_session, version_id=version.id, action="apply_coordinator_recommendation"
+    )
+    assert state.status == "awaiting_director"  # non-blocking — NOT re-dispatched
+    files = list((tmp_path / project.slug / ".dedo-channel" / "inbox").glob("coordinator-to-dedo-*-escalation.md"))
+    assert files and "from: coordinator" in files[0].read_text(encoding="utf-8")
+
+
 async def test_answer_rejected_when_not_blocked(db_session, fake_claude):
     version, _ = _make_version(db_session)
     await orchestrator.apply_action(db_session, version_id=version.id, action="start")  # agent_working

@@ -184,6 +184,11 @@ def determine_available_actions(state: PipelineState) -> set[str]:
         actions.update({"approve", "fix", "leave", "end_gate_e"})
     elif stage == "build":
         actions.update({"continue_build", "end_build"})
+        # apply_coordinator_recommendation (E7, F-008 §9): the Director approves the Coordinator's
+        # proposal → the orchestrator executes the matching action. Offered at a settled build; the FE
+        # refines to "only when an EXECUTABLE coordinator_directive exists" (message-derived) and labels
+        # the button from proposed_action — so it never shows without a live proposal.
+        actions.add("apply_coordinator_recommendation")
         if status == "awaiting_director":
             actions.add("approve")  # final sign-off only at a settled build — never on a blocked task
             # accept_merged (WS-B2, CR-NS-031): a merged task dead-ends at a HALT, which settles to
@@ -787,6 +792,13 @@ async def invoke_agent(
             # Per-task Auditor verdict (F-007 §6, CR-NS-020 CR-4) — persisted for CR-5's
             # per-task audit panel (the diff + findings the Director can drill into).
             "task_pass": parsed.task_pass,
+            # Structured Coordinator proposal (F-008 §2 A1, E7) — persisted so apply_coordinator_
+            # recommendation can read + execute it and the FE can show + label the proposal.
+            "coordinator_directive": (
+                parsed.coordinator_directive.model_dump(mode="json")
+                if parsed.coordinator_directive is not None
+                else None
+            ),
             # Caller-supplied structural markers (e.g. is_fix_edit) for the deterministic
             # open-finding count — orchestrator record, not agent self-report (§5).
             **(extra_payload or {}),
@@ -1500,6 +1512,184 @@ def _latest_reported_commit(db: Session, version_id: uuid.UUID, task_id: uuid.UU
     return None
 
 
+# ---------------------------------------------------------------------------
+# E7 — Coordinator as operator: structured directive + executable actions (F-008 §2/§4/§9, CR-NS-032)
+# ---------------------------------------------------------------------------
+
+_COORDINATOR_CONFIDENCE_FLOOR = 0.80
+_EXECUTABLE_COORDINATOR_ACTIONS = frozenset(
+    {"coordinator_reset_task", "coordinator_move_baseline", "coordinator_clear_session", "coordinator_escalate_dedo"}
+)
+
+
+def _latest_coordinator_directive(db: Session, version_id: uuid.UUID) -> Optional[dict[str, Any]]:
+    """The most recent Coordinator gate_report's structured ``coordinator_directive`` (F-008 §2), or
+    ``None`` — the proposal the Director approves via ``apply_coordinator_recommendation``."""
+    row = db.execute(
+        select(PipelineMessage)
+        .where(
+            PipelineMessage.version_id == version_id,
+            PipelineMessage.author == "coordinator",
+            PipelineMessage.kind == "gate_report",
+        )
+        .order_by(PipelineMessage.seq.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    return (row.payload or {}).get("coordinator_directive") if row is not None else None
+
+
+def _coordinator_directive_executable(directive: Optional[dict[str, Any]]) -> bool:
+    """True iff an approved directive should EXECUTE (F-008 §9): an executable proposed_action, a
+    non-``director_decision`` triage, and confidence ≥ the conservative floor. Else it's a pure relay."""
+    if not directive:
+        return False
+    if directive.get("triage_class") == "director_decision":
+        return False
+    if float(directive.get("confidence") or 0.0) < _COORDINATOR_CONFIDENCE_FLOOR:
+        return False
+    return directive.get("proposed_action") in _EXECUTABLE_COORDINATOR_ACTIONS
+
+
+def _directive_target_task(db: Session, version_id: uuid.UUID, directive: dict[str, Any]) -> Optional[Task]:
+    """The task a directive operates on: ``target.task_id`` (if it belongs to the version), else the
+    failed build task; ``None`` if neither resolves."""
+    target = directive.get("target") or {}
+    task_id = target.get("task_id")
+    if task_id:
+        feat_ids = select(Feat.id).join(Epic, Epic.id == Feat.epic_id).where(Epic.version_id == version_id)
+        try:
+            task = db.execute(
+                select(Task).where(Task.id == uuid.UUID(str(task_id)), Task.feat_id.in_(feat_ids))
+            ).scalar_one_or_none()
+        except (ValueError, AttributeError):
+            task = None
+        if task is not None:
+            return task
+    return _failed_build_task(db, version_id)
+
+
+def _coordinator_audit(db: Session, version_id: uuid.UUID, content: str, directive: dict[str, Any]) -> None:
+    """Record the director→coordinator audit message for an executed directive (F-008 §4)."""
+    _record_message(
+        db,
+        version_id=version_id,
+        stage="build",
+        author="director",
+        recipient="coordinator",
+        kind="approval",
+        content=content,
+        payload={"executed_directive": directive},
+    )
+
+
+def _coordinator_reset_task(db: Session, state: PipelineState, directive: dict[str, Any]) -> None:
+    task = _directive_target_task(db, state.version_id, directive)
+    if task is None:
+        raise OrchestratorError("Koordinátorov reset: žiadna cieľová zlyhaná úloha")
+    task.status = "todo"
+    db.flush()
+    task_service.recompute_feat_status(db, task.feat_id)
+    _coordinator_audit(
+        db,
+        state.version_id,
+        f"Vykonaný Koordinátorov návrh: úloha #{task.number} resetovaná na todo (nový pokus).",
+        directive,
+    )
+
+
+def _coordinator_move_baseline(db: Session, state: PipelineState, directive: dict[str, Any]) -> None:
+    task = _directive_target_task(db, state.version_id, directive)
+    if task is None:
+        raise OrchestratorError("Koordinátorov move_baseline: žiadna cieľová zlyhaná úloha")
+    commit = (directive.get("target") or {}).get("commit") or _latest_reported_commit(db, state.version_id, task.id)
+    if not commit:
+        raise OrchestratorError("Koordinátorov move_baseline: nie je známy commit na posun baseline")
+    project_root = claude_agent.PROJECTS_ROOT / _project_slug_for_version(db, state.version_id)
+    parent = _repo_parent(project_root, commit)
+    if parent is None:
+        raise OrchestratorError(f"Koordinátorov move_baseline: nepodarilo sa zistiť rodiča commitu {commit[:8]}")
+    task.baseline_sha = parent
+    task.status = "todo"
+    db.flush()
+    task_service.recompute_feat_status(db, task.feat_id)
+    _coordinator_audit(
+        db,
+        state.version_id,
+        f"Vykonaný Koordinátorov návrh: baseline úlohy #{task.number} posunutý na {parent[:8]} "
+        f"(rodič nahláseného commitu {commit[:8]}) — úloha sa znova overí.",
+        directive,
+    )
+
+
+def _coordinator_clear_session(db: Session, state: PipelineState, directive: dict[str, Any]) -> None:
+    role = (directive.get("target") or {}).get("role")
+    if not role:
+        raise OrchestratorError("Koordinátorov clear_session: chýba cieľová rola (target.role)")
+    slug = _project_slug_for_version(db, state.version_id)
+    db.execute(
+        delete(OrchestratorSession).where(
+            OrchestratorSession.project_slug == slug, OrchestratorSession.role == str(role)
+        )
+    )
+    db.flush()
+    _coordinator_audit(
+        db,
+        state.version_id,
+        f"Vykonaný Koordinátorov návrh: session roly '{role}' vyčistená (čerstvý štart pri ďalšom dispatchi).",
+        directive,
+    )
+
+
+def _coordinator_escalate_dedo(db: Session, state: PipelineState, directive: dict[str, Any]) -> None:
+    """Write a structured Dedo-escalation item to the project's channel (F-008 §9). Non-blocking — the
+    pipeline stays settled; the Director decides the next step (never halt waiting for Dedo)."""
+    import json as _json
+    import re as _re
+    from datetime import datetime, timezone
+
+    slug = _project_slug_for_version(db, state.version_id)
+    inbox = claude_agent.PROJECTS_ROOT / slug / ".dedo-channel" / "inbox"
+    inbox.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H%M")
+    topic_raw = str((directive.get("params") or {}).get("topic") or directive.get("triage_class") or "build")
+    topic = _re.sub(r"[^a-z0-9-]+", "-", topic_raw.lower()).strip("-")[:40] or "build"
+    (inbox / f"coordinator-to-dedo-{ts}-{topic}-escalation.md").write_text(
+        f"---\nfrom: coordinator\nto: dedo\ntype: escalation\ndate: {ts}\n"
+        f"triage_class: {directive.get('triage_class')}\n---\n\n"
+        f"{directive.get('rationale', '')}\n\n"
+        f"```json\n{_json.dumps(directive, ensure_ascii=False, indent=2)}\n```\n",
+        encoding="utf-8",
+    )
+    _coordinator_audit(
+        db,
+        state.version_id,
+        "Vykonaný Koordinátorov návrh: eskalácia pre Deda zapísaná do kanála (nečaká sa — Director rozhodne ďalej).",
+        directive,
+    )
+
+
+def _execute_coordinator_directive(db: Session, state: PipelineState, directive: dict[str, Any]) -> PipelineState:
+    """Execute an approved coordinator_directive (F-008 §4/§9): mutate state + an audit message, then
+    re-dispatch — EXCEPT escalate_dedo, which is non-blocking (write + audit + leave the pipeline settled
+    so the Director decides next)."""
+    proposed = directive.get("proposed_action")
+    if proposed == "coordinator_reset_task":
+        _coordinator_reset_task(db, state, directive)
+    elif proposed == "coordinator_move_baseline":
+        _coordinator_move_baseline(db, state, directive)
+    elif proposed == "coordinator_clear_session":
+        _coordinator_clear_session(db, state, directive)
+    elif proposed == "coordinator_escalate_dedo":
+        _coordinator_escalate_dedo(db, state, directive)
+        state.next_action = "Eskalácia pre Deda zapísaná — rozhodni o ďalšom kroku (build ostáva pozastavený)."
+        db.flush()
+        return state  # non-blocking: stays awaiting_director, no re-dispatch
+    else:
+        raise OrchestratorError(f"Neznáma vykonateľná akcia Koordinátora: {proposed}")
+    _begin_dispatch(db, state)  # reset / move_baseline / clear_session → re-run the build loop (re-verify)
+    return state
+
+
 def recover_orphaned_builds_on_startup(db: Session) -> int:
     """On BE startup, recover BUILD pipelines stranded at ``agent_working`` by a restart
     (F-007 §7.3, CR-NS-021). Returns the number recovered.
@@ -2040,10 +2230,18 @@ async def apply_action(
     if action == "apply_coordinator_recommendation":
         if latest_coordinator_report(db, version_id) is None:
             raise OrchestratorError("Žiadne odporúčanie Koordinátora na zapracovanie")
+        # E7 (F-008 §9, contract A — the no-op fix): at build, an EXECUTABLE coordinator_directive runs
+        # its matching internal executor (reset_task / move_baseline / clear_session / escalate_dedo)
+        # instead of threading advisory text. A relay / low-confidence / director_decision directive (or
+        # any non-build stage) falls through to the advisory re-dispatch below.
+        if state.current_stage == "build":
+            directive = _latest_coordinator_directive(db, version_id)
+            if _coordinator_directive_executable(directive):
+                return _execute_coordinator_directive(db, state, directive)
         if STAGE_ACTOR.get(state.current_stage) is None:
             raise OrchestratorError("Aktuálna fáza nemá agenta na re-dispatch")
-        # Audit only; the Coordinator's report is threaded as the re-dispatch
-        # directive by ``dispatch_directive`` (route). Stage does NOT advance.
+        # Advisory relay (unchanged): the Coordinator's report is threaded as the re-dispatch directive
+        # by ``dispatch_directive`` (route). Stage does NOT advance.
         _record_message(
             db,
             version_id=version_id,

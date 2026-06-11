@@ -229,6 +229,49 @@ def test_task_plan_accepts_omitted_module_id():
     assert res.plan.epics[0].module_id is None
 
 
+def _coordinator_block(directive) -> str:
+    return _block(
+        stage="build", kind="gate_report", summary="relay", awaiting="director", coordinator_directive=directive
+    )
+
+
+def test_coordinator_directive_parses():
+    # A1 (F-008 §2, CR-NS-032): the structured Coordinator proposal parses + validates on the block.
+    directive = {
+        "triage_class": "programmer_guidance",
+        "proposed_action": "coordinator_move_baseline",
+        "target": {"commit": "abc123"},
+        "params": {},
+        "rationale": "task #3 work sits in the merged commit",
+        "confidence": 0.9,
+    }
+    res = parse_status_block(_coordinator_block(directive))
+    assert isinstance(res, PipelineStatusBlock)
+    assert res.coordinator_directive is not None
+    assert res.coordinator_directive.proposed_action == "coordinator_move_baseline"
+    assert res.coordinator_directive.target.commit == "abc123"
+    assert res.coordinator_directive.confidence == 0.9
+
+
+def test_coordinator_directive_absent_is_none():
+    res = parse_status_block(_block(stage="build", kind="gate_report", summary="ok", awaiting="director"))
+    assert isinstance(res, PipelineStatusBlock)
+    assert res.coordinator_directive is None
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"triage_class": "nonsense", "proposed_action": "relay", "rationale": "x", "confidence": 0.5},  # bad enum
+        {"triage_class": "director_decision", "proposed_action": "relay", "rationale": "x", "confidence": 1.5},  # >1
+        {"triage_class": "spec_problem", "proposed_action": "relay", "rationale": "x", "confidence": -0.1},  # <0
+        {"proposed_action": "relay", "rationale": "x", "confidence": 0.5},  # missing triage_class
+    ],
+)
+def test_coordinator_directive_rejects_invalid(bad):
+    assert isinstance(parse_status_block(_coordinator_block(bad)), ParseFailure)
+
+
 def test_parse_failure_names_the_exact_missing_field():
     # WS-B3 (CR-NS-029): a task_type omission → the ParseFailure reason names the EXACT field + index
     # (so the parse-retry re-prompt is actionable and the agent fixes it on the first retry), not a

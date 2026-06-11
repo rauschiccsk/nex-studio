@@ -25,7 +25,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from typing import Optional, Union
+from typing import Any, Literal, Optional, Union
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -105,6 +105,32 @@ class TaskPlan(BaseModel):
     epics: list[TaskPlanEpic] = Field(min_length=1)
 
 
+class CoordinatorTarget(BaseModel):
+    """What a ``coordinator_directive``'s action operates on (F-008 §2, A1)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    task_id: Optional[UUID] = None
+    role: Optional[str] = None
+    commit: Optional[str] = None
+
+
+class CoordinatorDirective(BaseModel):
+    """Structured Coordinator proposal (F-008 §2 A1 / §9, E7). Emitted alongside the plain-Slovak relay;
+    the Director approves via ``apply_coordinator_recommendation`` and the orchestrator EXECUTES the
+    matching internal action (F-008 §9 contract A). Conservative bound (enforced by the executor gate):
+    ``confidence < 0.80`` OR ``triage_class == 'director_decision'`` → a pure relay (no execution)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    triage_class: Literal["spec_problem", "programmer_guidance", "nex_studio_bug", "director_decision"]
+    proposed_action: str  # an executable coordinator_* action or "relay" (kept a str — forward-compatible)
+    target: CoordinatorTarget = Field(default_factory=CoordinatorTarget)
+    params: dict[str, Any] = Field(default_factory=dict)
+    rationale: str
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
 class PipelineStatusBlock(BaseModel):
     """Validated agent status block. ``extra='ignore'`` drops derived fields."""
 
@@ -148,6 +174,11 @@ class PipelineStatusBlock(BaseModel):
     #: Designer's proposed fix TEXT when ``gap_found`` — never an edit (edit happens only
     #: on a Director-approved, Coordinator-relayed ``fix`` directive).
     proposed_fix: Optional[str] = None
+
+    #: Structured Coordinator proposal (F-008 §2 A1 / §9, E7). Only the Coordinator emits it (CR-NS-033
+    #: charter/prompts); the Director approves via apply_coordinator_recommendation and the orchestrator
+    #: executes the matching action. Absent on every other block.
+    coordinator_directive: Optional[CoordinatorDirective] = None
 
 
 @dataclass(frozen=True)

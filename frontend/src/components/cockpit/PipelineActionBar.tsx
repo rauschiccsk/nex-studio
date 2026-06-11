@@ -9,10 +9,11 @@ import { useState, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 
 import type {
+  CoordinatorDirective,
   PipelineActionName,
   PipelineState,
 } from "../../services/api/pipeline";
-import { nextStageLabel } from "./labels";
+import { COORDINATOR_ACTION_LABELS, nextStageLabel } from "./labels";
 
 // Stages the Director ratifies with Schváliť/Vrátiť. kickoff is a ratification
 // gate too — the engine's approve advances kickoff→gate_a (NOT a `start`; the
@@ -34,6 +35,9 @@ interface Props {
   /** Build open findings (WS-C1, CR-NS-030): > 0 → a failed/unverified task (approve + end_build
    *  blocked). Mirrors gateEOpenFindings. */
   buildOpenFindings?: number;
+  /** The latest EXECUTABLE Coordinator proposal (E7, F-008 §9) or null. Drives the build "Schváliť
+   *  Koordinátorov návrh (<effect>)" button — approve → apply_coordinator_recommendation executes it. */
+  coordinatorProposal?: CoordinatorDirective | null;
   inFlight: boolean;
   /** Blocked due to an unexpected failure (agent crash/timeout) rather than an
    *  agent question — offer "Skús znova" instead of answer/approve (CR-NS-018). */
@@ -76,6 +80,7 @@ export function PipelineActionBar({
   availableActions,
   allTasksDone,
   buildOpenFindings,
+  coordinatorProposal,
   inFlight,
   isErrorBlock = false,
   hasCoordinatorReport = false,
@@ -357,6 +362,25 @@ export function PipelineActionBar({
           </button>
         </ActionRow>
       )}
+
+      {/* Coordinator proposal (E7, F-008 §9): when the Coordinator has emitted an EXECUTABLE directive,
+          the Director approves it with ONE button labelled by the concrete effect (WS-C class-D) →
+          apply_coordinator_recommendation runs the matching executor. Shown at a settled build only. */}
+      {current_stage === "build" &&
+        (awaiting || (blocked && !isErrorBlock)) &&
+        coordinatorProposal &&
+        allowed("apply_coordinator_recommendation") && (
+          <ActionRow hint={coordinatorProposal.rationale}>
+            <button
+              onClick={() => onAction("apply_coordinator_recommendation")}
+              disabled={inFlight}
+              className={`${btn} bg-indigo-600 text-white hover:bg-indigo-500`}
+            >
+              Schváliť Koordinátorov návrh (
+              {COORDINATOR_ACTION_LABELS[coordinatorProposal.proposed_action] ?? coordinatorProposal.proposed_action})
+            </button>
+          </ActionRow>
+        )}
 
       {/* Build per-task loop (F-007 §6/§7): the Director's controls at a build awaiting-director
           stop — sign-off, resume, rework a failed task, or early-end. The backend guards enforce

@@ -12,7 +12,13 @@ import { render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 
 import PipelineActionBar from "@/components/cockpit/PipelineActionBar";
-import type { PipelineState, PipelineStage, PipelineStatus, PipelineActionName } from "@/services/api/pipeline";
+import type {
+  PipelineState,
+  PipelineStage,
+  PipelineStatus,
+  PipelineActionName,
+  CoordinatorDirective,
+} from "@/services/api/pipeline";
 
 const APPROVE = "Schváliť podľa Návrhára";
 const COORD = "Schváliť návrh Koordinátora";
@@ -487,5 +493,44 @@ describe("PipelineActionBar — accept_merged (WS-B2, CR-NS-031)", () => {
       />,
     );
     expect(screen.queryByText("Uznať spoločný commit")).not.toBeInTheDocument();
+  });
+});
+
+describe("PipelineActionBar — Coordinator proposal (E7, CR-NS-032)", () => {
+  const mkDirective = (proposed_action: string): CoordinatorDirective => ({
+    triage_class: "programmer_guidance",
+    proposed_action,
+    rationale: "task work sits in the merged commit",
+    confidence: 0.9,
+  });
+
+  it("shows the proposal approve button labelled by the effect and fires apply_coordinator_recommendation", () => {
+    const onAction = vi.fn();
+    render(
+      <PipelineActionBar
+        state={mkState("build", "awaiting_director")}
+        availableActions={["apply_coordinator_recommendation", "continue_build", "end_build", "return", "ask"]}
+        coordinatorProposal={mkDirective("coordinator_move_baseline")}
+        inFlight={false}
+        onAction={onAction}
+      />,
+    );
+    const btn = screen.getByRole("button", { name: /Schváliť Koordinátorov návrh.*posunúť baseline/ });
+    expect(btn).toBeInTheDocument();
+    btn.click();
+    expect(onAction).toHaveBeenCalledWith("apply_coordinator_recommendation");
+  });
+
+  it("hides the proposal button when there is no executable proposal", () => {
+    render(
+      <PipelineActionBar
+        state={mkState("build", "awaiting_director")}
+        availableActions={["apply_coordinator_recommendation", "continue_build", "end_build", "return", "ask"]}
+        coordinatorProposal={null}
+        inFlight={false}
+        onAction={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText(/Schváliť Koordinátorov návrh/)).not.toBeInTheDocument();
   });
 });

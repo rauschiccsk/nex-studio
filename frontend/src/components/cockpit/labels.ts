@@ -103,6 +103,16 @@ export const TONE_TEXT: Record<StatusTone, string> = {
   neutral: "text-slate-600",
 };
 
+// Coordinator executable-action → Slovak effect phrase (E7, F-008 §5/§9). The build approve button is
+// labelled "Schváliť Koordinátorov návrh (<effect>)" so it names the concrete effect (WS-C class-D),
+// never a generic "Schváliť".
+export const COORDINATOR_ACTION_LABELS: Record<string, string> = {
+  coordinator_reset_task: "reštartovať úlohu",
+  coordinator_move_baseline: "posunúť baseline",
+  coordinator_clear_session: "vyčistiť session",
+  coordinator_escalate_dedo: "eskalovať Dedovi",
+};
+
 export const TONE_BANNER: Record<StatusTone, string> = {
   green: "border-emerald-500/40 bg-emerald-500/10 text-emerald-200",
   blue: "border-sky-500/40 bg-sky-500/10 text-sky-200",

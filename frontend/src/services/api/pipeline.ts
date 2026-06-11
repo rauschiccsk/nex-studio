@@ -112,6 +112,18 @@ export type PipelineActionName =
   | "accept_merged"
   | "pause";
 
+// Structured Coordinator proposal (F-008 §2 A1, E7) carried on a coordinator gate_report's
+// payload.coordinator_directive. The Director approves it via apply_coordinator_recommendation and the
+// orchestrator executes the matching action (F-008 §9).
+export interface CoordinatorDirective {
+  triage_class: "spec_problem" | "programmer_guidance" | "nex_studio_bug" | "director_decision";
+  proposed_action: string;
+  target?: { task_id?: string; role?: string; commit?: string };
+  params?: Record<string, unknown>;
+  rationale: string;
+  confidence: number;
+}
+
 export interface PipelineActionRequest {
   action: PipelineActionName;
   payload?: Record<string, unknown>;

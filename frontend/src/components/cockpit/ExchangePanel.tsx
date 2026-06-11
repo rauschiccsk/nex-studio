@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 
 import type {
   ActivityLine,
+  CoordinatorDirective,
   PipelineActionName,
   PipelineBoard,
   PipelineState,
@@ -12,6 +13,15 @@ import PipelineActionBar from "./PipelineActionBar";
 import PipelineActivityFeed from "./PipelineActivityFeed";
 import PipelineMessageBubble from "./PipelineMessageBubble";
 import { PIPELINE_STATUS_TONE, ROLE_LABELS, STAGE_LABELS, TONE_BANNER } from "./labels";
+
+// The Coordinator actions the orchestrator can EXECUTE on approval (F-008 §9) — used to decide whether
+// the latest directive is an executable proposal (drives the build approve button) vs a plain relay.
+const EXECUTABLE_COORDINATOR_ACTIONS = new Set([
+  "coordinator_reset_task",
+  "coordinator_move_baseline",
+  "coordinator_clear_session",
+  "coordinator_escalate_dedo",
+]);
 
 // Compose the banner from machine values + Slovak display labels — never render
 // the raw backend ``next_action`` (it embeds machine tokens like 'coordinator').
@@ -62,6 +72,21 @@ export function ExchangePanel({ board, inFlight, activity, onAction }: Props) {
   const hasCoordinatorReport = recent_messages.some(
     (m) => m.author === "coordinator" && m.kind === "gate_report",
   );
+  // E7 (F-008 §9): the latest EXECUTABLE Coordinator proposal (the Director approves it via
+  // apply_coordinator_recommendation → the orchestrator executes the matching action). Only an
+  // executable directive (not a relay / director_decision / low-confidence) drives the build approve
+  // button + its effect label; a non-executable one stays a plain relay (the usual decision set).
+  const latestCoordinatorDirective = [...recent_messages]
+    .reverse()
+    .map((m) => (m.payload as { coordinator_directive?: CoordinatorDirective } | null)?.coordinator_directive)
+    .find((d): d is CoordinatorDirective => Boolean(d));
+  const coordinatorProposal =
+    latestCoordinatorDirective &&
+    latestCoordinatorDirective.triage_class !== "director_decision" &&
+    latestCoordinatorDirective.confidence >= 0.8 &&
+    EXECUTABLE_COORDINATOR_ACTIONS.has(latestCoordinatorDirective.proposed_action)
+      ? latestCoordinatorDirective
+      : null;
   // Gate E boundary signals from the latest Customer gate_report (CR-NS-018 Phase 3):
   // distinguishes a topic boundary (continue) from the final boundary (→ Build), and
   // the open-finding gate that blocks closing.
@@ -122,6 +147,7 @@ export function ExchangePanel({ board, inFlight, activity, onAction }: Props) {
           availableActions={board.available_actions}
           allTasksDone={board.all_tasks_done}
           buildOpenFindings={board.build_open_findings}
+          coordinatorProposal={coordinatorProposal}
           inFlight={inFlight}
           isErrorBlock={isErrorBlock}
           hasCoordinatorReport={hasCoordinatorReport}
