@@ -281,3 +281,108 @@ user's config is independent; the API rejects editing another user's config; WS-
 coordinator-only.
 
 **End of E3.**
+
+---
+
+## E2 — Backlog: deferred customer-requirements list (CR-NS-041 + CR-NS-042)
+
+> Designed + Director-approved 2026-06-13. A per-project list of FUTURE customer requirements (each a stable
+> `REQ-N` id) with a lifecycle (open → included-in-version → realized-in-version) + a realization History,
+> a Director-driven version-include flow, and Coordinator capture (E7).
+> **Director's spec (verbatim intent):** a list of future requirements; each has a unique id; they do NOT
+> become Epics/Tasks; when the Director creates a new version he tells the Coordinator which requirements to
+> add to that version; a backlog item becomes a customer requirement of a version ONLY on the Director's
+> instruction; after processing, a History records which requirement was realized in which version; and the
+> Coordinator must — on the Director's instruction, mid-cycle — be able to record a NEW requirement into the
+> backlog.
+
+### Goal
+Replace ad-hoc deferral (spec "Out of scope" sections + Dedo memory) with a structured, queryable,
+per-project Backlog of future customer requirements + a realization History. The backlog feeds a future
+version's customer-requirements ON the Director's instruction; it NEVER auto-creates Epics/Tasks.
+
+### Current state (grounded, 2026-06-13 discovery)
+- NO in-app backlog today (deferred items live in docs' "Out of scope" + Dedo memory).
+- VERSION→EPIC→FEAT→TASK is version-bound + execution-state; an Epic REQUIRES a version (epic service
+  enforces). So the backlog MUST be a standalone, project-scoped entity OUTSIDE the pipeline.
+- Version lifecycle `planned → active → released`; release endpoint `backend/services/version.py:290-337`
+  (the auto-realize hook). Per-project numbering (Epic: MAX(number)+1). Project-scoped page pattern:
+  `/projects/:slug/mm` (Module Map). Selected-Project / `activeContextStore` scoping.
+- E7 (CR-032/033/034): `coordinator_directive` + orchestrator executors + Director-approve flow — the
+  capture action extends this. **Security: agents NEVER call the API; the orchestrator does DB writes.**
+
+### Data model — `BacklogItem` (new table, migration 062, mirrors Epic)
+`backend/db/models/backlog.py` (UUIDMixin + TimestampMixin): `project_id` FK→projects CASCADE (indexed);
+`number` int (per-project, auto MAX+1) → display id **`REQ-{number}`**; `title` str(500); `description`
+text; `priority` ∈ {low, medium, high, critical} (CHECK); `status` ∈ {open, included, realized, rejected}
+(CHECK); `version_id` FK→versions SET NULL nullable (the version it's included-in / realized-in);
+`realized_at` timestamptz nullable; unique(project_id, number); index(project_id, status). **NO change to
+versions/epics/feats/tasks.**
+
+### Lifecycle + History
+- **open** — future requirement in the backlog (created by Director UI OR the Coordinator-capture flow).
+- **included → vX** — the Director assigns the requirement to version vX (set version_id + status=included);
+  it is now a customer requirement of vX.
+- **realized in vX** — AUTO when vX is released: the release path transitions that version's `included`
+  backlog items → `realized` + stamps `realized_at`. The History arises automatically.
+- **rejected** — Director marks won't-do.
+- **History view** = the `realized` items grouped by version ("v0.5.0 delivered: REQ-3, REQ-7…"); persistent.
+
+### API — per-project `/api/v1/backlog` (ri manages; reads ri/ha per the existing convention)
+`GET ?project_id=&status=` (list); `POST` (create, auto REQ-N); `PATCH /{id}` (edit title/desc/priority;
+assign-to-version → version_id+status=included; reject); `DELETE /{id}` (only when `open` — never delete
+realized history). `backlog_service`: create / list / update / `assign_to_version` /
+`realize_for_version(version)` (called by the release path). Mirrors `epic.py` (ValueError→HTTP, per-project
+numbering).
+
+### UI — `/projects/:slug/backlog` (project-scoped, mirrors Module Map)
+`BacklogPage.tsx`, two views: **Backlog** (open + included — table: REQ-N, title, priority, status,
+[assign-to-version] [edit] [reject]) + **História** (realized items grouped by version). Sidebar link under
+the selected project (disabled when none selected); `activeContextStore`. "New requirement" CTA. New api
+client + types.
+
+### Version-include flow (Coordinator READS → version requirements) — CR-NS-042
+- The Director assigns backlog items to a version (the PATCH assign-to-version → included, version_id) — the
+  in-app form of "tell the Coordinator which to add."
+- At the new version's kickoff/design, the **orchestrator INJECTS** the version's `included` backlog items
+  (REQ-N + title + description) into the Designer/Coordinator brief so they become the version's
+  customer-requirements input — the agent reads the backlog via orchestrator-provided CONTEXT, never an API
+  call. The Designer writes the version's customer-requirements/spec incorporating them.
+- Exact injection hook (kickoff brief / gate-a context) — Implementer wires to the cleanest point; STOP+ask
+  if unclear.
+
+### Coordinator capture (E7 — Coordinator WRITES the backlog, on Director instruction) — CR-NS-042
+- Extend the E7 `coordinator_directive`: new `proposed_action = "capture_backlog_item"` +
+  `params {title, description, priority}`.
+- On a Director instruction during a build ("record this deficiency/idea as a backlog requirement"), the
+  Coordinator emits the `capture_backlog_item` directive (the drafted requirement).
+- The Director APPROVES the draft (standard E7 approve UI — sees + can refine); the orchestrator executor
+  `_coordinator_capture_backlog_item` calls `backlog_service.create` (status=open). **Agent never touches
+  the API.**
+- Coordinator charter (`templates/coordinator-charter.md` §7.1): add the capture capability (Director
+  capture-instruction → emit `capture_backlog_item`).
+
+### Seams to preserve
+- NO change to versions/epics/feats/tasks (additive table only); the pipeline is untouched.
+- The backlog NEVER auto-creates Epics/Tasks (the Director's explicit rule); version-include is content
+  injection into the design phase, NOT Epic creation.
+- Security: agents never call the API; the orchestrator does ALL backlog DB writes (capture + realize).
+- E7 hub-and-spoke + propose→approve→execute preserved (capture is a Director-approved directive).
+- The version release path: the realize-transition is ADDITIVE (after the existing release logic); must not
+  affect the release gate.
+
+### Acceptance
+- Director adds/lists/filters REQ-N items per project; assigns REQ-3 to v0.5.0 → included; v0.5.0 released →
+  REQ-3 auto → realized + realized_at, shown in História under v0.5.0; the new version's design context
+  includes the assigned items; during a build the Director instructs the Coordinator → it proposes a
+  capture → Director approves → a new `open` REQ-N exists. NO Epic/Task created from a backlog item; pipeline
+  unaffected when the backlog is unused. Tests: model+migration drift, API CRUD+assign+numbering+access,
+  realize-on-release, the E7 capture directive+executor, the version-include injection.
+
+### Build order (split)
+- **CR-NS-041 (E2-core):** BacklogItem model + migration 062 + API + service + `/projects/:slug/backlog`
+  page (Backlog + História views, CRUD, assign-to-version, reject) + auto-realize-on-release hook.
+- **CR-NS-042 (E2-coordinator-integration):** the version-include context-injection + the E7
+  `capture_backlog_item` directive + executor + Coordinator charter.
+
+**End of E2.**
