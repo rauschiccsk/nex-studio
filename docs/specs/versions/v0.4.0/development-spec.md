@@ -248,4 +248,25 @@ user's config is independent; the API rejects editing another user's config; WS-
 **Build order (CR-NS-040, after E3(a)):** table+migration → config API → dispatch threading +
 `invoke_claude` flags → Settings "Agenti" tab → tests.
 
+**b/c re-validation refinements (2026-06-13 — both feasibility lenses PASS; design-ready):**
+- **`agent_role` CHECK = the 5 ORCHESTRATOR pipeline roles** (`OrchestratorSession` CHECK,
+  `orchestrator.py:36` — coordinator/designer/implementer/auditor/**customer**), NOT the E3(a) debug-attach
+  4-role subset (which omits `customer`). Do NOT copy `DebugAttachRole`.
+- **model + effort: validate via pydantic enums at the API/schema layer (NO DB CHECK on them — flexible to
+  CLI evolution); store as `str`.** Only `agent_role` keeps a DB CHECK (stable set). Implementer confirms
+  `claude --effort` accepts {low,medium,high,xhigh,max,ultracode} + the 3 model IDs (`claude-opus-4-8` /
+  `claude-sonnet-4-6` / `claude-haiku-4-5-20251001`) at build; STOP+ask if the CLI's set differs.
+- **Thread model/effort through `invoke_agent_with_parse_retry`'s retry loop** (orchestrator.py ~984) — else
+  parse-retries lose the config.
+- **Graceful fallback:** owner_id NULL OR no `(owner, role)` row → no flags (`scalar_one_or_none`, today's
+  exact behavior — no crash).
+- Confirmed feasible: owner reachable at `invoke_agent` (version→project→owner_id, reuse `_owner_chat_id`
+  join); `invoke_claude` appends `--model`/`--effort` before the prompt (no `--resume`/`--output-format`/
+  `--session-id` conflict); per-turn model/effort switch on a shared `--resume` session is SAFE (stateless
+  per-invoke directives, session UUID is flag-agnostic). Latest migration = 060 → new = **061**.
+
+**Plus (carried from CR-NS-039 review, doc-only):** fix the stale `available_roles` route docstring
+(`backend/api/routes/agent_terminal.py` ~:113) — it still describes the pre-E3(a) 4-role response; now
+coordinator-only.
+
 **End of E3.**
