@@ -98,3 +98,123 @@ E6 is an **"away" annotation on the EXISTING WS-connection presence** — NOT a 
 2. **FE:** `usePresenceStore` + the Sidebar toggle + `usePipelineWs` send + the login-reset + tests.
 
 **End of E6.**
+
+---
+
+## E3 — Sidebar single-terminal cleanup + per-user model/effort config
+
+> Designed + Director-approved 2026-06-12 (3 discovery sweeps). Two parts: (a) trim the sidebar to one
+> agent terminal; (b/c) per-USER per-role model/effort config the cockpit applies at dispatch.
+> **Out of scope (deferred future epic):** per-user Claude **subscription/auth** — running each Director's
+> dispatches on their own Claude MAX (per-user credentials / `.claude` dirs / docker mounts / encrypted
+> token storage). E3 is per-user *config* on the existing single shared login. Split into **CR-NS-039 =
+> E3(a)** and **CR-NS-040 = E3(b/c)**.
+
+### E3(a) — Sidebar: single Coordinator terminal (CR-NS-039)
+
+**Goal:** the Director's one ad-hoc consult channel is the Coordinator (hub-and-spoke: Director↔Coordinator;
+the Coordinator has READ `docs/specs/**`+`schemas/**` [CR-033] → answers all project questions). Remove the
+other four terminal links.
+
+**Current state (grounded):** `Sidebar.tsx:273-277` has 5 agent NavItems — Coordinator(/coordinator),
+Designer(/designer), Customer(/dialogue), Implementer(/implementer), Auditor(/auditor). Routes
+`App.tsx:53-57`. Persistent terminals (CR-NS-004 `PersistentTerminalsLayer`) for
+designer/implementer/auditor/coordinator (xterm+WS, kept alive across nav). **AG Customer→/dialogue is a
+SEPARATE system** (`DialoguePage`, the gate_e Customer dialogue), NOT a persistent terminal.
+`agentTerminalStore` slots + `ROLES`; backend `agent_terminal` `AgentRole`/`_VALID_ROLES`/CHECK
+{designer,implementer,auditor,coordinator}. Role gating CR-NS-014 (`/agent-terminal/available-roles`).
+
+**Changes:**
+- **FE — remove the 4 NavItems** (Designer, Customer, Implementer, Auditor) from `Sidebar.tsx`; keep
+  Coordinator. Remove the orphaned routes (`App.tsx`) for /designer, /implementer, /auditor. Remove the
+  `PersistentTerminalsLayer` slots + `agentTerminalStore` slots/`ROLES` for designer/implementer/auditor →
+  `ROLES = ["coordinator"]`. Remove the now-unused icon helpers.
+- **AG Customer / /dialogue — remove the SIDEBAR LINK ONLY; KEEP the /dialogue route + `DialoguePage`.**
+  VERIFIED 2026-06-12: gate_e is entirely cockpit-based (CockpitPage→ExchangePanel, `ExchangePanel.tsx:97-119`);
+  /dialogue is a STANDALONE dialogue feature reachable ONLY via this sidebar link, NOT used by the cockpit
+  gate_e. So dropping the link declutters the sidebar without touching gate_e. The standalone /dialogue is
+  superseded by in-cockpit gate_e, but **retiring the feature entirely is a SEPARATE decision, not this
+  sidebar-declutter CR** — keep the route + `DialoguePage`.
+- **Backend — service-level trim:** narrow `agent_terminal` `AgentRole` literal + `_VALID_ROLES` to
+  `{"coordinator"}` so the spawn API rejects the other roles; `/agent-terminal/available-roles` narrows
+  accordingly. **KEEP the DB CHECK constraint permissive (NO migration)** — once the API + FE no longer
+  offer the old roles, the permissive constraint is harmless, and a constraint-narrowing migration over
+  existing `agent_terminal_sessions` rows is not worth the risk.
+- The `PersistentTerminalsLayer` (built for MULTIPLE terminals) now hosts one — keep minimal or simplify
+  (Implementer's call), no behavior regression.
+- **Removal cascade (verified 2026-06-12 — cover ALL, tsc+lint must be green):** narrow `AgentRole` to
+  `Literal["coordinator"]` in BOTH `frontend/src/services/api/agentTerminal.ts:15` AND
+  `backend/schemas/agent_terminal.py:18` (`AvailableRoles`/`SpawnRequest` auto-narrow); remove the now-unused
+  `Sidebar.tsx` helpers `agentDisabled()` + `agentTitle()` + trim/remove `AG_ROLE_LABEL`; update
+  `PersistentTerminalsLayer` `matchActiveRole()` + the `entries` array to coordinator-only; the spawn API
+  then auto-rejects non-coordinator roles via Pydantic once `AgentRole` is narrowed.
+
+**Seams to preserve:** the orchestrator pipeline still dispatches ALL roles
+(coordinator/designer/implementer/auditor/customer) — E3(a) removes only the interactive SIDEBAR terminals,
+NOT the pipeline agents; gate_e / `DialoguePage` must not break (verify); the debug-attach (CR-NS-018 §10)
+to the orchestrator session is unaffected.
+
+**Acceptance:** sidebar shows one agent terminal (Coordinator) + the non-agent nav; /coordinator works; the
+removed links/routes are gone; the spawn API rejects non-coordinator roles; **gate_e still works**;
+`npm run build` + `npm run lint` + backend tests green.
+
+**Plus (carried E6 hardening nits, fold into CR-NS-039):** (1) a code-comment on
+`pipeline_ws.py` `present_director_ids`/`active_director_ids` documenting the deliberate sync/lock-free
+read invariant (if ever made async, the dict-iteration race appears); (2) a `test_pipeline_ws` case for the
+same-user-multiple-sockets `active_director_ids` (active iff ≥1 non-away connection).
+
+### E3(b/c) — Per-user per-role model/effort config (CR-NS-040)
+
+**Goal:** move model/effort out of "hidden in `.claude/agents/<role>/settings.json` + interactive `/model`
+`/effort`" into an explicit **per-USER** Settings UI the cockpit applies at dispatch. Per-user because each
+team member will run on their own Claude MAX (the *auth* for that = the deferred future epic; this is the
+*config*).
+
+**Current state (grounded):** orchestrator `invoke_claude` (`claude_agent.py`) does NOT pass
+`--model`/`--effort`; model resolved by the CLI from `.claude/agents/<role>/settings.json`
+("claude-opus-4-8"); no effort in dispatch. `claude --model` + `claude --effort` flags BOTH exist (verified
+via `claude --help`). ONE shared login (`CLAUDE_CONFIG_DIR=/home/andros/.claude`); orchestrator session
+keyed (project_slug, role), shared. User model `foundation.py` (id, username, role ri/ha/shu, …); only
+`admin` seeded; NO per-user settings store (only global `system_settings`). The triggering Director's
+user_id is at the route (`current_user`) but **NOT threaded** into dispatch; the project owner IS
+resolvable (version→project→owner_id, as in `_owner_chat_id`, `pipeline_runner.py:173-180`).
+
+**Changes:**
+- **New table `user_agent_settings`** (`foundation.py` + migration): `(user_id FK→users ON DELETE CASCADE,
+  agent_role, model, effort)`, unique `(user_id, agent_role)`. `agent_role` ∈
+  {coordinator, designer, implementer, auditor, customer} — the **PIPELINE agent role**, NOT the user's
+  ri/ha/shu. CHECK on agent_role + effort.
+- **Config API (per-user — each edits their OWN):** `GET /api/v1/user-agent-settings` (the caller's rows) +
+  `PUT /api/v1/user-agent-settings/{agent_role}` (upsert model+effort), scoped to the authenticated user.
+- **Settings UI — new "Agenti" tab** (`SettingsPage.tsx`): for each of the 5 pipeline agent-roles, a
+  **Model** dropdown (Opus 4.8 `claude-opus-4-8` / Sonnet 4.6 `claude-sonnet-4-6` / Haiku 4.5
+  `claude-haiku-4-5-20251001`) + an **Effort** dropdown (low / medium / high / xhigh / max / ultracode).
+  Shows + edits the CURRENT user's config; draft/save pattern like the System tab.
+- **Dispatch threading + application:** at `invoke_agent` (`orchestrator.py:784`), resolve the **project
+  owner** (version→project→owner_id; reuse the `_owner_chat_id` join) → look up
+  `user_agent_settings(owner_id, role)` → pass `model` + `effort` to `invoke_claude`, which appends
+  `--model <m>` + `--effort <e>` to the `claude -p` args. **Fallback:** owner's config → (unset) → today's
+  default (no flags → CLI uses `.claude/agents/<role>/settings.json`). **Unset = exactly today's behavior
+  (no regression).** Attribution = **project owner** (stable, reuses existing resolution, aligns with the
+  future per-user subscription); threading the *triggering* user is unnecessary.
+- **Effort enum:** low/medium/high/xhigh/max/ultracode — confirm these are exactly what `claude --effort`
+  accepts (Implementer checks `claude --effort`); if the CLI's accepted set differs, STOP+ask.
+
+**Out of scope (future epic — NOT this CR):** per-user Claude **subscription/auth** (per-user credentials /
+`.claude` config dirs / docker mounts / encrypted token storage). E3 is config-only on the shared login.
+
+**Seams to preserve:** orchestrator session keying (project_slug, role) UNCHANGED (model/effort vary per
+dispatch turn; the conversation thread stays shared); unset config = today's exact behavior; the single
+shared login UNCHANGED; no credentials handled (the config stores model names + effort levels only, never
+secrets).
+
+**Acceptance:** a user sets e.g. Designer=Sonnet/high in "Agenti" → a build of THEIR project dispatches the
+Designer with `--model claude-sonnet-4-6 --effort high`; unset roles dispatch exactly as today; another
+user's config is independent; the API rejects editing another user's config; WS-D metrics still record the
+(now-varied) model. Tests: table + API (upsert, per-user isolation, reject-other-user), dispatch resolution
+(owner config → flags; unset → no flags), the Settings tab.
+
+**Build order (CR-NS-040, after E3(a)):** table+migration → config API → dispatch threading +
+`invoke_claude` flags → Settings "Agenti" tab → tests.
+
+**End of E3.**
