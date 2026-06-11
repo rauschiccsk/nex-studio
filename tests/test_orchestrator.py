@@ -18,7 +18,7 @@ from backend.db.models.projects import Project
 from backend.db.models.tasks import Epic, Feat, Task
 from backend.db.models.versions import Version
 from backend.services import claude_agent, orchestrator
-from backend.services.pipeline_status import ParseFailure, PipelineStatusBlock
+from backend.services.pipeline_status import ParseFailure, PipelineStatusBlock, parse_status_block
 
 
 def _block(stage="gate_a", kind="gate_report", summary="ok", awaiting="director", **extra) -> str:
@@ -2875,3 +2875,210 @@ async def test_route_to_designer_block_records_worker_metrics(db_session, fake_c
     assert len(notes) == 1
     assert notes[0].payload["usage"] == {"input_tokens": 27, "output_tokens": 18, "model": "m"}  # 3×(9,6)
     assert notes[0].payload["timing"]["parse_attempts"] == 3
+
+
+# ── WS-E: internal-turn parse-failure observability (CR-NS-037, Class F) ───────────────────────────
+# Each Class-F site, on an internal-turn parse-exhaustion, must (a) record a Director-visible note
+# naming the failed turn, (b) carry its tokens so aggregate_pipeline_usage counts them, while (c) the
+# pipeline's settled state + fallback stay UNCHANGED (HARD constraint — no control-flow change).
+
+_U = claude_agent.UsageMetadata
+
+
+async def test_record_internal_turn_parse_failure_helper(db_session):
+    """The shared recorder: note ALWAYS (visibility ≠ metrics); metrics payload only when present."""
+    version, _ = _make_version(db_session)
+    captured = []
+
+    async def on_msg(m):
+        captured.append(m)
+
+    await orchestrator._record_internal_turn_parse_failure(
+        db_session,
+        version.id,
+        "gate_a",
+        turn_label="X",
+        failed=ParseFailure(
+            "r", usage={"input_tokens": 7, "output_tokens": 3, "model": "m"}, timing={"parse_attempts": 2}
+        ),
+        on_message=on_msg,
+    )
+    await orchestrator._record_internal_turn_parse_failure(
+        db_session,
+        version.id,
+        "gate_a",
+        turn_label="Y",
+        failed=ParseFailure("r"),  # no usage
+    )
+    notes = [m for m in _msgs(db_session, version.id) if m.author == "system" and m.kind == "notification"]
+    assert len(notes) == 2  # BOTH recorded — the note is for visibility, recorded even without metrics
+    with_metrics = [m for m in notes if m.payload]
+    assert len(with_metrics) == 1 and with_metrics[0].payload["usage"]["input_tokens"] == 7
+    assert len([m for m in notes if not m.payload]) == 1  # the no-usage note has NULL payload
+    assert len(captured) == 1  # only the call with on_message broadcast
+
+
+async def test_coordinator_relay_parse_failure_visible_note(db_session, monkeypatch):
+    """Site 1 — `_coordinator_relay`: relay exhausts → note + metrics; caller still falls back to the
+    raw worker question (UNCHANGED)."""
+    seq = SequenceClaude(
+        [
+            (_block(stage="gate_a", kind="question", summary="?", question="Akú DB schému použiť?"), _U(5, 2, "m")),
+            ("garbage", _U(9, 4, "m")),
+            ("garbage", _U(9, 4, "m")),
+            ("garbage", _U(9, 4, "m")),
+        ]
+    )
+    monkeypatch.setattr(orchestrator, "invoke_claude", seq)
+    monkeypatch.setattr(orchestrator, "verify_mechanical", lambda slug, block: None)
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    st = orchestrator._get_state(db_session, version.id)
+    st.current_stage, st.current_actor, st.status = "gate_a", "designer", "agent_working"
+    db_session.flush()
+    state = await orchestrator.run_dispatch(db_session, version.id)
+
+    assert state.status == "blocked"
+    assert "Akú DB schému použiť?" in state.next_action  # FALLBACK to the raw worker question UNCHANGED
+    notes = [m for m in _msgs(db_session, version.id) if "Posúdenie otázky workera Koordinátorom" in m.content]
+    assert len(notes) == 1 and notes[0].author == "system" and notes[0].recipient == "director"
+    assert notes[0].payload["usage"] == {"input_tokens": 27, "output_tokens": 12, "model": "m"}
+    assert notes[0].payload["timing"]["parse_attempts"] == 3
+
+
+async def test_coordinator_review_gap_parse_failure_visible_note(db_session, monkeypatch):
+    """Site 2 — `_coordinator_review_gap`: silent no-op → note + metrics; still non-blocking advisory."""
+    seq = SequenceClaude(
+        [
+            (_block(stage="gate_e", kind="question", summary="?", question="Reset hesla?"), _U(5, 2, "m")),
+            (
+                _block(
+                    stage="gate_e",
+                    kind="answer",
+                    summary="medzera",
+                    awaiting="none",
+                    gap_found=True,
+                    proposed_fix="Pridať reset hesla",
+                ),
+                _U(6, 3, "m"),
+            ),
+            ("garbage", _U(9, 4, "m")),
+            ("garbage", _U(9, 4, "m")),
+            ("garbage", _U(9, 4, "m")),
+        ]
+    )
+    monkeypatch.setattr(orchestrator, "invoke_claude", seq)
+    monkeypatch.setattr(orchestrator, "verify_mechanical", lambda slug, block: None)
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _to_gate_e(db_session, version)
+    state = await orchestrator.run_dispatch(db_session, version.id)
+
+    assert state.status == "awaiting_director"  # non-blocking advisory UNCHANGED
+    assert "medzeru" in state.next_action
+    notes = [m for m in _msgs(db_session, version.id) if "Revízia navrhovanej opravy Koordinátorom" in m.content]
+    assert len(notes) == 1
+    assert notes[0].payload["usage"] == {"input_tokens": 27, "output_tokens": 12, "model": "m"}
+
+
+async def test_baseline_unreadable_relay_parse_failure_visible_note(db_session, fake_claude, monkeypatch):
+    """Site 3 — baseline-unreadable relay: unchecked → note + metrics; task stays todo + settled UNCHANGED."""
+    monkeypatch.setattr(orchestrator, "_repo_head", lambda root: None)  # HEAD unreadable
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _epic, _feat, (task,) = _seed_one_feat(db_session, version, project, ["T"])
+    _to_build(db_session, version)
+    fake_claude.response = lambda prompt: ("garbage", _U(9, 4, "m"))  # the coordinator relay can't parse
+
+    state = await orchestrator.run_dispatch(db_session, version.id)
+
+    assert state.status == "awaiting_director"
+    assert "baseline nečitateľný" in state.next_action  # settled outcome UNCHANGED
+    db_session.refresh(task)
+    assert task.status == "todo"  # stays todo (precondition failure, not a failed attempt) UNCHANGED
+    notes = [m for m in _msgs(db_session, version.id) if "Relay Koordinátora (baseline nečitateľný)" in m.content]
+    assert len(notes) == 1
+    assert notes[0].payload["usage"] == {"input_tokens": 27, "output_tokens": 12, "model": "m"}
+
+
+async def test_halt_relay_parse_failure_visible_note(db_session, fake_claude, monkeypatch):
+    """Site 4 — failed-task HALT relay: unchecked → note + metrics; HALT (failed + awaiting) UNCHANGED."""
+    monkeypatch.setattr(orchestrator, "_repo_head", lambda root: "f" * 40)
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _epic, _feat, (task,) = _seed_one_feat(db_session, version, project, ["T"])
+    _to_build(db_session, version)
+    fake_claude.response = lambda prompt: ("garbage", _U(9, 4, "m"))  # implementer + HALT relay all fail
+
+    state = await orchestrator.run_dispatch(db_session, version.id)
+
+    assert state.status == "awaiting_director"
+    assert "zlyhala po" in state.next_action  # HALT next_action UNCHANGED
+    db_session.refresh(task)
+    assert task.status == "failed"  # UNCHANGED
+    notes = [m for m in _msgs(db_session, version.id) if "Relay Koordinátora (úloha zlyhala)" in m.content]
+    assert len(notes) == 1  # exactly one HALT-relay note (the auto-fix-returns are kind=return)
+    assert notes[0].payload["usage"] == {"input_tokens": 27, "output_tokens": 12, "model": "m"}
+
+
+async def test_verify_done_judge_parse_failure_visible_note(db_session, monkeypatch):
+    """Site 5a — `verify_done` Coordinator judge exhausts → note + metrics; still returns a FAIL reason."""
+    seq = SequenceClaude([("garbage", _U(9, 4, "m"))])  # judge is a single invoke_agent (no parse-retry wrapper)
+    monkeypatch.setattr(orchestrator, "invoke_claude", seq)
+    monkeypatch.setattr(orchestrator, "verify_mechanical", lambda slug, block: None)  # pass mechanical → reach judge
+    version, _ = _make_version(db_session)
+    block = parse_status_block(_block(stage="gate_a", kind="gate_report", summary="hotovo", awaiting="director"))
+
+    reason = await orchestrator.verify_done(db_session, version.id, block)
+
+    assert reason is not None and "unparseable" in reason  # control flow UNCHANGED (non-None reason = FAIL)
+    notes = [m for m in _msgs(db_session, version.id) if "Overenie DONE reportu Koordinátorom" in m.content]
+    assert len(notes) == 1
+    assert notes[0].payload["usage"] == {"input_tokens": 9, "output_tokens": 4, "model": "m"}
+    assert notes[0].payload["timing"]["parse_attempts"] == 1
+
+
+async def test_verify_retry_reemit_parse_failure_visible_note(db_session, monkeypatch):
+    """Site 5b — `_verify_with_retries` worker re-emit can't parse → note + metrics; still returns reason."""
+    seq = SequenceClaude(
+        [
+            (_block(stage="gate_a", kind="blocked", summary="problém", question="treba viac dát"), _U(3, 1, "m")),
+            ("garbage", _U(9, 4, "m")),  # the worker re-emit (single invoke_agent) → ParseFailure
+        ]
+    )
+    monkeypatch.setattr(orchestrator, "invoke_claude", seq)
+    monkeypatch.setattr(orchestrator, "verify_mechanical", lambda slug, block: None)
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    state = orchestrator._get_state(db_session, version.id)
+    state.current_stage, state.current_actor = "gate_a", "designer"
+    db_session.flush()
+    block = parse_status_block(_block(stage="gate_a", kind="gate_report", summary="hotovo", awaiting="director"))
+
+    reason = await orchestrator._verify_with_retries(db_session, state, block)
+
+    assert reason is not None  # caller still blocks (control flow UNCHANGED)
+    notes = [m for m in _msgs(db_session, version.id) if "Oprava po overení" in m.content]
+    assert len(notes) == 1
+    assert notes[0].payload["usage"] == {"input_tokens": 9, "output_tokens": 4, "model": "m"}
+
+
+async def test_internal_turn_failure_timing_only_when_usage_none(db_session, monkeypatch):
+    """WS-E (CR-NS-037 review fix): a usage-less internal-turn failure (no envelope — bare-str /
+    ClaudeAgentError) still records its TIMING. Timing counts independently of usage (the
+    aggregate_pipeline_usage contract) and the visibility note is recorded regardless; usage is NOT
+    fabricated."""
+    seq = SequenceClaude(["garbage — bare str, no usage envelope"])  # bare str → usage None, timing present
+    monkeypatch.setattr(orchestrator, "invoke_claude", seq)
+    monkeypatch.setattr(orchestrator, "verify_mechanical", lambda slug, block: None)
+    version, _ = _make_version(db_session)
+    block = parse_status_block(_block(stage="gate_a", kind="gate_report", summary="hotovo", awaiting="director"))
+
+    reason = await orchestrator.verify_done(db_session, version.id, block)
+
+    assert reason is not None  # control flow unchanged
+    notes = [m for m in _msgs(db_session, version.id) if "Overenie DONE reportu Koordinátorom" in m.content]
+    assert len(notes) == 1
+    assert notes[0].payload is not None  # NOT a NULL payload — timing is carried (not skipped in aggregation)
+    assert "usage" not in notes[0].payload  # no fabricated usage
+    assert notes[0].payload["timing"]["parse_attempts"] == 1

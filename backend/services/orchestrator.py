@@ -110,14 +110,22 @@ def _split_claude_result(
 
 def _failure_metrics_payload(result: object) -> dict[str, Any]:
     """The WS-D ``usage``/``timing`` to fold onto an escalation message for a turn that produced NO
-    message of its own — a terminal :class:`ParseFailure` carrying captured usage (CR-NS-036). The
-    SINGLE source of the carry keys, so the attachment can't drift across the escalation sites.
+    message of its own — a terminal :class:`ParseFailure` (CR-NS-036). The SINGLE source of the carry
+    keys, so the attachment can't drift across the escalation sites.
 
-    Empty for a successful block (its own message already carries the metrics) or a ParseFailure with
-    no captured usage (nothing to count) — so attaching it is always a safe no-op."""
-    if not isinstance(result, ParseFailure) or result.usage is None:
+    Includes ``usage`` and/or ``timing`` independently — ``usage`` is ``None`` (omitted) when no
+    envelope was received (e.g. a ClaudeAgentError exhaustion), but ``timing`` is still present and
+    MUST be carried (WS-E, CR-NS-037): ``aggregate_pipeline_usage`` counts a payload with timing alone
+    (0 tokens, real wall-clock). Empty only for a non-``ParseFailure`` (a successful block already
+    carries its own metrics) — so attaching it is always a safe no-op."""
+    if not isinstance(result, ParseFailure):
         return {}
-    return {"usage": result.usage, "timing": result.timing}
+    out: dict[str, Any] = {}
+    if result.usage is not None:
+        out["usage"] = result.usage
+    if result.timing is not None:
+        out["timing"] = result.timing
+    return out
 
 
 def _seed_metrics_from_failure(result: object) -> Optional["_DispatchMetrics"]:
@@ -1056,6 +1064,46 @@ async def _coordinator_relay_engine_failure(
             await on_message(msg)
 
 
+async def _record_internal_turn_parse_failure(
+    db: Session,
+    version_id: uuid.UUID,
+    stage: str,
+    *,
+    turn_label: str,
+    failed: ParseFailure,
+    on_message: Optional[MessageCallback] = None,
+) -> None:
+    """Make a silent INTERNAL-turn parse-exhaustion visible + counted (WS-E, CR-NS-037, Class F).
+
+    When an internal Coordinator / verify-judge turn (NOT a build worker) exhausts its parse-retries,
+    the orchestrator otherwise discards the terminal :class:`ParseFailure` → its tokens leak and the
+    failure is invisible to the Director. The SINGLE drift-proof recorder used by all five Class-F
+    sites: records ONE plain-Slovak ``system→director`` note (CR-NS-022 §2 — no raw technical dump)
+    naming the failed turn, and attaches its accumulated usage/timing when present
+    (:func:`_failure_metrics_payload`) so :func:`pipeline_metrics.aggregate_pipeline_usage` counts it.
+
+    Pure observability: the note is recorded ALWAYS (visibility ≠ metrics — unlike ``_block_failed``'s
+    usage-gating); the metrics payload rides along when present. The caller KEEPS its existing settled
+    state + fallback — this adds no control-flow branch, no offerable action, no status/stage change
+    (WS-E HARD constraint)."""
+    msg = _record_message(
+        db,
+        version_id=version_id,
+        stage=stage,
+        author="system",
+        recipient="director",
+        kind="notification",
+        content=(
+            f"{turn_label} sa nepodarilo dokončiť ani po opakovaných pokusoch — pokračuje sa "
+            "náhradným postupom (nie pôvodný zámer Koordinátora). Pozri priebeh a rozhodni."
+        ),
+        # Metrics when present (else NULL payload — the note still records, for visibility).
+        payload=_failure_metrics_payload(failed) or None,
+    )
+    if on_message is not None:
+        await on_message(msg)
+
+
 # ---------------------------------------------------------------------------
 # Verify hooks (F-007 §5.4)
 # ---------------------------------------------------------------------------
@@ -1194,6 +1242,17 @@ async def verify_done(
         on_message=on_message,
     )
     if isinstance(judgment, ParseFailure):
+        # WS-E (CR-NS-037): the verify-judge turn exhausted parse-retries → no message recorded. Make
+        # it visible + count its tokens; the caller still treats the non-None reason as a verify FAIL
+        # (control flow unchanged).
+        await _record_internal_turn_parse_failure(
+            db,
+            version_id,
+            block.stage,
+            turn_label="Overenie DONE reportu Koordinátorom",
+            failed=judgment,
+            on_message=on_message,
+        )
         return f"coordinator verify unparseable: {judgment.reason}"
     if judgment.kind == "blocked":
         return f"coordinator flagged: {judgment.question or judgment.summary}"
@@ -1238,6 +1297,17 @@ async def _coordinator_relay(
         on_message=on_message,
     )
     if isinstance(relay, ParseFailure):
+        # WS-E (CR-NS-037): the relay turn exhausted parse-retries → no message recorded. Make it
+        # visible + count its tokens, then KEEP the existing fallback (caller surfaces the raw worker
+        # question). No control-flow change.
+        await _record_internal_turn_parse_failure(
+            db,
+            state.version_id,
+            state.current_stage,
+            turn_label="Posúdenie otázky workera Koordinátorom",
+            failed=relay,
+            on_message=on_message,
+        )
         return None
     return relay.question or relay.summary
 
@@ -1429,8 +1499,9 @@ async def _block_failed(
     # parse-exhaustion's tokens would otherwise be lost. When the failed turn carried usage, record a
     # plain system→director note carrying it (the ONLY message on this path — not a duplicate) so
     # aggregate_pipeline_usage counts it; the note also gives the Director a reason this blocked.
-    metrics_payload = _failure_metrics_payload(failed)
-    if metrics_payload:
+    # Gated explicitly on usage (CR-036 behavior) — NOT on _failure_metrics_payload being non-empty,
+    # which since WS-E (CR-NS-037) also returns timing-only; this preserves the original usage-gating.
+    if failed is not None and failed.usage is not None:
         msg = _record_message(
             db,
             version_id=state.version_id,
@@ -1439,7 +1510,7 @@ async def _block_failed(
             recipient="director",
             kind="notification",
             content="Fáza zablokovaná — agent nevrátil platný výstup ani po opravách; pozri priebeh a rozhodni.",
-            payload=metrics_payload,
+            payload=_failure_metrics_payload(failed),
         )
         if on_message is not None:
             await on_message(msg)
@@ -1456,7 +1527,7 @@ async def _coordinator_review_gap(
     """Branch B upward leg (§2): the Coordinator reviews the Designer's proposed fix and
     records a recommendation for the Director. Reuses the parse-retry; its message is the
     recommendation later composed into the Coordinator-relayed ``fix`` directive."""
-    await invoke_agent_with_parse_retry(
+    review = await invoke_agent_with_parse_retry(
         db,
         version_id=state.version_id,
         role="coordinator",
@@ -1468,6 +1539,17 @@ async def _coordinator_review_gap(
         ),
         on_message=on_message,
     )
+    if isinstance(review, ParseFailure):
+        # WS-E (CR-NS-037): a discarded gap-review parse-failure was a fully silent no-op → make it
+        # visible + count its tokens. Still non-blocking advisory (the function returns None as before).
+        await _record_internal_turn_parse_failure(
+            db,
+            state.version_id,
+            "gate_e",
+            turn_label="Revízia navrhovanej opravy Koordinátorom",
+            failed=review,
+            on_message=on_message,
+        )
 
 
 async def _run_gate_e_round(
@@ -1624,7 +1706,20 @@ async def _verify_with_retries(
             prompt=f"Verify zlyhal: {reason}. Oprav a znovu ukonči <<<PIPELINE_STATUS>>> blokom (§7.2).",
             on_message=on_message,
         )
-        if isinstance(retry, ParseFailure) or retry.kind != "gate_report":
+        if isinstance(retry, ParseFailure):
+            # WS-E (CR-NS-037): the verify-retry re-emit exhausted parse-retries → its tokens would
+            # leak. Record them + a visible note, then give up exactly as before (the caller blocks on
+            # the non-None reason — control flow unchanged).
+            await _record_internal_turn_parse_failure(
+                db,
+                state.version_id,
+                state.current_stage,
+                turn_label=f"Oprava po overení (agent „{state.current_actor}“)",
+                failed=retry,
+                on_message=on_message,
+            )
+            return reason
+        if retry.kind != "gate_report":
             return reason  # give up on non-report → caller escalates
         block = retry
         reason = await verify_done(db, state.version_id, block, on_message)
@@ -2133,7 +2228,7 @@ async def _run_build_round(
             # NEVER dispatch on an unknowable base. The task STAYS todo (a precondition failure,
             # not a failed attempt) so it auto-retries on resume once HEAD is readable; the
             # Coordinator relays to the Director (mirrors the 5-fail HALT path).
-            await invoke_agent_with_parse_retry(
+            relay = await invoke_agent_with_parse_retry(
                 db,
                 version_id=version_id,
                 role="coordinator",
@@ -2151,6 +2246,17 @@ async def _run_build_round(
                 on_event=on_event,
                 on_message=on_message,
             )
+            if isinstance(relay, ParseFailure):
+                # WS-E (CR-NS-037): relay result was unchecked → silent. Make it visible + count its
+                # tokens; the settled awaiting_director outcome below is UNCHANGED.
+                await _record_internal_turn_parse_failure(
+                    db,
+                    version_id,
+                    "build",
+                    turn_label="Relay Koordinátora (baseline nečitateľný)",
+                    failed=relay,
+                    on_message=on_message,
+                )
             state.status = "awaiting_director"
             state.next_action = (
                 f"Úloha #{task.number}: baseline nečitateľný (repo HEAD) — Director: oprav repo a pokračuj."
@@ -2246,7 +2352,7 @@ async def _run_build_round(
             db.flush()
             task_service.recompute_feat_status(db, task.feat_id)
             # Coordinator relays the failure to the Director (hub-and-spoke; §3).
-            await invoke_agent_with_parse_retry(
+            relay = await invoke_agent_with_parse_retry(
                 db,
                 version_id=version_id,
                 role="coordinator",
@@ -2265,6 +2371,17 @@ async def _run_build_round(
                 on_event=on_event,
                 on_message=on_message,
             )
+            if isinstance(relay, ParseFailure):
+                # WS-E (CR-NS-037): relay result was unchecked → silent on the PRIME triage point. Make
+                # it visible + count its tokens; the settled awaiting_director HALT below is UNCHANGED.
+                await _record_internal_turn_parse_failure(
+                    db,
+                    version_id,
+                    "build",
+                    turn_label="Relay Koordinátora (úloha zlyhala)",
+                    failed=relay,
+                    on_message=on_message,
+                )
             state.status = "awaiting_director"
             state.next_action = (
                 f"Úloha #{task.number} zlyhala po {_AUTO_FIX_RETRIES} pokusoch — Director: vrátiť / konzultovať."
