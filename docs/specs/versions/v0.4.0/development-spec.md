@@ -142,12 +142,27 @@ SEPARATE system** (`DialoguePage`, the gate_e Customer dialogue), NOT a persiste
   existing `agent_terminal_sessions` rows is not worth the risk.
 - The `PersistentTerminalsLayer` (built for MULTIPLE terminals) now hosts one — keep minimal or simplify
   (Implementer's call), no behavior regression.
-- **Removal cascade (verified 2026-06-12 — cover ALL, tsc+lint must be green):** narrow `AgentRole` to
-  `Literal["coordinator"]` in BOTH `frontend/src/services/api/agentTerminal.ts:15` AND
-  `backend/schemas/agent_terminal.py:18` (`AvailableRoles`/`SpawnRequest` auto-narrow); remove the now-unused
-  `Sidebar.tsx` helpers `agentDisabled()` + `agentTitle()` + trim/remove `AG_ROLE_LABEL`; update
-  `PersistentTerminalsLayer` `matchActiveRole()` + the `entries` array to coordinator-only; the spawn API
-  then auto-rejects non-coordinator roles via Pydantic once `AgentRole` is narrowed.
+- **`AgentRole` is OVERLOADED — decouple (Option A; re-verified 2026-06-12, the earlier cascade was
+  INCOMPLETE — it missed the debug-attach seam).** The FE `AgentRole` (`agentTerminal.ts:15`) types BOTH
+  spawn-terminal roles AND the CR-NS-018 §10 **debug-attach** targets (`DebugTerminalDrawer.tsx` +
+  `pipeline.ts`), which MUST keep all 4 (you debug-attach to a failed Implementer/Auditor session). Full
+  cascade (tsc+lint+tests green):
+  - **Decouple debug-attach:** add `DebugAttachRole = "coordinator"|"designer"|"implementer"|"auditor"` in
+    `pipeline.ts`; retype `DebugTerminalSession.role`, `openDebugTerminalApi(role)`, and
+    `DebugTerminalDrawer` (`TERMINAL_ROLES`, `asTerminalRole(...)→DebugAttachRole`, the `role`
+    state/`attach`/`changeRole`) to it. (`PipelineActor` is unsuitable — it has customer/director.)
+  - **Narrow the SPAWN type:** `AgentRole` → `Literal["coordinator"]` in `agentTerminal.ts:15` (FE) AND
+    `backend/schemas/agent_terminal.py:18` + `_VALID_ROLES`→`{"coordinator"}` (BE).
+    `AgentTerminalSession.role`/`SpawnRequest.role`/`AvailableRoles` auto-narrow to coordinator-only — and
+    that is CONSISTENT (the other NavItems are GONE, so gating/available-roles is coordinator-only; no
+    4-key requirement remains).
+  - Remove the now-unused `Sidebar.tsx` `agentDisabled()`/`agentTitle()` + trim/remove `AG_ROLE_LABEL`;
+    `PersistentTerminalsLayer` `matchActiveRole()`/`entries` + `agentTerminalStore.ROLES` → coordinator-only;
+    `AgentTerminalPage` `Record<AgentRole>`/role-prop auto-narrow.
+  - **Update the obsolete test** `test_Sidebar_agent_gating.test.tsx` (it mocks 4-role gating — now
+    coordinator-only).
+  - Backend `open_debug_terminal` takes `role: str` (not `AgentRole`) → BE narrowing is safe + does NOT
+    touch debug-attach. KEEP the DB CHECK constraint permissive (no migration).
 
 **Seams to preserve:** the orchestrator pipeline still dispatches ALL roles
 (coordinator/designer/implementer/auditor/customer) — E3(a) removes only the interactive SIDEBAR terminals,
