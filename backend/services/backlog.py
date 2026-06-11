@@ -140,7 +140,8 @@ def realize_for_version(db: Session, version_id: UUID) -> int:
     result = db.execute(
         sa_update(BacklogItem)
         .where(BacklogItem.version_id == version_id, BacklogItem.status == "included")
-        .values(status="realized", realized_at=func.now())
+        # updated_at set explicitly: a Core bulk UPDATE does NOT fire the ORM ``onupdate`` (CR-NS-042 polish).
+        .values(status="realized", realized_at=func.now(), updated_at=func.now())
     )
     return int(result.rowcount or 0)
 

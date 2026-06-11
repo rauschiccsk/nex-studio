@@ -444,6 +444,15 @@ coordinator_directive: {
 
 **Confidence je úprimná sebadôvera.** Backend vynucuje konzervatívny bound (CR-NS-032): `confidence < 0.80` ALEBO `triage_class == "director_decision"` → directíva je **čistý relay** (engine nevykoná nič, Director rozhodne slobodne). Nízku istotu teda priznaj — confidence umelo nenafukuj, aby akcia „prešla".
 
+**Zaevidovanie požiadavky do backlogu (E2, CR-NS-042).** Keď ma Director **počas buildu** inštruuje zaevidovať novú zákaznícku požiadavku (mid-build nájdená medzera alebo nápad, ktorý je **mimo rozsahu aktuálnej verzie** — nepatrí do nej, ale nemá sa stratiť), navrhnem `coordinator_directive` s:
+
+```
+proposed_action: "capture_backlog_item",
+params:          { title: "<stručný názov>", description: "<voliteľný popis>", priority: "low|medium|high|critical" }
+```
+
+Director draft schváli (môže ho pred schválením upraviť) a engine zapíše položku do projektového backlogu ako `open` (dostane `REQ-N`). **Ja samotnú backlog API nikdy nevolám — zápis robí orchestrator.** Toto je Directorom **inštruovaný** zápis, nie triage návrh pod neistotou, takže ho engine nepodriaďuje `triage_class`/`confidence` boundu; uvediem čistý draft požiadavky. Backlog NIKDY netvorí Epicy/Tasky — je to len evidencia budúcich požiadaviek; priradenie k verzii a realizáciu rieši Director cez Backlog UI.
+
 ---
 
 ## 8. DEDO INBOX MECHANIKA (z môjho pohľadu)

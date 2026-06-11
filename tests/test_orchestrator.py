@@ -11,6 +11,7 @@ import uuid
 import pytest
 from sqlalchemy import select, update
 
+from backend.db.models.backlog import BacklogItem
 from backend.db.models.foundation import User, UserAgentSettings
 from backend.db.models.orchestrator import OrchestratorSession
 from backend.db.models.pipeline import PipelineMessage, PipelineState
@@ -286,6 +287,128 @@ async def test_parse_retry_keeps_model_effort(db_session, fake_claude):
     assert isinstance(result, PipelineStatusBlock)
     assert len(fake_claude.calls) >= 2  # primary + at least one retry
     assert all(c["model"] == "claude-sonnet-4-6" and c["effort"] == "high" for c in fake_claude.calls)
+
+
+# ── CR-NS-042: gate_a backlog injection ─────────────────────────────────────────
+
+
+def _add_included_backlog(db_session, project_id, version_id, *, number, title, description=None):
+    item = BacklogItem(
+        project_id=project_id,
+        number=number,
+        title=title,
+        description=description,
+        status="included",
+        version_id=version_id,
+    )
+    db_session.add(item)
+    db_session.flush()
+    return item
+
+
+def test_augment_brief_injects_included_at_gate_a(db_session):
+    version, project = _make_version(db_session)
+    _add_included_backlog(db_session, project.id, version.id, number=1, title="PDF rotácia", description="Otočiť skeny")
+    _add_included_backlog(db_session, project.id, version.id, number=2, title="IBAN validácia")
+
+    out = orchestrator._augment_brief_with_backlog(db_session, version.id, "gate_a", "PÔVODNÝ BRIEF")
+
+    assert "Zákaznícke požiadavky (z backlogu)" in out
+    assert "REQ-1: PDF rotácia" in out and "Otočiť skeny" in out
+    assert "REQ-2: IBAN validácia" in out
+    assert out.endswith("PÔVODNÝ BRIEF")  # the original brief is preserved, block prepended
+
+
+def test_augment_brief_noop_other_stage(db_session):
+    version, project = _make_version(db_session)
+    _add_included_backlog(db_session, project.id, version.id, number=1, title="x")
+    # gate_b/c/d read what gate_a wrote — no re-injection
+    assert orchestrator._augment_brief_with_backlog(db_session, version.id, "gate_b", "BRIEF") == "BRIEF"
+
+
+def test_augment_brief_noop_when_no_included(db_session):
+    version, project = _make_version(db_session)
+    # an OPEN (not included) item must not inject
+    db_session.add(BacklogItem(project_id=project.id, number=1, title="open-only", status="open"))
+    db_session.flush()
+    assert orchestrator._augment_brief_with_backlog(db_session, version.id, "gate_a", "BRIEF") == "BRIEF"
+
+
+# ── CR-NS-042: E7 capture_backlog_item ──────────────────────────────────────────
+
+
+def _build_state(db_session, version):
+    state = PipelineState(
+        version_id=version.id,
+        flow_type="new_version",
+        current_stage="build",
+        current_actor="implementer",
+        status="awaiting_director",
+        next_action="x",
+    )
+    db_session.add(state)
+    db_session.flush()
+    return state
+
+
+def test_capture_backlog_item_executor(db_session):
+    version, project = _make_version(db_session)
+    state = _build_state(db_session, version)
+    directive = {
+        "proposed_action": "capture_backlog_item",
+        "triage_class": "programmer_guidance",
+        "confidence": 0.9,
+        "params": {"title": "Nová požiadavka", "description": "Popis", "priority": "high"},
+        "rationale": "r",
+    }
+
+    returned = orchestrator._execute_coordinator_directive(db_session, state, directive)
+    assert returned is state  # non-blocking — no re-dispatch, stays settled
+
+    items = db_session.execute(select(BacklogItem).where(BacklogItem.project_id == project.id)).scalars().all()
+    assert len(items) == 1
+    assert items[0].title == "Nová požiadavka"
+    assert items[0].priority == "high"
+    assert items[0].status == "open"
+    assert items[0].number == 1  # REQ-1
+    # the director→coordinator audit message was recorded
+    msgs = _msgs(db_session, version.id)
+    assert any(m.author == "director" and m.recipient == "coordinator" and "REQ-1" in m.content for m in msgs)
+
+
+def test_capture_invalid_priority_falls_back(db_session):
+    version, project = _make_version(db_session)
+    state = _build_state(db_session, version)
+    directive = {"proposed_action": "capture_backlog_item", "params": {"title": "X", "priority": "urgent"}}
+    orchestrator._execute_coordinator_directive(db_session, state, directive)
+    item = db_session.execute(select(BacklogItem).where(BacklogItem.project_id == project.id)).scalar_one()
+    assert item.priority == "medium"  # out-of-enum priority defended → medium
+
+
+def test_capture_missing_title_raises(db_session):
+    version, _ = _make_version(db_session)
+    state = _build_state(db_session, version)
+    directive = {"proposed_action": "capture_backlog_item", "params": {"description": "no title"}}
+    with pytest.raises(orchestrator.OrchestratorError):
+        orchestrator._execute_coordinator_directive(db_session, state, directive)
+
+
+def test_capture_is_gate_exempt(db_session):
+    # Director-instructed write → executable regardless of triage_class / confidence.
+    assert orchestrator._coordinator_directive_executable({"proposed_action": "capture_backlog_item"}) is True
+    assert (
+        orchestrator._coordinator_directive_executable(
+            {"proposed_action": "capture_backlog_item", "triage_class": "director_decision", "confidence": 0.1}
+        )
+        is True
+    )
+    # the existing triage actions keep their triage_class/confidence gate
+    assert (
+        orchestrator._coordinator_directive_executable(
+            {"proposed_action": "coordinator_reset_task", "triage_class": "director_decision", "confidence": 0.9}
+        )
+        is False
+    )
 
 
 async def test_parse_retry_accumulates_usage_and_attempts(db_session, monkeypatch):

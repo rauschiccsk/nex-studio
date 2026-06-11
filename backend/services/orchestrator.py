@@ -31,15 +31,18 @@ from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from backend.db.models.backlog import BacklogItem
 from backend.db.models.foundation import UserAgentSettings
 from backend.db.models.orchestrator import OrchestratorSession
 from backend.db.models.pipeline import PipelineMessage, PipelineState
 from backend.db.models.projects import Project
 from backend.db.models.tasks import Epic, Feat, Task
 from backend.db.models.versions import Version
+from backend.schemas.backlog import BacklogItemCreate
 from backend.schemas.epic import EpicCreate
 from backend.schemas.feat import FeatCreate
 from backend.schemas.task import TaskCreate
+from backend.services import backlog as backlog_service
 from backend.services import claude_agent
 from backend.services import epic as epic_service
 from backend.services import feat as feat_service
@@ -414,6 +417,41 @@ def _directive_for(stage: str) -> str:
         f"Pokračuj fázou '{stage}' podľa autoritatívneho spec balíka a svojho charteru. "
         "Ukonči odpoveď strojovým <<<PIPELINE_STATUS>>> blokom (F-007 §7.2)."
     )
+
+
+def _augment_brief_with_backlog(db: Session, version_id: uuid.UUID, stage: str, prompt: str) -> str:
+    """Prepend the version's ``included`` backlog items to the Designer's **gate_a** brief (E2, CR-NS-042).
+
+    Orchestrator-side only — NO agent API call. gate_a is the Designer's FIRST dispatch (where it authors
+    the version's customer-requirements); injecting once here makes the Designer design the assigned backlog
+    items as the version's requirements. Once-only by design — gate_b/c/d read what gate_a wrote, so there is
+    no re-injection → no drift. A no-op for any other stage, or a version with no ``included`` items.
+    """
+    if stage != "gate_a":
+        return prompt
+    items = (
+        db.execute(
+            select(BacklogItem)
+            .where(BacklogItem.version_id == version_id, BacklogItem.status == "included")
+            .order_by(BacklogItem.number.asc())
+        )
+        .scalars()
+        .all()
+    )
+    if not items:
+        return prompt
+    lines = [
+        "## Zákaznícke požiadavky (z backlogu)",
+        "",
+        "Tieto požiadavky boli priradené k tejto verzii — navrhni ich ako jej zákaznícke požiadavky:",
+        "",
+    ]
+    for it in items:
+        line = f"- **REQ-{it.number}: {it.title}**"
+        if it.description:
+            line += f" — {it.description}"
+        lines.append(line)
+    return "\n".join(lines) + "\n\n---\n\n" + prompt
 
 
 def directive_for_action(action: str, payload: dict[str, Any], stage: str) -> Optional[str]:
@@ -1429,7 +1467,13 @@ async def run_dispatch(
             return await _run_designer_spec_fix(db, state, on_event=on_event, on_message=on_message)
         return await _run_build_round(db, state, on_event=on_event, directive=directive, on_message=on_message)
 
-    prompt = directive if directive is not None else _directive_for(stage)
+    # E2 (CR-NS-042): on the FRESH gate_a dispatch (directive is None), prepend the version's included
+    # backlog items so the Designer authors them as the version's requirements (no-op for other stages /
+    # no items). A Director return/ask (directive set) does NOT re-inject — once-only, same --resume thread.
+    if directive is not None:
+        prompt = directive
+    else:
+        prompt = _augment_brief_with_backlog(db, state.version_id, stage, _directive_for(stage))
     result = await invoke_agent_with_parse_retry(
         db,
         version_id=state.version_id,
@@ -1847,6 +1891,7 @@ _EXECUTABLE_COORDINATOR_ACTIONS = frozenset(
         "coordinator_clear_session",
         "coordinator_escalate_dedo",
         "coordinator_route_to_designer",
+        "capture_backlog_item",
     }
 )
 
@@ -1872,11 +1917,19 @@ def _coordinator_directive_executable(directive: Optional[dict[str, Any]]) -> bo
     non-``director_decision`` triage, and confidence ≥ the conservative floor. Else it's a pure relay."""
     if not directive:
         return False
+    action = directive.get("proposed_action")
+    if action not in _EXECUTABLE_COORDINATOR_ACTIONS:
+        return False
+    # E2 (CR-NS-042): capture_backlog_item is a Director-INSTRUCTED write, not a triage judgment under
+    # uncertainty — the triage_class/confidence floor (which bounds the auto-triage actions) is meaningless
+    # for it, so it executes deterministically once the Director approves the drafted item.
+    if action == "capture_backlog_item":
+        return True
     if directive.get("triage_class") == "director_decision":
         return False
     if float(directive.get("confidence") or 0.0) < _COORDINATOR_CONFIDENCE_FLOOR:
         return False
-    return directive.get("proposed_action") in _EXECUTABLE_COORDINATOR_ACTIONS
+    return True
 
 
 def _directive_target_task(db: Session, version_id: uuid.UUID, directive: dict[str, Any]) -> Optional[Task]:
@@ -2021,10 +2074,41 @@ def _coordinator_route_to_designer(db: Session, state: PipelineState, directive:
     )
 
 
+def _coordinator_capture_backlog_item(db: Session, state: PipelineState, directive: dict[str, Any]) -> None:
+    """Capture a NEW backlog requirement on the Director's instruction (E2, CR-NS-042).
+
+    The Coordinator drafted it (``params {title, description, priority}``); the Director approved via the
+    standard E7 approve UI. The orchestrator writes it to the backlog as ``open`` — the **agent NEVER calls
+    the API**. Defensive against LLM-drafted params: title is trimmed + capped at 500, an out-of-enum
+    priority falls back to ``medium``."""
+    params = directive.get("params") or {}
+    title = str(params.get("title") or "").strip()[:500]
+    if not title:
+        raise OrchestratorError("Koordinátorov capture_backlog_item: chýba title v params")
+    priority = params.get("priority")
+    if priority not in ("low", "medium", "high", "critical"):
+        priority = "medium"
+    description = str(params["description"]).strip() if params.get("description") else None
+    project_id = db.execute(
+        select(Project.id).join(Version, Version.project_id == Project.id).where(Version.id == state.version_id)
+    ).scalar_one()
+    item = backlog_service.create(
+        db,
+        BacklogItemCreate(project_id=project_id, title=title, description=description, priority=priority),
+    )
+    _coordinator_audit(
+        db,
+        state.version_id,
+        f"Vykonaný Koordinátorov návrh: zaevidovaná nová požiadavka REQ-{item.number} („{title}“) do backlogu.",
+        directive,
+    )
+
+
 def _execute_coordinator_directive(db: Session, state: PipelineState, directive: dict[str, Any]) -> PipelineState:
     """Execute an approved coordinator_directive (F-008 §4/§9): mutate state + an audit message, then
-    re-dispatch — EXCEPT escalate_dedo (non-blocking: write + audit + leave settled) and route_to_designer
-    (sets up its OWN Designer dispatch + returns_to marker, not the generic build re-dispatch)."""
+    re-dispatch — EXCEPT escalate_dedo / capture_backlog_item (non-blocking: write + audit + leave settled)
+    and route_to_designer (sets up its OWN Designer dispatch + returns_to marker, not the generic build
+    re-dispatch)."""
     proposed = directive.get("proposed_action")
     if proposed == "coordinator_reset_task":
         _coordinator_reset_task(db, state, directive)
@@ -2040,6 +2124,11 @@ def _execute_coordinator_directive(db: Session, state: PipelineState, directive:
     elif proposed == "coordinator_route_to_designer":
         _coordinator_route_to_designer(db, state, directive)
         return state  # the executor already set up the Designer dispatch (current_actor=designer)
+    elif proposed == "capture_backlog_item":
+        _coordinator_capture_backlog_item(db, state, directive)
+        state.next_action = "Požiadavka zaevidovaná do backlogu — rozhodni o ďalšom kroku (build môže pokračovať)."
+        db.flush()
+        return state  # non-blocking: a backlog write doesn't change the build flow
     else:
         raise OrchestratorError(f"Neznáma vykonateľná akcia Koordinátora: {proposed}")
     _begin_dispatch(db, state)  # reset / move_baseline / clear_session → re-run the build loop (re-verify)

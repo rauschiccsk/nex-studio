@@ -194,6 +194,9 @@ def test_realize_on_release(db_session):
     db_session.refresh(untouched)
     assert included.status == "realized"
     assert included.realized_at is not None
+    # CR-NS-042 polish: the bulk UPDATE stamps updated_at too (Core UPDATE doesn't fire the ORM onupdate),
+    # in the SAME statement as realized_at → identical timestamps.
+    assert included.updated_at == included.realized_at
     assert untouched.status == "open"  # additive — only this version's included items transition
 
 
