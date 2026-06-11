@@ -12,7 +12,7 @@ pipeline picks it up automatically.
 
 from backend.db.models.base import Base, TimestampMixin, UUIDMixin
 from backend.db.models.bugs import Bug
-from backend.db.models.foundation import User, UserSession
+from backend.db.models.foundation import User, UserAgentSettings, UserSession
 from backend.db.models.orchestrator import OrchestratorSession
 from backend.db.models.pipeline import PipelineMessage, PipelineState
 from backend.db.models.project_member import ProjectMember
@@ -40,6 +40,7 @@ ALL_MODELS: tuple[type, ...] = (
     PipelineState,
     PipelineMessage,
     OrchestratorSession,
+    UserAgentSettings,
 )
 
 __all__ = [
@@ -60,6 +61,7 @@ __all__ = [
     "TimestampMixin",
     "UUIDMixin",
     "User",
+    "UserAgentSettings",
     "UserSession",
     "Version",
 ]

@@ -4,14 +4,46 @@ import {
   listSystemSettingsApi,
   updateSystemSettingApi,
 } from "@/services/api/systemSettings";
+import {
+  listUserAgentSettingsApi,
+  upsertUserAgentSettingApi,
+} from "@/services/api/userAgentSettings";
 import { useAuthStore } from "@/store/authStore";
 import { UserForm, type UserFormData } from "@/components/UserForm";
 import type { UserRead } from "@/types/user";
 import type { SystemSettingRead } from "@/types/system_setting";
+import type {
+  AgentEffort,
+  AgentModel,
+  PipelineAgentRole,
+} from "@/types/user_agent_setting";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-type SettingsTab = "appearance" | "system" | "users" | "sessions";
+type SettingsTab = "appearance" | "system" | "agents" | "users" | "sessions";
+
+// ── Agenti tab (CR-NS-040): per-role model/effort the cockpit applies at dispatch ──
+const AGENT_ROLES: { id: PipelineAgentRole; label: string }[] = [
+  { id: "coordinator", label: "Koordinátor" },
+  { id: "designer", label: "Designer" },
+  { id: "customer", label: "Customer" },
+  { id: "implementer", label: "Implementátor" },
+  { id: "auditor", label: "Audítor" },
+];
+
+const AGENT_MODELS: { id: AgentModel; label: string }[] = [
+  { id: "claude-opus-4-8", label: "Opus 4.8" },
+  { id: "claude-sonnet-4-6", label: "Sonnet 4.6" },
+  { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5" },
+];
+
+// The 5 levels `claude --effort` accepts (no ultracode — see CR-NS-040 Effort policy).
+const AGENT_EFFORTS: AgentEffort[] = ["low", "medium", "high", "xhigh", "max"];
+
+interface AgentDraft {
+  model: AgentModel | "";
+  effort: AgentEffort | "";
+}
 
 function roleCls(role: string) {
   if (role === "ri") return "text-indigo-400";
@@ -143,6 +175,52 @@ export default function SettingsPage() {
       setSaveErrors((prev) => ({ ...prev, [key]: msg }));
     } finally {
       setSavingKey(null);
+    }
+  }
+
+  // Agenti — per-role model/effort config for the CURRENT user (CR-NS-040). Draft/save like System.
+  const [agentDrafts, setAgentDrafts] = useState<Record<string, AgentDraft>>({});
+  const [agentsLoaded, setAgentsLoaded] = useState(false);
+  const [agentsLoadError, setAgentsLoadError] = useState("");
+  const [savingRole, setSavingRole] = useState<string | null>(null);
+  const [agentSaveErrors, setAgentSaveErrors] = useState<Record<string, string>>({});
+  const [flashRole, setFlashRole] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (tab !== "agents" || agentsLoaded) return;
+    listUserAgentSettingsApi()
+      .then((rows) => {
+        const initial: Record<string, AgentDraft> = {};
+        for (const r of AGENT_ROLES) initial[r.id] = { model: "", effort: "" };
+        for (const row of rows) {
+          initial[row.agent_role] = { model: row.model ?? "", effort: row.effort ?? "" };
+        }
+        setAgentDrafts(initial);
+        setAgentsLoaded(true);
+      })
+      .catch(() => setAgentsLoadError("Nepodarilo sa načítať konfiguráciu agentov."));
+  }, [tab, agentsLoaded]);
+
+  async function handleSaveAgentSetting(role: PipelineAgentRole) {
+    const draft = agentDrafts[role] ?? { model: "", effort: "" };
+    setSavingRole(role);
+    setAgentSaveErrors((prev) => ({ ...prev, [role]: "" }));
+    try {
+      const saved = await upsertUserAgentSettingApi(role, {
+        model: draft.model || null,
+        effort: draft.effort || null,
+      });
+      setAgentDrafts((prev) => ({
+        ...prev,
+        [role]: { model: saved.model ?? "", effort: saved.effort ?? "" },
+      }));
+      setFlashRole(role);
+      setTimeout(() => setFlashRole((r) => (r === role ? null : r)), 2000);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Neznáma chyba.";
+      setAgentSaveErrors((prev) => ({ ...prev, [role]: msg }));
+    } finally {
+      setSavingRole(null);
     }
   }
 
@@ -280,6 +358,7 @@ export default function SettingsPage() {
   const TABS: { id: SettingsTab; label: string }[] = [
     { id: "appearance", label: "Appearance" },
     { id: "system", label: "System" },
+    { id: "agents", label: "Agenti" },
     { id: "users", label: "Users" },
     { id: "sessions", label: "Sessions" },
   ];
@@ -469,6 +548,97 @@ export default function SettingsPage() {
                 )}
               </div>
             )}
+          </div>
+        )}
+
+        {/* ── Agenti (per-user model/effort, CR-NS-040) ── */}
+        {tab === "agents" && (
+          <div className="p-6 max-w-3xl">
+            <h2 className="text-sm font-semibold text-slate-300 mb-1">Agenti — model a effort</h2>
+            <p className="text-xs text-slate-600 mb-4">
+              Tvoja per-rola konfigurácia, ktorú cockpit aplikuje pri dispatchi agentov v <strong>tvojich</strong>{" "}
+              projektoch (<code>--model</code> / <code>--effort</code>). Nenastavené pole = predvolené správanie
+              (CLI default).
+            </p>
+            {agentsLoadError && (
+              <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400 mb-4">
+                {agentsLoadError}
+              </div>
+            )}
+            <div className="rounded-lg border border-slate-700 bg-slate-900 divide-y divide-slate-800">
+              {AGENT_ROLES.map((r) => {
+                const draft = agentDrafts[r.id] ?? { model: "", effort: "" };
+                const saving = savingRole === r.id;
+                const err = agentSaveErrors[r.id];
+                return (
+                  <div key={r.id} className="p-4">
+                    <div className="flex items-start justify-between gap-4 mb-2">
+                      <div>
+                        <div className="text-sm font-medium text-slate-200">{r.label}</div>
+                        {r.id === "coordinator" && !draft.effort && (
+                          <div className="text-[11px] text-slate-500 mt-0.5">
+                            Predvolený effort: <span className="font-mono">max</span>
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => handleSaveAgentSetting(r.id)}
+                        disabled={saving}
+                        className="shrink-0 px-3 py-1.5 text-xs font-medium text-white bg-primary-600 hover:bg-primary-500 disabled:opacity-40 disabled:cursor-not-allowed rounded transition-colors"
+                      >
+                        {saving ? "Ukladám…" : "Uložiť"}
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <label className="block">
+                        <span className="text-[10px] text-slate-600 uppercase tracking-widest">Model</span>
+                        <select
+                          value={draft.model}
+                          onChange={(e) =>
+                            setAgentDrafts((prev) => ({
+                              ...prev,
+                              [r.id]: { ...draft, model: e.target.value as AgentModel | "" },
+                            }))
+                          }
+                          className="mt-1 w-full bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-primary-500"
+                        >
+                          <option value="">— Predvolený —</option>
+                          {AGENT_MODELS.map((m) => (
+                            <option key={m.id} value={m.id}>
+                              {m.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="block">
+                        <span className="text-[10px] text-slate-600 uppercase tracking-widest">Effort</span>
+                        <select
+                          value={draft.effort}
+                          onChange={(e) =>
+                            setAgentDrafts((prev) => ({
+                              ...prev,
+                              [r.id]: { ...draft, effort: e.target.value as AgentEffort | "" },
+                            }))
+                          }
+                          className="mt-1 w-full bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-primary-500"
+                        >
+                          <option value="">— Predvolený —</option>
+                          {AGENT_EFFORTS.map((ef) => (
+                            <option key={ef} value={ef}>
+                              {ef}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                    <div className="mt-2 text-[11px] flex items-center gap-2">
+                      {flashRole === r.id && <span className="text-green-400">✓ Uložené</span>}
+                      {err && <span className="text-red-400">{err}</span>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
 

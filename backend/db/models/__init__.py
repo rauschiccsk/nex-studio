@@ -5,7 +5,7 @@ from backend.db.models.base import Base, TimestampMixin, UUIDMixin
 from backend.db.models.bugs import Bug
 from backend.db.models.credentials import Credential
 from backend.db.models.dialogue import DialogueMessage, DialogueSession
-from backend.db.models.foundation import User, UserSession
+from backend.db.models.foundation import User, UserAgentSettings, UserSession
 from backend.db.models.orchestrator import OrchestratorSession
 from backend.db.models.pipeline import PipelineMessage, PipelineState
 from backend.db.models.project_member import ProjectMember
@@ -33,6 +33,7 @@ __all__ = [
     "Feat",
     "Task",
     "User",
+    "UserAgentSettings",
     "UserSession",
     "Version",
 ]

@@ -60,3 +60,34 @@ class UserSession(Base, UUIDMixin, TimestampMixin):
         nullable=False,
         server_default=func.now(),
     )
+
+
+class UserAgentSettings(Base, UUIDMixin, TimestampMixin):
+    """Per-USER per-pipeline-role model/effort the cockpit applies at dispatch (CR-NS-040, E3(b/c)).
+
+    ``agent_role`` is the PIPELINE agent role (coordinator/designer/customer/implementer/auditor —
+    same set as ``OrchestratorSession``), NOT the user's ri/ha/shu access role. ``model``/``effort``
+    are nullable ``str`` validated by pydantic enums at the API layer — deliberately NO DB CHECK on
+    them, so the CLI's accepted model IDs / effort levels can evolve without a migration. Only
+    ``agent_role`` (a stable set) keeps a DB CHECK. The project owner's row drives a build's dispatch;
+    an absent row (or an unset field) falls back to today's no-flag behavior.
+    """
+
+    __tablename__ = "user_agent_settings"
+
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    agent_role = Column(String(16), nullable=False)
+    model = Column(String(64), nullable=True)
+    effort = Column(String(16), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "agent_role", name="uq_user_agent_settings_user_role"),
+        CheckConstraint(
+            "agent_role IN ('coordinator', 'designer', 'customer', 'implementer', 'auditor')",
+            name="ck_user_agent_settings_role",
+        ),
+    )

@@ -91,6 +91,8 @@ async def invoke_claude(
     charter_path: Optional[Path] = None,
     timeout: int = CLAUDE_INVOKE_TIMEOUT,
     on_event: Optional[EventCallback] = None,
+    model: Optional[str] = None,
+    effort: Optional[str] = None,
 ) -> tuple[str, Optional["UsageMetadata"]]:
     """Invoke ``claude -p`` with bounded transient-error retry (CR-NS-018 robustness).
 
@@ -114,6 +116,8 @@ async def invoke_claude(
                 charter_path=charter_path,
                 timeout=timeout,
                 on_event=on_event,
+                model=model,
+                effort=effort,
             )
         except ClaudeAgentError as exc:
             if attempt < len(_TRANSIENT_BACKOFF) and _TRANSIENT_RE.search(str(exc)):
@@ -139,6 +143,8 @@ async def _invoke_once(
     charter_path: Optional[Path] = None,
     timeout: int = CLAUDE_INVOKE_TIMEOUT,
     on_event: Optional[EventCallback] = None,
+    model: Optional[str] = None,
+    effort: Optional[str] = None,
 ) -> tuple[str, Optional["UsageMetadata"]]:
     """One ``claude -p`` subprocess invocation (no retry — see :func:`invoke_claude`).
 
@@ -159,6 +165,8 @@ async def _invoke_once(
             with ``--output-format json`` and parse the same fields from its single
             envelope (WS-D, CR-NS-036) — the ``result`` text is what the legacy text
             path returned, so downstream status-block parsing is unaffected.
+        model: optional ``--model <id>`` (CR-NS-040); ``None`` → no flag (CLI default).
+        effort: optional ``--effort <level>`` (CR-NS-040); ``None`` → no flag (CLI default).
 
     Returns:
         ``(text, usage)`` — the result text (stripped) + token usage from the json /
@@ -188,6 +196,14 @@ async def _invoke_once(
     else:
         # Subsequent invocation — resume existing session.
         args += ["--resume", str(claude_session_id)]
+    # CR-NS-040 (E3(b/c)): per-dispatch model/effort from the project owner's user_agent_settings.
+    # Stateless per-invoke directives — they do NOT conflict with --resume/--session-id/--output-format
+    # and may vary per turn on a shared session (the session UUID is flag-agnostic). Unset → no flag
+    # (the CLI uses .claude/agents/<role>/settings.json — today's exact behavior).
+    if model:
+        args += ["--model", model]
+    if effort:
+        args += ["--effort", effort]
     args.append(prompt)
 
     logger.info(

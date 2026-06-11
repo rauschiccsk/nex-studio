@@ -11,7 +11,7 @@ import uuid
 import pytest
 from sqlalchemy import select, update
 
-from backend.db.models.foundation import User
+from backend.db.models.foundation import User, UserAgentSettings
 from backend.db.models.orchestrator import OrchestratorSession
 from backend.db.models.pipeline import PipelineMessage, PipelineState
 from backend.db.models.projects import Project
@@ -58,8 +58,27 @@ class FakeClaude:
         self.response = _block()
         self.calls = []
 
-    async def __call__(self, *, project_slug, claude_session_id, prompt, charter_path=None, timeout=180, on_event=None):
-        self.calls.append({"project_slug": project_slug, "session": claude_session_id, "prompt": prompt})
+    async def __call__(
+        self,
+        *,
+        project_slug,
+        claude_session_id,
+        prompt,
+        charter_path=None,
+        timeout=180,
+        on_event=None,
+        model=None,
+        effort=None,
+    ):
+        self.calls.append(
+            {
+                "project_slug": project_slug,
+                "session": claude_session_id,
+                "prompt": prompt,
+                "model": model,
+                "effort": effort,
+            }
+        )
         # ``response`` may be a callable(prompt)->str so a single fake can answer different roles
         # (e.g. Programmer vs Auditor in the CR-NS-020 build loop); else it's a fixed string.
         return self.response(prompt) if callable(self.response) else self.response
@@ -170,6 +189,103 @@ async def test_invoke_agent_no_usage_records_none_not_zeros(db_session, fake_cla
     msg = _msgs(db_session, version.id)[0]
     assert msg.payload["usage"] is None
     assert msg.payload["timing"]["parse_attempts"] == 1
+
+
+# ── CR-NS-040: per-dispatch model/effort from the project owner's config ─────────
+
+
+def _make_version_with_owner_config(db_session, configs):
+    """version+project whose OWNER has the given user_agent_settings rows.
+
+    ``configs``: iterable of ``(agent_role, model, effort)``. Returns ``(version, owner)``.
+    """
+    owner = User(
+        username=f"o_{uuid.uuid4().hex[:8]}",
+        email=f"{uuid.uuid4().hex[:8]}@example.com",
+        password_hash="x",
+        role="ri",
+    )
+    db_session.add(owner)
+    db_session.flush()
+    project = Project(
+        name=f"P {uuid.uuid4().hex[:8]}",
+        slug=f"p-{uuid.uuid4().hex[:8]}",
+        category="singlemodule",
+        description="d",
+        created_by=owner.id,
+        owner_id=owner.id,
+    )
+    db_session.add(project)
+    db_session.flush()
+    version = Version(project_id=project.id, version_number=f"1.{uuid.uuid4().hex[:4]}.0")
+    db_session.add(version)
+    db_session.flush()
+    for role, model, effort in configs:
+        db_session.add(UserAgentSettings(user_id=owner.id, agent_role=role, model=model, effort=effort))
+    db_session.flush()
+    return version, owner
+
+
+def test_resolve_overrides_owner_config_applies(db_session):
+    version, _ = _make_version_with_owner_config(db_session, [("designer", "claude-sonnet-4-6", "high")])
+    assert orchestrator._resolve_dispatch_overrides(db_session, version.id, "designer") == (
+        "claude-sonnet-4-6",
+        "high",
+    )
+
+
+def test_resolve_overrides_unset_role_no_flags(db_session):
+    version, _ = _make_version_with_owner_config(db_session, [("designer", "claude-sonnet-4-6", "high")])
+    assert orchestrator._resolve_dispatch_overrides(db_session, version.id, "auditor") == (None, None)
+
+
+def test_resolve_overrides_coordinator_defaults_max(db_session):
+    version, _ = _make_version_with_owner_config(db_session, [])
+    assert orchestrator._resolve_dispatch_overrides(db_session, version.id, "coordinator") == (None, "max")
+
+
+def test_resolve_overrides_coordinator_explicit_overrides_default(db_session):
+    version, _ = _make_version_with_owner_config(db_session, [("coordinator", "claude-opus-4-8", "low")])
+    assert orchestrator._resolve_dispatch_overrides(db_session, version.id, "coordinator") == (
+        "claude-opus-4-8",
+        "low",
+    )
+
+
+def test_resolve_overrides_no_owner_falls_back(db_session):
+    # _make_version leaves owner_id NULL → no config; coordinator still defaults to max, others no flags.
+    version, _ = _make_version(db_session)
+    assert orchestrator._resolve_dispatch_overrides(db_session, version.id, "designer") == (None, None)
+    assert orchestrator._resolve_dispatch_overrides(db_session, version.id, "coordinator") == (None, "max")
+
+
+async def test_invoke_agent_threads_owner_model_effort(db_session, fake_claude):
+    version, _ = _make_version_with_owner_config(db_session, [("designer", "claude-sonnet-4-6", "high")])
+    await orchestrator.invoke_agent(db_session, version_id=version.id, role="designer", stage="gate_b", prompt="go")
+    assert fake_claude.calls[-1]["model"] == "claude-sonnet-4-6"
+    assert fake_claude.calls[-1]["effort"] == "high"
+
+
+async def test_invoke_agent_unset_role_no_flags(db_session, fake_claude):
+    version, _ = _make_version_with_owner_config(db_session, [])
+    await orchestrator.invoke_agent(db_session, version_id=version.id, role="designer", stage="gate_b", prompt="go")
+    assert fake_claude.calls[-1]["model"] is None
+    assert fake_claude.calls[-1]["effort"] is None
+
+
+async def test_parse_retry_keeps_model_effort(db_session, fake_claude):
+    """Each parse-retry re-enters invoke_agent → re-resolves + re-applies the owner config (no loss)."""
+    version, _ = _make_version_with_owner_config(db_session, [("designer", "claude-sonnet-4-6", "high")])
+    # Primary (prompt "go") fails to parse; the retry (prompt starts "Tvoj…") emits a valid block.
+    fake_claude.response = lambda prompt: (
+        _block(stage="gate_b", kind="gate_report", summary="ok") if prompt.startswith("Tvoj") else "no status block"
+    )
+    result = await orchestrator.invoke_agent_with_parse_retry(
+        db_session, version_id=version.id, role="designer", stage="gate_b", prompt="go"
+    )
+    assert isinstance(result, PipelineStatusBlock)
+    assert len(fake_claude.calls) >= 2  # primary + at least one retry
+    assert all(c["model"] == "claude-sonnet-4-6" and c["effort"] == "high" for c in fake_claude.calls)
 
 
 async def test_parse_retry_accumulates_usage_and_attempts(db_session, monkeypatch):

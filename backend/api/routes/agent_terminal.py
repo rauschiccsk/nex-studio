@@ -112,11 +112,10 @@ def available_roles(
 ) -> dict[str, bool]:
     """Return per-role charter availability for ``project_slug``.
 
-    ``{"designer": true, "implementer": true, "auditor": true,
-    "coordinator": false}`` — a role is available when its
-    ``.claude/agents/<role>/CLAUDE.md`` exists in the project. Used by the
-    Sidebar to disable AG tabs a project has no charter for (CR-NS-014).
-    An invalid slug or unknown project → 404.
+    Since E3(a) (CR-NS-039) the spawn API is Coordinator-only, so this reports just
+    ``{"coordinator": <bool>}`` — true when ``.claude/agents/coordinator/CLAUDE.md``
+    exists in the project (the set mirrors ``_VALID_ROLES``). An invalid slug or
+    unknown project → 404.
     """
     try:
         return service.available_roles(project_slug)

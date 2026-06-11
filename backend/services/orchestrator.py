@@ -31,6 +31,7 @@ from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from backend.db.models.foundation import UserAgentSettings
 from backend.db.models.orchestrator import OrchestratorSession
 from backend.db.models.pipeline import PipelineMessage, PipelineState
 from backend.db.models.projects import Project
@@ -329,6 +330,30 @@ def _project_slug_for_version(db: Session, version_id: uuid.UUID) -> str:
     if slug is None:
         raise OrchestratorError(f"Version not found: {version_id}")
     return slug
+
+
+def _resolve_dispatch_overrides(db: Session, version_id: uuid.UUID, role: str) -> tuple[Optional[str], Optional[str]]:
+    """Resolve ``(model, effort)`` dispatch flags for ``role`` from the project owner's config (CR-NS-040).
+
+    The version's project owner's ``user_agent_settings(role)`` row drives ``--model`` / ``--effort``
+    (attribution = project owner: stable, reuses the existing owner join, aligns with the future
+    per-user subscription). Graceful fallback — no owner / no row / unset field → no flag (today's
+    exact behavior, ``scalar``-safe, never crashes) — EXCEPT the **Coordinator effort defaults to
+    ``max``** (Director-approved Effort policy 2026-06-13: the one operator/judgment role, differentiated
+    up; it does not participate in Dual-Build, so non-deterministic depth is fine, and its output stays a
+    Director-gated proposal). Re-resolved on every :func:`invoke_agent` call, so parse-retries keep it.
+    """
+    row = db.execute(
+        select(UserAgentSettings.model, UserAgentSettings.effort)
+        .join(Project, Project.owner_id == UserAgentSettings.user_id)
+        .join(Version, Version.project_id == Project.id)
+        .where(Version.id == version_id, UserAgentSettings.agent_role == role)
+    ).first()
+    model = row.model if row is not None else None
+    effort = row.effort if row is not None else None
+    if effort is None and role == "coordinator":
+        effort = "max"
+    return model, effort
 
 
 def _resolve_orch_session(db: Session, project_slug: str, role: str) -> tuple[uuid.UUID, bool]:
@@ -821,6 +846,10 @@ async def invoke_agent(
     """
     slug = _project_slug_for_version(db, version_id)
     session_id, is_first = _resolve_orch_session(db, slug, role)
+    # CR-NS-040 (E3(b/c)): per-dispatch model/effort from the project owner's config. Resolved here (not
+    # in the parse-retry wrapper) so EVERY dispatch — including each parse-retry, which re-enters
+    # invoke_agent — applies the owner's config; unset → no flags (today's behavior).
+    model_override, effort_override = _resolve_dispatch_overrides(db, version_id, role)
     charter_path: Optional[Path] = None
     if is_first:
         charter_path = claude_agent.PROJECTS_ROOT / slug / ".claude" / "agents" / role / "CLAUDE.md"
@@ -846,6 +875,8 @@ async def invoke_agent(
                 charter_path=charter_path,
                 timeout=timeout if timeout is not None else _timeout_for(stage),
                 on_event=tagged_on_event,
+                model=model_override,
+                effort=effort_override,
             )
         )
     except ClaudeAgentError as exc:
