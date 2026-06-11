@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.routes.agent_terminal import router as agent_terminal_router
 from backend.api.routes.auth import router as auth_router
+from backend.api.routes.backlog import router as backlog_router
 from backend.api.routes.bugs import router as bugs_router
 from backend.api.routes.credentials import router as credentials_router
 from backend.api.routes.dialogue import router as dialogue_router
@@ -197,6 +198,7 @@ app.include_router(epics_router, prefix="/api/v1/epics")
 app.include_router(feats_router, prefix="/api/v1/feats")
 app.include_router(tasks_router, prefix="/api/v1/tasks")
 app.include_router(bugs_router, prefix="/api/v1/bugs")
+app.include_router(backlog_router, prefix="/api/v1/backlog")
 # The versions router intentionally mounts under the bare ``/api/v1`` prefix
 # because it spans two URL families (``/projects/{id}/versions`` and
 # ``/versions/{id}``) — see DESIGN.md §2.6 Version Management.

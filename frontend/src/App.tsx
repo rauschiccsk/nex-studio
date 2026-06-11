@@ -15,6 +15,7 @@ import VersionDetailPage from "./pages/VersionDetailPage";
 import MMOverviewPage from "./pages/MMOverviewPage";
 import MMModulePage from "./pages/MMModulePage";
 import MMDepMapPage from "./pages/MMDepMapPage";
+import BacklogPage from "./pages/BacklogPage";
 import KnowledgeBasePage from "./pages/KnowledgeBasePage";
 import ProjectSpecsPage from "./pages/ProjectSpecsPage";
 import AgentTerminalPage from "./pages/AgentTerminalPage";
@@ -48,6 +49,7 @@ function App() {
             <Route path="projects/:slug/mm" element={<MMOverviewPage />} />
             <Route path="projects/:slug/mm/depmap" element={<MMDepMapPage />} />
             <Route path="projects/:slug/mm/:moduleId" element={<MMModulePage />} />
+            <Route path="projects/:slug/backlog" element={<BacklogPage />} />
             <Route path="kb" element={<KnowledgeBasePage />} />
             <Route path="project-specs" element={<ProjectSpecsPage />} />
             {/* E3(a) (CR-NS-039): only the Coordinator interactive terminal remains. /dialogue route

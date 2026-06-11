@@ -73,6 +73,7 @@ from backend.db.models.bugs import Bug
 from backend.db.models.tasks import Epic
 from backend.db.models.versions import Version
 from backend.schemas.version import VersionCreate, VersionUpdate
+from backend.services import backlog as backlog_service
 
 
 def list_versions(db: Session, project_id: UUID) -> list[Version]:
@@ -333,6 +334,10 @@ def release(db: Session, version_id: UUID) -> Version:
 
     version.status = "released"
     version.release_date = date.today()
+    # E2 (CR-NS-041): additively realize this version's included backlog items (included → realized +
+    # realized_at). Runs AFTER the blocking-epic gate above — purely additive, never affects the release
+    # decision. No-op when the project has no backlog / none assigned to this version.
+    backlog_service.realize_for_version(db, version_id)
     db.flush()
     return version
 
