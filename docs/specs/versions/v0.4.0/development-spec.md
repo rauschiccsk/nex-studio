@@ -344,12 +344,17 @@ client + types.
 ### Version-include flow (Coordinator READS → version requirements) — CR-NS-042
 - The Director assigns backlog items to a version (the PATCH assign-to-version → included, version_id) — the
   in-app form of "tell the Coordinator which to add."
-- At the new version's kickoff/design, the **orchestrator INJECTS** the version's `included` backlog items
-  (REQ-N + title + description) into the Designer/Coordinator brief so they become the version's
-  customer-requirements input — the agent reads the backlog via orchestrator-provided CONTEXT, never an API
-  call. The Designer writes the version's customer-requirements/spec incorporating them.
-- Exact injection hook (kickoff brief / gate-a context) — Implementer wires to the cleanest point; STOP+ask
-  if unclear.
+- The **orchestrator INJECTS** the version's `included` backlog items (REQ-N + title + description) into the
+  **Designer's `gate_a` brief** — so they become the version's customer-requirements input; the Designer
+  authors the version's customer-requirements/spec incorporating them. The agent reads the backlog via
+  orchestrator-provided CONTEXT, never an API call.
+- **Injection stage = `gate_a` (CONFIRMED 2026-06-14):** `STAGE_ACTOR` (orchestrator.py:165) maps
+  `kickoff`→coordinator (discovery), `gate_a`→designer (its FIRST dispatch, where it writes the
+  requirements). Orchestrator sessions are keyed (project, role) + `--resume`d per role, so a kickoff
+  injection would land in the Coordinator's separate thread, NOT the Designer's. Hook: `run_dispatch`
+  (~1432), `_augment_brief_with_backlog` a no-op unless `stage == "gate_a"`; once-only (gate_b/c/d read what
+  gate_a wrote → no drift). *(Superseded the earlier "kickoff-only" recommendation — kickoff cannot reach
+  the Designer.)*
 
 ### Coordinator capture (E7 — Coordinator WRITES the backlog, on Director instruction) — CR-NS-042
 - Extend the E7 `coordinator_directive`: new `proposed_action = "capture_backlog_item"` +
