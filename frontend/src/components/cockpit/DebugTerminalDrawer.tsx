@@ -7,13 +7,14 @@ import { ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 import { AgentTerminal } from "../AgentTerminal";
 import { useAuthStore } from "../../store/authStore";
 import { openDebugTerminalApi } from "../../services/api/pipeline";
-import type { AgentRole } from "../../services/api/agentTerminal";
-import type { PipelineActor } from "../../services/api/pipeline";
+import type { DebugAttachRole, PipelineActor } from "../../services/api/pipeline";
 
-const TERMINAL_ROLES: AgentRole[] = ["coordinator", "designer", "implementer", "auditor"];
+// Debug-attach targets any orchestrator-backed pipeline role (CR-NS-018 §10) — independent of the
+// E3(a) spawn-terminal narrowing (CR-NS-039); see DebugAttachRole in pipeline.ts.
+const TERMINAL_ROLES: DebugAttachRole[] = ["coordinator", "designer", "implementer", "auditor"];
 
-function asTerminalRole(actor: PipelineActor): AgentRole {
-  return (TERMINAL_ROLES as string[]).includes(actor) ? (actor as AgentRole) : "coordinator";
+function asTerminalRole(actor: PipelineActor): DebugAttachRole {
+  return (TERMINAL_ROLES as string[]).includes(actor) ? (actor as DebugAttachRole) : "coordinator";
 }
 
 interface Props {
@@ -24,12 +25,12 @@ interface Props {
 export function DebugTerminalDrawer({ versionId, currentActor }: Props) {
   const token = useAuthStore((s) => s.token);
   const [expanded, setExpanded] = useState(false);
-  const [role, setRole] = useState<AgentRole>(asTerminalRole(currentActor));
+  const [role, setRole] = useState<DebugAttachRole>(asTerminalRole(currentActor));
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const attach = async (r: AgentRole) => {
+  const attach = async (r: DebugAttachRole) => {
     setLoading(true);
     setError(null);
     setSessionId(null);
@@ -49,7 +50,7 @@ export function DebugTerminalDrawer({ versionId, currentActor }: Props) {
     if (next && !sessionId && !loading) void attach(role);
   };
 
-  const changeRole = (r: AgentRole) => {
+  const changeRole = (r: DebugAttachRole) => {
     setRole(r);
     void attach(r);
   };

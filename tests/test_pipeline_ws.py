@@ -153,3 +153,20 @@ async def test_apply_ws_presence_frame_ignores_malformed_silently(monkeypatch):
     for bad in bad_frames:
         await pipeline_routes._apply_ws_presence_frame(vid, ws, bad)  # must not raise, must not set away
     assert reg.active_director_ids(vid) == {uid}  # unchanged — only a well-formed presence frame sets away
+
+
+async def test_active_director_ids_same_user_multiple_sockets():
+    """E6 (CR-NS-038): a user with several boards is active iff ≥1 of their sockets is non-away."""
+    reg = PipelineWsRegistry()
+    vid, uid = uuid.uuid4(), uuid.uuid4()
+    ws1, ws2 = _FakeWS(), _FakeWS()
+    await reg.connect(vid, ws1, uid)
+    await reg.connect(vid, ws2, uid)  # SAME user, two boards open
+    assert reg.active_director_ids(vid) == {uid}
+
+    await reg.set_away(vid, ws1, True)  # one away, the other still active
+    assert reg.active_director_ids(vid) == {uid}  # active iff ≥1 non-away connection
+
+    await reg.set_away(vid, ws2, True)  # both away now
+    assert reg.active_director_ids(vid) == set()
+    assert reg.present_director_ids(vid) == {uid}  # raw presence still counts (both sockets live)

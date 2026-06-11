@@ -4,8 +4,12 @@
 // mirror backend/schemas/pipeline.py exactly.
 
 import api from "../api";
-import type { AgentRole } from "./agentTerminal";
 import type { PaginatedResponse } from "../../types/common";
+
+// Debug-attach (CR-NS-018 §10) targets ANY pipeline agent's orchestrator session — a deliberately
+// separate type from the spawn `AgentRole` (E3(a)/CR-NS-039 narrowed that to "coordinator"). NOT
+// `PipelineActor` (that includes customer/director, which have no attachable orchestrator session).
+export type DebugAttachRole = "coordinator" | "designer" | "implementer" | "auditor";
 
 // ── stage / actor / status enums (mirror backend CHECK constraints) ──────────
 
@@ -134,7 +138,7 @@ export interface PipelineActionRequest {
 // Minimal shape of the agent-terminal row returned by the debug-attach endpoint.
 export interface DebugTerminalSession {
   id: string;
-  role: AgentRole;
+  role: DebugAttachRole;
   project_slug: string;
   pid: number;
 }
@@ -164,7 +168,7 @@ export function postPipelineActionApi(
 
 export function openDebugTerminalApi(
   versionId: string,
-  role: AgentRole,
+  role: DebugAttachRole,
 ): Promise<DebugTerminalSession> {
   return api.post<DebugTerminalSession>(
     `/pipeline/${versionId}/debug-terminal?role=${encodeURIComponent(role)}`,

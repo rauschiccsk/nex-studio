@@ -1,16 +1,16 @@
 /**
- * CR-NS-014 — Sidebar gates AG nav tabs by per-project charter availability.
+ * E3(a) (CR-NS-039) — Sidebar AG terminal is Coordinator-only (hub-and-spoke).
  *
- * The AG Koordinátor tab renders disabled when the selected project has no
- * coordinator charter, and enabled when it does. Other AG tabs are unaffected
- * when their charters exist.
+ * Supersedes the CR-NS-014 per-charter gating test: the Designer / Customer /
+ * Implementer / Auditor sidebar terminals were removed, so only the single
+ * AG Koordinátor NavItem remains and it is no longer charter-gated (the Sidebar
+ * no longer calls ``getAvailableRolesApi``). The pipeline still dispatches all
+ * roles internally — this only asserts the trimmed sidebar surface.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { describe, it, expect, vi } from "vitest";
+import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-
-const { mockGetRoles } = vi.hoisted(() => ({ mockGetRoles: vi.fn() }));
 
 vi.mock("@/store/authStore", () => ({
   useAuthStore: (sel: (s: unknown) => unknown) =>
@@ -26,10 +26,6 @@ vi.mock("@/store/activeContextStore", () => ({
     }),
 }));
 
-vi.mock("@/services/api/agentTerminal", () => ({
-  getAvailableRolesApi: mockGetRoles,
-}));
-
 import Sidebar from "@/components/layout/Sidebar";
 
 function renderSidebar() {
@@ -40,40 +36,20 @@ function renderSidebar() {
   );
 }
 
-describe("Sidebar AG tab gating (CR-NS-014)", () => {
-  beforeEach(() => {
-    mockGetRoles.mockReset();
-  });
-
-  it("disables AG Koordinátor when the project has no coordinator charter", async () => {
-    mockGetRoles.mockResolvedValue({
-      designer: true,
-      implementer: true,
-      auditor: true,
-      coordinator: false,
-    });
-
+describe("Sidebar AG terminal (E3(a) / CR-NS-039)", () => {
+  it("shows the single AG Koordinátor terminal, always enabled", () => {
     renderSidebar();
 
     const coordinator = screen.getByRole("button", { name: /AG Koordinátor/i });
-    await waitFor(() => expect(coordinator).toBeDisabled());
-
-    // Other AG tabs with present charters stay enabled.
-    expect(screen.getByRole("button", { name: /AG Designer/i })).not.toBeDisabled();
-    expect(screen.getByRole("button", { name: /AG Auditor/i })).not.toBeDisabled();
+    expect(coordinator).not.toBeDisabled();
   });
 
-  it("enables AG Koordinátor when the project has a coordinator charter", async () => {
-    mockGetRoles.mockResolvedValue({
-      designer: true,
-      implementer: true,
-      auditor: true,
-      coordinator: true,
-    });
-
+  it("no longer renders the Designer / Customer / Implementer / Auditor terminals", () => {
     renderSidebar();
 
-    await waitFor(() => expect(mockGetRoles).toHaveBeenCalledWith("nex-inbox"));
-    expect(screen.getByRole("button", { name: /AG Koordinátor/i })).not.toBeDisabled();
+    expect(screen.queryByRole("button", { name: /AG Designer/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /AG Customer/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /AG Implementator/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /AG Auditor/i })).toBeNull();
   });
 });

@@ -50,9 +50,8 @@ function App() {
             <Route path="projects/:slug/mm/:moduleId" element={<MMModulePage />} />
             <Route path="kb" element={<KnowledgeBasePage />} />
             <Route path="project-specs" element={<ProjectSpecsPage />} />
-            <Route path="designer" element={<AgentTerminalPage role="designer" />} />
-            <Route path="implementer" element={<AgentTerminalPage role="implementer" />} />
-            <Route path="auditor" element={<AgentTerminalPage role="auditor" />} />
+            {/* E3(a) (CR-NS-039): only the Coordinator interactive terminal remains. /dialogue route
+                KEPT (standalone gate_e dialogue) — only its sidebar link was removed. */}
             <Route path="coordinator" element={<AgentTerminalPage role="coordinator" />} />
             <Route path="dialogue" element={<DialoguePage />} />
             <Route path="cockpit" element={<CockpitPage />} />

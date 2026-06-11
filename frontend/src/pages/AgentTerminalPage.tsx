@@ -40,9 +40,6 @@ import { useAgentTerminalStore } from "@/store/agentTerminalStore";
 import type { AgentRole } from "@/services/api/agentTerminal";
 
 const ROLE_LABEL: Record<AgentRole, string> = {
-  designer: "Designer",
-  implementer: "Implementer",
-  auditor: "Auditor",
   coordinator: "Koordinátor",
 };
 

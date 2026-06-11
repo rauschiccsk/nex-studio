@@ -36,9 +36,7 @@ export interface SlotState {
 const EMPTY_SLOT: SlotState = { session: null, status: "idle", error: "" };
 
 export interface AgentTerminalState {
-  designer: SlotState;
-  implementer: SlotState;
-  auditor: SlotState;
+  // E3(a) (CR-NS-039): Coordinator is the only spawnable interactive terminal.
   coordinator: SlotState;
   /** ``true`` once :func:`refresh` has completed at least once. Layer
    *  uses this to gate "first fetch after login" logic. */
@@ -54,7 +52,7 @@ export interface AgentTerminalState {
   reset: () => void;
 }
 
-const ROLES: readonly AgentRole[] = ["designer", "implementer", "auditor", "coordinator"];
+const ROLES: readonly AgentRole[] = ["coordinator"];
 
 function setSlot(
   state: AgentTerminalState,
@@ -65,17 +63,11 @@ function setSlot(
 }
 
 export const useAgentTerminalStore = create<AgentTerminalState>()((set, get) => ({
-  designer: EMPTY_SLOT,
-  implementer: EMPTY_SLOT,
-  auditor: EMPTY_SLOT,
   coordinator: EMPTY_SLOT,
   initialized: false,
 
   async refresh(): Promise<void> {
     set((s) => ({
-      designer: { ...s.designer, status: "loading", error: "" },
-      implementer: { ...s.implementer, status: "loading", error: "" },
-      auditor: { ...s.auditor, status: "loading", error: "" },
       coordinator: { ...s.coordinator, status: "loading", error: "" },
     }));
     try {
@@ -98,9 +90,6 @@ export const useAgentTerminalStore = create<AgentTerminalState>()((set, get) => 
       const msg =
         e instanceof ApiError ? e.message : "Nepodarilo sa načítať sessions.";
       set((s) => ({
-        designer: { ...s.designer, status: "idle", error: msg },
-        implementer: { ...s.implementer, status: "idle", error: msg },
-        auditor: { ...s.auditor, status: "idle", error: msg },
         coordinator: { ...s.coordinator, status: "idle", error: msg },
         initialized: true,
       }));
@@ -140,9 +129,6 @@ export const useAgentTerminalStore = create<AgentTerminalState>()((set, get) => 
 
   reset(): void {
     set({
-      designer: EMPTY_SLOT,
-      implementer: EMPTY_SLOT,
-      auditor: EMPTY_SLOT,
       coordinator: EMPTY_SLOT,
       initialized: false,
     });

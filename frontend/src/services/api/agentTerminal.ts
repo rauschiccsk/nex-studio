@@ -12,7 +12,10 @@
 
 import api from "../api";
 
-export type AgentRole = "designer" | "implementer" | "auditor" | "coordinator";
+// E3(a) (CR-NS-039): the interactive sidebar terminal is Coordinator-only (hub-and-spoke). This is the
+// SPAWN role. The debug-attach (CR-NS-018 §10) targets any pipeline role via `DebugAttachRole` in
+// `pipeline.ts` — a deliberately separate type (spawn ≠ debug-attach).
+export type AgentRole = "coordinator";
 
 export type TerminatedBy = "idle" | "user" | "crash" | "server_restart";
 

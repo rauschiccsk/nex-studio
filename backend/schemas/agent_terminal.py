@@ -15,7 +15,13 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 _SLUG_RE = re.compile(r"^[a-z][a-z0-9-]*[a-z0-9]$|^[a-z]$")
 
-AgentRole = Literal["designer", "implementer", "auditor", "coordinator"]
+# E3(a) (CR-NS-039): SPAWN role — the interactive sidebar terminal is Coordinator-only (hub-and-spoke).
+# Used by AgentTerminalSpawnRequest so the spawn API rejects every other role at the request boundary.
+AgentRole = Literal["coordinator"]
+# Debug-attach (CR-NS-018 §10) targets ANY orchestrator-backed pipeline role — you attach to a failed
+# Implementer/Auditor session. A deliberately SEPARATE type from the spawn AgentRole (spawn ≠ debug-attach);
+# this is also the READ type, because the SAME agent_terminal_sessions table holds debug-attach rows.
+DebugAttachRole = Literal["coordinator", "designer", "implementer", "auditor"]
 TerminatedBy = Literal["idle", "user", "crash", "server_restart"]
 
 
@@ -26,7 +32,9 @@ class AgentTerminalSessionRead(BaseModel):
 
     id: uuid.UUID
     user_id: uuid.UUID
-    role: AgentRole
+    # READ accepts all debug-attach roles: this row may be a coordinator spawn OR a non-coordinator
+    # debug-attach session (CR-NS-039 BE decouple). Coordinator-only lives on the SpawnRequest, not here.
+    role: DebugAttachRole
     project_slug: str
     pid: int
     created_at: datetime

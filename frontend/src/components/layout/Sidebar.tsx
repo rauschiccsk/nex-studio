@@ -1,9 +1,8 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuthStore } from "@/store/authStore";
 import { useActiveContextStore } from "@/store/activeContextStore";
 import { usePresenceStore } from "@/store/usePresenceStore";
-import { getAvailableRolesApi, type AgentRole, type AvailableRoles } from "@/services/api/agentTerminal";
 import { usePipelineWs } from "@/hooks/usePipelineWs";
 
 // ─── Icon helpers ───────────────────────────────────────────────────────────
@@ -26,10 +25,6 @@ const IconFolder = () => <Emoji glyph="📁" />;
 const IconVersions = () => <Emoji glyph="🌿" />;
 
 const IconCoordinator = () => <Emoji glyph="🧭" />;
-const IconDesigner = () => <Emoji glyph="✏️" />;
-const IconImplementer = () => <Emoji glyph="🔧" />;
-const IconAuditor = () => <Emoji glyph="🔍" />;
-const IconDialogue = () => <Emoji glyph="💬" />;
 const IconCockpit = () => <Emoji glyph="🎛️" />;
 
 const IconKbBook = () => <Emoji glyph="📚" />;
@@ -172,32 +167,6 @@ export default function Sidebar() {
   const hasProject = Boolean(selectedProject);
   const projectsFallback = "/projects";
 
-  // CR-NS-014: which AG role charters exist in the selected project. AG tabs
-  // for absent roles render disabled (e.g. Koordinátor on nex-inbox).
-  const [availableRoles, setAvailableRoles] = useState<AvailableRoles | null>(null);
-  const selectedSlug = selectedProject?.slug;
-  useEffect(() => {
-    if (!selectedSlug) {
-      setAvailableRoles(null);
-      return;
-    }
-    let cancelled = false;
-    getAvailableRolesApi(selectedSlug)
-      .then((roles) => { if (!cancelled) setAvailableRoles(roles); })
-      .catch(() => { if (!cancelled) setAvailableRoles(null); });
-    return () => { cancelled = true; };
-  }, [selectedSlug]);
-
-  const AG_ROLE_LABEL: Record<AgentRole, string> = {
-    designer: "Designera",
-    implementer: "Implementátora",
-    auditor: "Audítora",
-    coordinator: "Koordinátora",
-  };
-  // A role tab is disabled only when we know (loaded) the project lacks it.
-  const agentDisabled = (role: AgentRole) => availableRoles !== null && !availableRoles[role];
-  const agentTitle = (role: AgentRole) => `Tento projekt nemá ${AG_ROLE_LABEL[role]}`;
-
   return (
     <aside
       className="flex-shrink-0 bg-slate-900 border-r border-slate-800 flex flex-col select-none transition-all duration-200 overflow-x-hidden"
@@ -267,14 +236,11 @@ export default function Sidebar() {
           collapsed={collapsed}
           active={hasProject ? location.pathname === `/projects/${selectedProject!.slug}` : false}
         />
-        {/* Embedded agent terminals — replace external Windows Terminal
-            tabs with full-page xterm.js sessions inside NEX Studio
-            (Director directive 2026-05-13). */}
-        <NavItem icon={<IconCoordinator />} label="AG Koordinátor" path="/coordinator" collapsed={collapsed} active={isActive("/coordinator")} disabled={agentDisabled("coordinator")} disabledTitle={agentTitle("coordinator")} />
-        <NavItem icon={<IconDesigner />} label="AG Designer" path="/designer" collapsed={collapsed} active={isActive("/designer")} disabled={agentDisabled("designer")} disabledTitle={agentTitle("designer")} />
-        <NavItem icon={<IconDialogue />} label="AG Customer" path="/dialogue" collapsed={collapsed} active={isActive("/dialogue")} />
-        <NavItem icon={<IconImplementer />} label="AG Implementator" path="/implementer" collapsed={collapsed} active={isActive("/implementer")} disabled={agentDisabled("implementer")} disabledTitle={agentTitle("implementer")} />
-        <NavItem icon={<IconAuditor />} label="AG Auditor" path="/auditor" collapsed={collapsed} active={isActive("/auditor")} disabled={agentDisabled("auditor")} disabledTitle={agentTitle("auditor")} />
+        {/* E3(a) (CR-NS-039): hub-and-spoke — the Coordinator is the Director's single ad-hoc
+            consult terminal (has READ docs/specs + schemas, CR-033). The Designer / Customer /
+            Implementer / Auditor sidebar terminals were removed; the pipeline still dispatches all
+            roles internally. */}
+        <NavItem icon={<IconCoordinator />} label="AG Koordinátor" path="/coordinator" collapsed={collapsed} active={isActive("/coordinator")} />
         <NavItem icon={<IconCockpit />} label="Orchestration Cockpit" path="/cockpit" collapsed={collapsed} active={isActive("/cockpit")} badge={cockpitAwaiting} />
 
         <NavItem icon={<IconKbBook />} label="Knowledge Base" path="/kb" collapsed={collapsed} active={isActive("/kb")} />

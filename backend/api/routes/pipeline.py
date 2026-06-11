@@ -220,6 +220,13 @@ async def open_debug_terminal(
     if not _version_exists(db, version_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Version not found")
 
+    # Debug-attach accepts the 4 orchestrator roles (CR-NS-039 BE decouple) — NOT the spawn-API's
+    # coordinator-only set. Validate up front so a bad role is a clean 422, not a misleading 404.
+    try:
+        agent_terminal_service._validate_debug_attach_role(role)
+    except AgentTerminalError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
     slug = orchestrator._project_slug_for_version(db, version_id)
     orch = db.execute(
         select(OrchestratorSession).where(

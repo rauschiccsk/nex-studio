@@ -37,9 +37,7 @@ import {
 import { useAuthStore } from "@/store/authStore";
 
 function matchActiveRole(pathname: string): AgentRole | null {
-  if (pathname === "/designer") return "designer";
-  if (pathname === "/implementer") return "implementer";
-  if (pathname === "/auditor") return "auditor";
+  // E3(a) (CR-NS-039): Coordinator is the only interactive terminal route.
   if (pathname === "/coordinator") return "coordinator";
   return null;
 }
@@ -48,9 +46,6 @@ export function PersistentTerminalsLayer() {
   const location = useLocation();
   const user = useAuthStore((s) => s.user);
 
-  const designer = useAgentTerminalStore((s) => s.designer);
-  const implementer = useAgentTerminalStore((s) => s.implementer);
-  const auditor = useAgentTerminalStore((s) => s.auditor);
   const coordinator = useAgentTerminalStore((s) => s.coordinator);
   const initialized = useAgentTerminalStore((s) => s.initialized);
   const refresh = useAgentTerminalStore((s) => s.refresh);
@@ -85,12 +80,7 @@ export function PersistentTerminalsLayer() {
   if (!isDirector || !token) return null;
 
   const activeRole = matchActiveRole(location.pathname);
-  const entries: Array<[AgentRole, SlotState]> = [
-    ["designer", designer],
-    ["implementer", implementer],
-    ["auditor", auditor],
-    ["coordinator", coordinator],
-  ];
+  const entries: Array<[AgentRole, SlotState]> = [["coordinator", coordinator]];
 
   return (
     <>

@@ -79,6 +79,13 @@ class PipelineWsRegistry:
         for ws in dead:
             await self.disconnect(version_id, ws)
 
+    # ── presence reads ──────────────────────────────────────────────────────────────────────────
+    # Both reads are SYNC and lock-free BY DESIGN (CR-NS-038 review). Single-process asyncio: a sync
+    # method runs to completion without an await point, so the event loop cannot interleave the
+    # lock-holding mutators (connect/disconnect/set_away) mid-iteration — the read sees a consistent
+    # snapshot of `_conns` and each `_Conn.away`. INVARIANT: if either is ever made async (e.g. to add
+    # `await self._lock`), it MUST then hold the lock — an async read could otherwise interleave a
+    # `_conns` structural mutation and hit "dict changed size during iteration".
     def present_director_ids(self, version_id: UUID) -> set[UUID]:
         """User ids with a live board socket for ``version_id`` (§9 raw presence read)."""
         return {c.user_id for c in self._conns.get(version_id, {}).values()}
