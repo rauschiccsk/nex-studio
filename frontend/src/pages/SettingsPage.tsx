@@ -586,7 +586,7 @@ export default function SettingsPage() {
                         </select>
                       </label>
                       <label className="block">
-                        <span className="text-[10px] text-slate-600 uppercase tracking-widest">Effort</span>
+                        <span className="text-[10px] text-slate-600 uppercase tracking-widest">Úroveň</span>
                         <select
                           value={draft.effort}
                           onChange={(e) =>

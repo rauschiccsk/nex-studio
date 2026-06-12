@@ -34,10 +34,10 @@ function statusCls(status: string) {
 }
 
 function statusLabel(status: string) {
-  if (status === "done") return "Done";
-  if (status === "in_development") return "In Development";
-  if (status === "in_design") return "In Design";
-  return "Planned";
+  if (status === "done") return "Hotovo";
+  if (status === "in_development") return "Vo vývoji";
+  if (status === "in_design") return "V návrhu";
+  return "Plánované";
 }
 
 // ─── Module Card ──────────────────────────────────────────────────────────────
