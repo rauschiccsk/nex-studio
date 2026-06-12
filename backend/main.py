@@ -18,6 +18,7 @@ from backend.api.routes.epics import router as epics_router
 from backend.api.routes.feats import router as feats_router
 from backend.api.routes.health import health_check as _health_check_handler
 from backend.api.routes.knowledge import router as knowledge_router
+from backend.api.routes.metrics import router as metrics_router
 from backend.api.routes.module_dependencies import router as module_dependencies_router
 from backend.api.routes.pipeline import router as pipeline_router
 from backend.api.routes.project_members import router as project_members_router
@@ -203,6 +204,7 @@ app.include_router(backlog_router, prefix="/api/v1/backlog")
 # because it spans two URL families (``/projects/{id}/versions`` and
 # ``/versions/{id}``) — see DESIGN.md §2.6 Version Management.
 app.include_router(versions_router, prefix="/api/v1")
+app.include_router(metrics_router, prefix="/api/v1")
 app.include_router(uploads_router, prefix="/api/v1")
 app.include_router(system_settings_router, prefix="/api/v1/system-settings")
 app.include_router(user_agent_settings_router, prefix="/api/v1/user-agent-settings")

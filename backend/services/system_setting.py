@@ -172,6 +172,32 @@ DEFAULT_SETTINGS: dict[str, _Default] = {
             "per D-022) plus any other commercial reservations."
         ),
     ),
+    # ── Metrics / ROI pricing (E5, CR-NS-043) ───────────────────────
+    "developer_hourly_rate": _Default(
+        value="0.0",
+        value_type="float",
+        description=(
+            "Average human developer hourly rate (currency-agnostic) for the metrics-page "
+            "human-baseline (Σ estimated_minutes / 60 × rate). 0 = unset → ROI shows 'not configured', "
+            "never a fabricated number. Falls back to the DEVELOPER_HOURLY_RATE env value."
+        ),
+    ),
+    "api_price_input_per_mtok": _Default(
+        value="0.0",
+        value_type="float",
+        description=(
+            "Claude API price per 1,000,000 INPUT tokens, for the metrics-page API-cost figure. "
+            "0 = unset → cost null. Falls back to the API_PRICE_INPUT_PER_MTOK env value."
+        ),
+    ),
+    "api_price_output_per_mtok": _Default(
+        value="0.0",
+        value_type="float",
+        description=(
+            "Claude API price per 1,000,000 OUTPUT tokens, for the metrics-page API-cost figure. "
+            "0 = unset → cost null. Falls back to the API_PRICE_OUTPUT_PER_MTOK env value."
+        ),
+    ),
 }
 
 

@@ -22,6 +22,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Column,
+    Float,
     ForeignKey,
     Identity,
     Index,
@@ -75,6 +76,11 @@ class PipelineState(Base, UUIDMixin, TimestampMixin):
     #: metrics page's Director-wait time (now − ``awaiting_director_since``). Nullable; NULL whenever
     #: the pipeline isn't waiting on the Director.
     awaiting_director_since = Column(TIMESTAMP(timezone=True), nullable=True)
+    #: E5 (CR-NS-043): accumulated total Director-wait time for this version (seconds). The status
+    #: listener folds each finished wait interval (now − awaiting_director_since) in here on EXIT, so
+    #: the metrics page has the lifetime total; a live open wait is added on top at read time. Starts
+    #: fresh — versions finished before this column show 0 (no backfill, documented).
+    total_director_wait_seconds = Column(Float, nullable=False, server_default="0")
 
     __table_args__ = (
         UniqueConstraint("version_id", name="uq_pipeline_state_version_id"),
@@ -180,4 +186,10 @@ def _stamp_awaiting_director_since(target, value, oldvalue, initiator):
         if oldvalue not in _DIRECTOR_WAIT_STATUSES:
             target.awaiting_director_since = datetime.now(timezone.utc)
     else:
+        # LEAVE a wait status → fold the finished interval into the accumulated total (E5, CR-NS-043),
+        # then clear. Only when we were actually waiting (awaiting_director_since set) — a non-wait→
+        # non-wait set or an initial stamp has it None and contributes nothing.
+        if target.awaiting_director_since is not None:
+            elapsed = (datetime.now(timezone.utc) - target.awaiting_director_since).total_seconds()
+            target.total_director_wait_seconds = (target.total_director_wait_seconds or 0.0) + elapsed
         target.awaiting_director_since = None
