@@ -7,6 +7,7 @@
  */
 
 import { useState, type FormEvent } from "react";
+import { Button } from "nex-shared";
 
 export interface LoginFormProps {
   /** Called when the form passes client-side validation. */
@@ -119,15 +120,16 @@ export default function LoginForm({
         </div>
       )}
 
-      {/* Submit */}
-      <button
+      {/* Submit \u2014 uses the shared <Button> from nex-shared (E1 Phase B1, CR-NS-048). */}
+      <Button
         type="submit"
+        variant="primary"
         disabled={loading}
-        className="btn-primary w-full"
+        className="w-full"
         data-testid="login-submit"
       >
         {loading ? "Prihlasovanie\u2026" : "Prihl\u00e1si\u0165 sa"}
-      </button>
+      </Button>
     </form>
   );
 }
