@@ -11,7 +11,9 @@
 ## Phase 3 scope
 - **E5 — Project metrics / ROI page** (this spec; designed + approved 2026-06-12). Visualize the WS-D AI
   effort + compute cost + the human-baseline ROI showcase.
-- **E4 — i18n SK/EN** (to be designed).
+- **E4 — Uniform Slovak UI** (designed 2026-06-12; CR-NS-046). **Redefined by the Director: NOT an i18n
+  SK/EN switch** — the FE is made uniformly professional Slovak (no switch, no English version). Glossary +
+  2 structural changes in `spec/E4-slovak-ui.md`.
 - **E1 — Cross-project unification** (shared frontend + shared modules; the biggest — to be designed).
 
 Sequence: **E5 → E4 → E1**.
@@ -143,3 +145,27 @@ The Designer (task_plan stage) must populate `estimated_minutes` per task. Deliv
   2026-06-14:** all plumbing present → instruction + test only (see the CR-045 section above).
 
 **End of E5.**
+
+---
+
+## E4 — Uniform Slovak UI (CR-NS-046)
+
+> **Redefined 2026-06-12 (Director dialogue).** Originally scoped as an i18n SK/EN switch; the Director
+> clarified the real need is a **uniformly professional Slovak UI** (the FE is today half EN / half SK).
+> No language switch, no English version, Slovak only. English version explicitly deferred.
+
+Full design — the canonical EN→SK glossary, the keep-English term list, the 2 structural changes, rules,
+seams, acceptance — is in **`spec/E4-slovak-ui.md`**. Summary:
+- **Scope: FE-only.** Translate the remaining English/hybrid user-facing strings to Slovak; keep established
+  dev/tech terms English (Epic, Feat, Task, Pipeline, Cockpit, Director, Gate A–G, Slug, UAT, JWT, PR,
+  CI/CD, PASS/FAIL, re-gate, …). Agent directives, backend Director-facing strings, and `sk-SK`
+  date/number formatting are ALREADY Slovak → untouched.
+- **Director-decided nav labels (single-word):** Dashboard→Prehľad, Projects→Projekty, Versions→Verzie,
+  Backlog→Zásobník, Knowledge Base→Dokumentácia, Project Specs→Špecifikácie, Credentials→Prístupy,
+  Settings→Nastavenia, Orchestration Cockpit→Orchestrácia.
+- **2 structural changes:** (1) remove the dead language-switch stub in Settings>Appearance (unused `lang`
+  state + Slovenčina/English buttons); (2) gate the "Prístupy" (Credentials) nav item to `role === "ri"`
+  (backend already restricts the credentials API to `ri` — this aligns nav visibility, not a new boundary).
+- **Seams:** no i18n library, no language store, no backend/agent/format changes, no new routes.
+
+**Sequence after E4: E1 (cross-project unification — the biggest, to be designed).**
