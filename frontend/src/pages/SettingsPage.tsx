@@ -10,6 +10,7 @@ import {
 } from "@/services/api/userAgentSettings";
 import { useAuthStore } from "@/store/authStore";
 import { UserForm, type UserFormData } from "@/components/UserForm";
+import { ROLE_LABELS } from "@/components/cockpit/labels";
 import type { UserRead } from "@/types/user";
 import type { SystemSettingRead } from "@/types/system_setting";
 import type {
@@ -23,12 +24,14 @@ import type {
 type SettingsTab = "appearance" | "system" | "agents" | "users" | "sessions";
 
 // ── Agenti tab (CR-NS-040): per-role model/effort the cockpit applies at dispatch ──
+// Labels come from the canonical ROLE_LABELS (labels.ts, CR-NS-018) — single source of
+// truth shared with the pipeline board, so the role names never drift out of Slovak.
 const AGENT_ROLES: { id: PipelineAgentRole; label: string }[] = [
-  { id: "coordinator", label: "Koordinátor" },
-  { id: "designer", label: "Designer" },
-  { id: "customer", label: "Customer" },
-  { id: "implementer", label: "Implementátor" },
-  { id: "auditor", label: "Audítor" },
+  { id: "coordinator", label: ROLE_LABELS.coordinator },
+  { id: "designer", label: ROLE_LABELS.designer },
+  { id: "customer", label: ROLE_LABELS.customer },
+  { id: "implementer", label: ROLE_LABELS.implementer },
+  { id: "auditor", label: ROLE_LABELS.auditor },
 ];
 
 const AGENT_MODELS: { id: AgentModel; label: string }[] = [

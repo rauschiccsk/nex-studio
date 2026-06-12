@@ -90,6 +90,21 @@ def test_create_and_list(db_session):
     assert [x["number"] for x in rows] == [1]
 
 
+def test_list_with_limit_200(db_session):
+    """Regression (Director 2026-06-12): the backlog query allows ``limit=200`` but the shared
+    ``PaginatedResponse`` envelope capped ``limit`` at ``le=100`` → a request with limit in
+    (100, 200] 500'd on response validation. The FE lists with limit=200, so the envelope
+    must accept it (the per-endpoint Query is the real bound)."""
+    user = _make_user(db_session, "ha")
+    project = _make_project(db_session, user)
+    client = _client(db_session, user)
+    client.post("/api/v1/backlog", json={"project_id": str(project.id), "title": "x"})
+
+    r = client.get("/api/v1/backlog", params={"project_id": str(project.id), "limit": 200})
+    assert r.status_code == 200, r.text
+    assert r.json()["limit"] == 200
+
+
 def test_per_project_numbering(db_session):
     user = _make_user(db_session, "ha")
     p1, p2 = _make_project(db_session, user), _make_project(db_session, user)
