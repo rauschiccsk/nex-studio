@@ -82,7 +82,8 @@ raz v pláne, orchestrátor injektuje do každého briefu.
 ## 5. Stage `task_plan` — plán sa schvaľuje RAZ
 
 Beží ako gate: dispatch Návrhárovi → Návrhár dekomponuje finálny dizajn na EPIK/FEAT/TASK a
-emituje ich ako **typovaný `plan` payload** v status bloku (§9) → orchestrátor ho
+emituje ich ako **typovaný `plan` payload** v status bloku (§9) — vrátane per-task
+`estimated_minutes` (odhad ĽUDSKEJ práce v minútach, advisory; spec v §9, E5/CR-NS-045) → orchestrátor ho
 **deterministicky zapíše** do ORM (`_write_task_plan` — idempotentný *replace* epík verzie
 pri re-pláne; atomicky alebo `blocked`, žiadny polovičný plán) → `awaiting_director`.
 **Žiadny Koordinátor-judge turn** (CR-2 decision 2026-06-07): deterministický write-path JE
