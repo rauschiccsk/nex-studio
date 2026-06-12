@@ -24,6 +24,7 @@ const IconHome = () => <Emoji glyph="🏠" />;
 const IconFolder = () => <Emoji glyph="📁" />;
 const IconVersions = () => <Emoji glyph="🌿" />;
 const IconBacklog = () => <Emoji glyph="📋" />;
+const IconMetrics = () => <Emoji glyph="📊" />;
 
 const IconCoordinator = () => <Emoji glyph="🧭" />;
 const IconCockpit = () => <Emoji glyph="🎛️" />;
@@ -247,6 +248,17 @@ export default function Sidebar() {
           active={hasProject ? isActive(`/projects/${selectedProject!.slug}/backlog`) : false}
           disabled={!hasProject}
           disabledTitle="Vyber projekt pre prístup k backlogu"
+        />
+        {/* E5 (CR-NS-044): per-project metrics / ROI. Project-scoped — disabled (not cross-domain
+            fallback) when no project is selected. */}
+        <NavItem
+          icon={<IconMetrics />}
+          label="Metriky"
+          path={hasProject ? `/projects/${selectedProject!.slug}/metrics` : projectsFallback}
+          collapsed={collapsed}
+          active={hasProject ? isActive(`/projects/${selectedProject!.slug}/metrics`) : false}
+          disabled={!hasProject}
+          disabledTitle="Vyber projekt pre prístup k metrikám"
         />
         {/* E3(a) (CR-NS-039): hub-and-spoke — the Coordinator is the Director's single ad-hoc
             consult terminal (has READ docs/specs + schemas, CR-033). The Designer / Customer /
