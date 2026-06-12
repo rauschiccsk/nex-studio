@@ -22,7 +22,7 @@ export default function CockpitPage() {
   const selectedVersion = useActiveContextStore((s) => s.selectedVersion);
   const versionId = selectedVersion?.versionId ?? null;
 
-  const { board, error, activity, setBoard } = usePipelineWs(versionId);
+  const { board, error, activity, reconnecting, setBoard } = usePipelineWs(versionId);
   const [inFlight, setInFlight] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -74,9 +74,22 @@ export default function CockpitPage() {
         </span>
       </div>
 
-      {(error || actionError) && (
+      {/* A board-load error is suppressed while reconnecting — during a redeploy the snapshot fetch
+          ALSO fails, and stacking a red error under the amber "reconnecting" banner is contradictory.
+          An actionError (a Director action that genuinely failed) always shows. */}
+      {(actionError || (error && !reconnecting)) && (
         <div className="flex-shrink-0 border-b border-red-500/30 bg-red-500/10 px-4 py-2 text-xs text-red-400">
           {actionError ?? error}
+        </div>
+      )}
+
+      {/* Live-connection lost (CR 2026-06-12): the board updates over a WS that auto-reconnects with
+          backoff + re-fetches a fresh snapshot on reconnect. Surface the gap so a frozen board is never
+          silent — before this a dropped socket (e.g. a backend redeploy) hid the action buttons. */}
+      {reconnecting && (
+        <div className="flex flex-shrink-0 items-center gap-2 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs text-amber-400">
+          <Loader2 className="h-3 w-3 animate-spin" />
+          Spojenie s orchestrátorom stratené — obnovujem…
         </div>
       )}
 
