@@ -366,7 +366,7 @@ export default function NewProjectPage() {
                 onChange={(e) => setOwnerId(e.target.value)}
                 className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
               >
-                <option value="">— none —</option>
+                <option value="">— žiadny —</option>
                 {users.map((u) => {
                   const display = [u.first_name, u.last_name].filter(Boolean).join(" ") || u.username;
                   return (

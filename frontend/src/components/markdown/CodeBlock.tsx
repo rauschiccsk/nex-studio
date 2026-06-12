@@ -26,12 +26,12 @@ export function CodeBlock({ children, language }: CodeBlockProps) {
           {isCopied ? (
             <>
               <Check className="w-3.5 h-3.5 text-green-400" />
-              <span className="text-green-400">Copied</span>
+              <span className="text-green-400">Skopírované</span>
             </>
           ) : (
             <>
               <Copy className="w-3.5 h-3.5" />
-              <span>Copy</span>
+              <span>Kopírovať</span>
             </>
           )}
         </button>

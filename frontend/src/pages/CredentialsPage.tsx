@@ -307,7 +307,7 @@ export default function CredentialsPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-400 mb-1">Filename (bez slash-u)</label>
+                  <label className="block text-xs font-medium text-slate-400 mb-1">Názov súboru (bez slash-u)</label>
                   <input
                     type="text"
                     value={createFilename}

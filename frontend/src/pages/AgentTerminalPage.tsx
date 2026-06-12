@@ -196,7 +196,7 @@ export default function AgentTerminalPage({ role }: AgentTerminalPageProps) {
               onClick={() => navigate("/projects")}
               className="rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-500"
             >
-              → Otvor Projects
+              → Otvor Projekty
             </button>
           </div>
         ) : (

@@ -131,7 +131,7 @@ export default function NewVersionPage() {
               {project.name}
               {lastVersion && (
                 <>
-                  {" · follows "}
+                  {" · nadväzuje na "}
                   <span className="text-slate-400 font-mono">{lastVersion.version_number}</span>
                 </>
               )}

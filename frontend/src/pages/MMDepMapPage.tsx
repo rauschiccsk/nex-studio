@@ -141,7 +141,7 @@ export default function MMDepMapPage() {
         </button>
         <span className="text-sm font-semibold text-slate-100">{project.name}</span>
         <span className="text-slate-600">·</span>
-        <span className="text-sm text-slate-400">Dependency Map</span>
+        <span className="text-sm text-slate-400">Mapa závislostí</span>
         <div className="flex-1" />
         <span className="text-xs text-slate-500">{modules.length} modulov · {deps.length} závislostí</span>
       </div>

@@ -494,7 +494,7 @@ export default function SettingsPage() {
                               )}
                               <div className="mt-2 text-[11px] flex items-center gap-2 flex-wrap">
                                 {s.is_default ? (
-                                  <span className="text-slate-600">Default hodnota.</span>
+                                  <span className="text-slate-600">Predvolená hodnota.</span>
                                 ) : (
                                   <span className="text-slate-500">
                                     Uložený override

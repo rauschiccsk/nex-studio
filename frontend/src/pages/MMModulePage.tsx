@@ -222,7 +222,7 @@ export default function MMModulePage() {
                 : "border-transparent text-slate-500 hover:text-slate-300"
             }`}
           >
-            {t === "workflow" ? "Workflow" : "Závislosti"}
+            {t === "workflow" ? "Postup" : "Závislosti"}
           </button>
         ))}
       </div>
@@ -256,7 +256,7 @@ export default function MMModulePage() {
 
               {/* Pipeline placeholder — linked to version pipeline in future */}
               <div className="rounded-xl border border-dashed border-slate-800 p-6 text-center">
-                <p className="text-sm text-slate-500">Workflow pipeline</p>
+                <p className="text-sm text-slate-500">Postup</p>
                 <p className="text-xs text-slate-700 mt-1">
                   Pipeline sa zobrazí po priradení modulu k verzii projektu.
                 </p>

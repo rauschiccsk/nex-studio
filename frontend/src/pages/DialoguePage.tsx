@@ -61,8 +61,8 @@ import {
 // ─── Author styling helpers ───────────────────────────────────────────────
 
 const AUTHOR_LABEL: Record<DialogueMessage["author"], string> = {
-  customer: "Customer",
-  designer: "Designer",
+  customer: "Zákazník",
+  designer: "Návrhár",
   director: "Director",
 };
 
@@ -91,12 +91,12 @@ const STATUS_BADGE: Record<DialogueMessage["status"], string> = {
 
 /** Slovak dative recipient label, used in progress strings ("Posielam …"). */
 function recipientDative(recipient: "customer" | "designer"): string {
-  return recipient === "designer" ? "Designerovi" : "Customer-ovi";
+  return recipient === "designer" ? "Návrhárovi" : "Zákazníkovi";
 }
 
 /** Author-aware "send to opposite agent" recipient (Approve label). */
 function approveRecipientDative(author: DialogueMessage["author"]): string {
-  return author === "customer" ? "Designerovi" : "Customer-ovi";
+  return author === "customer" ? "Návrhárovi" : "Zákazníkovi";
 }
 
 export default function DialoguePage() {
@@ -445,8 +445,8 @@ export default function DialoguePage() {
                     disabled={injectInFlight}
                     className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 disabled:opacity-60"
                   >
-                    <option value="designer">Designerovi</option>
-                    <option value="customer">Customer-ovi</option>
+                    <option value="designer">Návrhárovi</option>
+                    <option value="customer">Zákazníkovi</option>
                   </select>
                   <textarea
                     value={injectContent}
@@ -504,7 +504,7 @@ export default function DialoguePage() {
               onClick={() => navigate("/projects")}
               className="rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-500"
             >
-              Otvoriť Projects
+              Otvoriť Projekty
             </button>
           </div>
         ) : (

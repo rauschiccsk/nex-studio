@@ -48,13 +48,13 @@ export default function CockpitPage() {
         <h2 className="text-sm font-semibold text-slate-300">Nemáš vybranú verziu</h2>
         <p className="max-w-md text-xs text-slate-500">
           Orchestračný cockpit beží nad konkrétnou verziou. Otvor{" "}
-          <span className="font-mono">Projects</span> a pripni projekt + verziu.
+          <span className="font-mono">Projekty</span> a pripni projekt + verziu.
         </p>
         <button
           onClick={() => navigate("/projects")}
           className="rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-500"
         >
-          Otvoriť Projects
+          Otvoriť Projekty
         </button>
       </div>
     );
