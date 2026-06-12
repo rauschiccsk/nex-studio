@@ -1,4 +1,5 @@
 import { useLocation } from "react-router-dom";
+import { Header } from "nex-shared";
 
 const breadcrumbMap: Record<string, string> = {
   "/": "Prehľad",
@@ -12,8 +13,10 @@ export default function Topbar() {
 
   const label = breadcrumbMap[location.pathname] ?? "NEX Studio";
 
+  // The header chrome (height, dark bg, border) comes from the shared <Header>;
+  // the connection dot + breadcrumb stay NEX Studio content.
   return (
-    <header className="h-10 flex-shrink-0 bg-slate-900 border-b border-slate-800 flex items-center px-3 gap-3 z-10 select-none">
+    <Header>
       {/* Connected indicator */}
       <div className="flex items-center gap-1.5 shrink-0">
         <div className="w-2 h-2 rounded-full bg-green-400" />
@@ -25,6 +28,6 @@ export default function Topbar() {
         <span className="text-slate-600">/</span>
         <span className="text-slate-300">{label}</span>
       </div>
-    </header>
+    </Header>
   );
 }
