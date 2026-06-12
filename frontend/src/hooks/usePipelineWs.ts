@@ -164,6 +164,34 @@ export function usePipelineWs(versionId: string | null): UsePipelineWs {
     };
   }, [versionId, token]);
 
+  // Periodic reconcile (CR 2026-06-12): a SILENT safety net over the WS. Auto-reconnect heals a dropped
+  // socket, but a board can still go stale on a LIVE socket if a single state_changed frame is missed
+  // (or lost in a reconnect race) — leaving the Director with no action buttons. Re-fetching the
+  // authoritative snapshot every 25s makes the board self-heal from ANY staleness within seconds, so a
+  // manual hard-refresh is never needed. A failed tick is ignored (no error banner) — the next tick or
+  // a live WS frame recovers. Independent of the socket lifecycle (keyed on [versionId, token]).
+  useEffect(() => {
+    if (!versionId || !token) return;
+    const id = setInterval(() => {
+      getPipelineBoardApi(versionId)
+        .then((snapshot) =>
+          setBoard((prev) => {
+            if (!prev) return snapshot;
+            // Take the AUTHORITATIVE state + board-level fields from the snapshot (this is what unsticks
+            // the action buttons), but UNION the messages so a WS frame that landed in the tiny window
+            // around the reconcile's DB read isn't transiently clobbered (messages are append-only).
+            const byId = new Map(snapshot.recent_messages.map((m) => [m.id, m] as const));
+            for (const m of prev.recent_messages) if (!byId.has(m.id)) byId.set(m.id, m);
+            return { ...snapshot, recent_messages: [...byId.values()].sort((a, b) => a.seq - b.seq) };
+          }),
+        )
+        .catch(() => {
+          /* transient — the next reconcile tick (or the WS) recovers */
+        });
+    }, 25_000);
+    return () => clearInterval(id);
+  }, [versionId, token]);
+
   // E6 (CR-NS-038): push the away state live whenever it toggles, over the EXISTING socket — no
   // reconnect. On first mount / before open this no-ops (the onopen handler sends the initial state).
   useEffect(() => {

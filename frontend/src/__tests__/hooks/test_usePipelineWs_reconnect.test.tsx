@@ -90,6 +90,15 @@ describe("usePipelineWs — auto-reconnect (CR 2026-06-12)", () => {
     expect(result.current.reconnecting).toBe(false);
   });
 
+  it("reconciles the board from a fresh snapshot every 25s (safety net over the WS)", () => {
+    renderHook(() => usePipelineWs("v1"));
+    const afterConnect = getPipelineBoardApi.mock.calls.length; // initial connect fetched once
+    act(() => vi.advanceTimersByTime(25_000));
+    expect(getPipelineBoardApi.mock.calls.length).toBe(afterConnect + 1);
+    act(() => vi.advanceTimersByTime(25_000));
+    expect(getPipelineBoardApi.mock.calls.length).toBe(afterConnect + 2);
+  });
+
   it("clears a stale board error when the socket drops (the reconnecting banner takes over)", async () => {
     vi.useRealTimers(); // this case needs no backoff advance; real microtask flush for the rejected snapshot
     getPipelineBoardApi.mockRejectedValueOnce(new Error("boom"));
