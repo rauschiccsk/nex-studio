@@ -2109,17 +2109,29 @@ def _to_task_plan(db_session, version):
 
 
 def _plan(*epics) -> dict:
-    """Build a task_plan ``plan`` payload from (epic_title, [(feat_title, [(task_title, task_type)])])."""
+    """Build a task_plan ``plan`` payload from (epic_title, [(feat_title, [task,...])]).
+
+    A task is ``(title, task_type)`` or ``(title, task_type, estimated_minutes)`` (E5, CR-NS-045 —
+    human-effort minutes; feat-level is derived as Σ of its tasks' estimates).
+    """
+
+    def _task(t) -> dict:
+        d = {"title": t[0], "task_type": t[1]}
+        if len(t) > 2 and t[2] is not None:
+            d["estimated_minutes"] = t[2]
+        return d
+
+    def _feat(f_title, tasks) -> dict:
+        task_dicts = [_task(t) for t in tasks]
+        ests = [d["estimated_minutes"] for d in task_dicts if "estimated_minutes" in d]
+        feat: dict = {"title": f_title, "tasks": task_dicts}
+        if ests:
+            feat["estimated_minutes"] = sum(ests)
+        return feat
+
     return {
         "epics": [
-            {
-                "title": e_title,
-                "feats": [
-                    {"title": f_title, "tasks": [{"title": t_title, "task_type": t_type} for t_title, t_type in tasks]}
-                    for f_title, tasks in feats
-                ],
-            }
-            for e_title, feats in epics
+            {"title": e_title, "feats": [_feat(f_title, tasks) for f_title, tasks in feats]} for e_title, feats in epics
         ]
     }
 
@@ -2138,8 +2150,8 @@ async def test_task_plan_write_path_materializes_hierarchy(db_session, fake_clau
         summary="plán rozložený",
         awaiting="director",
         plan=_plan(
-            ("Foundation", [("Schema", [("GL+AA+AP tables", "migration"), ("audit_log", "migration")])]),
-            ("Calc cores", [("Hlavná kniha", [("GL výpočet", "backend")])]),
+            ("Foundation", [("Schema", [("GL+AA+AP tables", "migration", 90), ("audit_log", "migration", 30)])]),
+            ("Calc cores", [("Hlavná kniha", [("GL výpočet", "backend", 120)])]),
         ),
         cross_cutting_rules="## Invarianty\n- spoločná transakčná hranica\n- immutable audit",
     )
@@ -2156,6 +2168,13 @@ async def test_task_plan_write_path_materializes_hierarchy(db_session, fake_clau
     assert len(feats) == 2 and len(tasks) == 3
     assert all(t.status == "todo" and t.baseline_sha is None for t in tasks)
     assert {t.task_type for t in tasks} == {"migration", "backend"}
+    # E5 (CR-NS-045): per-task human-effort estimate round-trips; feat-level = Σ of its tasks.
+    est_by_task = {t.title: t.estimated_minutes for t in tasks}
+    assert est_by_task["GL+AA+AP tables"] == 90
+    assert est_by_task["audit_log"] == 30
+    assert est_by_task["GL výpočet"] == 120
+    schema_feat = next(f for f in feats if f.title == "Schema")
+    assert schema_feat.estimated_minutes == 120  # 90 + 30
     # the cross-cutting rules persist in the Designer's gate_report payload (CR-3 re-reads them)
     designer = [m for m in _msgs(db_session, version.id) if m.author == "designer" and m.stage == "task_plan"][-1]
     assert "transakčná" in designer.payload["cross_cutting_rules"]

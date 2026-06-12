@@ -413,10 +413,19 @@ def _record_message(
 
 def _directive_for(stage: str) -> str:
     """Minimal orchestrator directive for a stage. The agent reads its charter."""
-    return (
+    base = (
         f"Pokračuj fázou '{stage}' podľa autoritatívneho spec balíka a svojho charteru. "
         "Ukonči odpoveď strojovým <<<PIPELINE_STATUS>>> blokom (F-007 §7.2)."
     )
+    if stage == "task_plan":
+        # E5 (CR-NS-045): the per-task human-effort estimate is the metrics page's human-baseline source.
+        base += (
+            " Pri KAŽDEJ úlohe (TASK) uveď pole `estimated_minutes` = realistický odhad práce pre "
+            "schopného ĽUDSKÉHO vývojára v minútach (NIE čas AI výpočtu); pri každom FEAT-e uveď "
+            "`estimated_minutes` ako súčet jeho úloh. Je to ADVISORY pole — chýbajúci odhad je povolený "
+            "a NIKDY neblokuje build."
+        )
+    return base
 
 
 def _augment_brief_with_backlog(db: Session, version_id: uuid.UUID, stage: str, prompt: str) -> str:

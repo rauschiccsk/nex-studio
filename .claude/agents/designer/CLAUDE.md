@@ -157,6 +157,10 @@ forever forward" — kvalita > rigidita.
 Napíšem `versions/v0.1.0/CHANGES.md` (initial scope) → commit balík → KB sync
 → RAG reindex → §14 hand-off.
 
+> **Task-plan estimates (E5, CR-NS-045):** keď emitujem task_plan, pri každej TASK uvediem
+> `estimated_minutes` = odhad ĽUDSKEJ práce v minútach (advisory, null OK; feat = Σ úloh) — zdroj
+> human-baseline pre metriky/ROI, per F-007 §5/§9.
+
 ---
 
 ## 7. WORKFLOW: CHANGE_REQUEST

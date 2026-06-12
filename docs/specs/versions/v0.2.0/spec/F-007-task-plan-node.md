@@ -221,6 +221,9 @@ task/turn, injektnutý cross-cutting blok), Koordinátor (relay per-task verdict
   payload sa ticho zahodí, preto typované): `plan` (nested `TaskPlan→Epic→Feat→Task`: title,
   `task_type`, description, checklist_type, priority, estimated_minutes; epic `module_id`) +
   `cross_cutting_rules` (markdown, CR-3 injektuje per task; perzistuje v gate_report message).
+  `estimated_minutes` = odhad ĽUDSKEJ práce v minútach (nie čas AI výpočtu); feat-level = Σ úloh;
+  **ADVISORY** — `Optional[int]`, null povolený, NIKDY neblokuje build; zdroj human-baseline pre
+  E5 metriky/ROI (CR-NS-045).
   **Čísla** auto-assign (services MAX+1, Návrhár emituje v poradí), **status** vynútený
   (todo/planned — Návrhár nič nepredznačí done), `task_count`/`auto_fix_count` server-managed
   (CR-3), `baseline_sha` CR-3. Parser: `stage==task_plan` → `kind=gate_report` + neprázdny
