@@ -1405,7 +1405,7 @@ async def _coordinator_relay(
     state: PipelineState,
     worker_block: PipelineStatusBlock,
     on_message: Optional[MessageCallback] = None,
-) -> Optional[str]:
+) -> tuple[Optional[str], Optional[dict[str, Any]]]:
     """Coordinator review of a worker's question/blocked turn → a relay for the Director.
 
     Hub-and-spoke (CR-NS-018): no worker output reaches the Director unreviewed.
@@ -1417,6 +1417,10 @@ async def _coordinator_relay(
     is unparseable after retries — the caller then surfaces the worker's original
     question (never a dead-end). The worker stays ``current_actor``, so the
     Director's answer routes back to the worker via :func:`dispatch_directive`.
+
+    Returns ``(relay_text, directive)`` — the directive (the block's ``coordinator_directive`` as a dict, or
+    ``None``) lets the build loop consider an autonomous recovery (Pillar B, CR-NS-055); non-build callers
+    ignore it. ``(None, None)`` on an unparseable relay (the caller falls back to the worker's question).
     """
     kind_label = "je blokovaný" if worker_block.kind == "blocked" else "položil otázku"
     asked = worker_block.question or worker_block.summary
@@ -1428,7 +1432,10 @@ async def _coordinator_relay(
         prompt=(
             f"Worker '{state.current_actor}' vo fáze '{state.current_stage}' {kind_label}: {asked}. "
             "Over jeho doterajšiu prácu (deliverables/commits) a posúď otázku; priprav pre Directora "
-            "relay — čo treba rozhodnúť. "
+            "relay — čo treba rozhodnúť. " + _FIRST_PRINCIPLES_TRIAGE +
+            # Pillar B (CR-NS-055 §B.2): first-principles triage. In the build loop a clear bounded recovery
+            # with honest high confidence auto-executes; at design gates the build-recovery actions don't
+            # apply, so this is harmless guidance there.
             # E7 (F-008 §3, CR-NS-033): triage the surfaced problem + append a structured directive.
             "Klasifikuj problém (triage podľa charteru §7.1 — spec_problem / programmer_guidance / "
             "nex_studio_bug / director_decision) a popri relayi pripoj štruktúrovaný `coordinator_directive` "
@@ -1449,8 +1456,9 @@ async def _coordinator_relay(
             failed=relay,
             on_message=on_message,
         )
-        return None
-    return relay.question or relay.summary
+        return None, None
+    directive = relay.coordinator_directive.model_dump(mode="json") if relay.coordinator_directive is not None else None
+    return (relay.question or relay.summary), directive
 
 
 # ---------------------------------------------------------------------------
@@ -1578,8 +1586,10 @@ async def run_dispatch(
         # by the Coordinator first, who relays it to the Director. The Coordinator's
         # own question (kickoff) is surfaced directly — no double-review. On an
         # unparseable relay, fall back to the worker's question (never a dead-end).
-        relay = await _coordinator_relay(db, state, result, on_message) if actor != "coordinator" else None
-        question_text = relay if relay is not None else result.question
+        # Gate-level question (not the build loop) → relay + escalate, unchanged. The directive (2nd tuple
+        # element) is for the build loop's autonomous recovery (Pillar B) — ignored here.
+        relay_text = (await _coordinator_relay(db, state, result, on_message))[0] if actor != "coordinator" else None
+        question_text = relay_text if relay_text is not None else result.question
         state.status = "blocked"
         state.next_action = f"Agent '{actor}' sa pýta: {question_text}"
         db.flush()
@@ -1979,6 +1989,34 @@ _EXECUTABLE_COORDINATOR_ACTIONS = frozenset(
     }
 )
 
+# Pillar B (CR-NS-055): the bounded-recovery SUBSET the Coordinator may AUTO-EXECUTE without a Director click
+# (the AUTO_SET — reversible, scoped). NOT route_to_designer (a DESIGN-QUALITY signal → escalate) / escalate_dedo
+# / capture_backlog_item. Gated further by _coordinator_directive_executable (conf ≥ floor + not
+# director_decision) and the per-task cap below.
+_AUTONOMOUS_RECOVERY_ACTIONS = frozenset(
+    {
+        "coordinator_reset_task",
+        "coordinator_move_baseline",
+        "coordinator_clear_session",
+    }
+)
+
+# Pillar B §B.4 cap: the Coordinator auto-intervenes at most ONCE per task. A 2nd HALT on the SAME task after
+# an autonomous recovery → ESCALATE (a repeat failure after a clean first-principles fix is a design-quality
+# signal, not an auto-loop).
+_MAX_AUTONOMOUS_PER_TASK = 1
+
+# Pillar B §B.2: the first-principles triage framework appended to the Coordinator's build HALT / question
+# prompt. Honest confidence is load-bearing — it gates auto-execution (bounded-recovery + conf ≥ floor + not
+# director_decision → applied without a Director click; ambiguity / design-scope / destructive → escalate).
+_FIRST_PRINCIPLES_TRIAGE = (
+    "Rozhodni podľa PRVOTNÝCH PRINCÍPOV (profesionálne, kvalitné, spoľahlivé — NIKDY rýchle/dočasné). Ak je "
+    "oprava jednoznačná z dizajnu+kódu a je to RUTINNÉ ZOTAVENIE (reset úlohy / posun baseline / vyčistenie "
+    "session), navrhni ju s úprimnou VYSOKOU istotou — vykoná sa AUTOMATICKY bez Directora. Ak je to "
+    "nejednoznačné, zmena dizajnu/rozsahu (route_to_designer) alebo deštruktívne → director_decision / nízka "
+    "istota → eskaluje sa Directorovi. Genuine blocker = signál slabého dizajnu, eskaluj. "
+)
+
 
 def _latest_coordinator_directive(db: Session, version_id: uuid.UUID) -> Optional[dict[str, Any]]:
     """The most recent Coordinator gate_report's structured ``coordinator_directive`` (F-008 §2), or
@@ -2217,6 +2255,84 @@ def _execute_coordinator_directive(db: Session, state: PipelineState, directive:
         raise OrchestratorError(f"Neznáma vykonateľná akcia Koordinátora: {proposed}")
     _begin_dispatch(db, state)  # reset / move_baseline / clear_session → re-run the build loop (re-verify)
     return state
+
+
+def _autonomous_count(db: Session, version_id: uuid.UUID, task_id: uuid.UUID) -> int:
+    """How many autonomous Coordinator recoveries already happened for this task (Pillar B §B.4 cap) —
+    counted from the recorded ``is_autonomous`` Coordinator→Director notes tagged with the task."""
+    rows = (
+        db.execute(
+            select(PipelineMessage.payload).where(
+                PipelineMessage.version_id == version_id,
+                PipelineMessage.author == "coordinator",
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return sum(1 for p in rows if p and p.get("is_autonomous") and p.get("task_id") == str(task_id))
+
+
+async def _record_autonomous_decision(
+    db: Session,
+    version_id: uuid.UUID,
+    task: Task,
+    directive: dict[str, Any],
+    *,
+    on_message: Optional[MessageCallback] = None,
+) -> None:
+    """Pillar B §B.1/§B.4 VISIBILITY — record a Director-facing note that the Coordinator AUTONOMOUSLY
+    decided + executed a bounded recovery (never silent). Marked ``payload.is_autonomous=true`` (the FE keys
+    off it) + the directive's action / rationale / confidence + the task tag (for the per-task cap)."""
+    action = directive.get("proposed_action")
+    rationale = directive.get("rationale") or ""
+    confidence = directive.get("confidence")
+    msg = _record_message(
+        db,
+        version_id=version_id,
+        stage="build",
+        author="coordinator",
+        recipient="director",
+        kind="notification",
+        content=f"Koordinátor rozhodol (úloha #{task.number}): {rationale or action}",
+        payload={
+            "is_autonomous": True,
+            "task_id": str(task.id),
+            "task_number": task.number,
+            "action": action,
+            "rationale": rationale,
+            "confidence": confidence,
+        },
+    )
+    if on_message is not None:
+        await on_message(msg)
+
+
+async def _maybe_autonomous_recovery(
+    db: Session,
+    state: PipelineState,
+    task: Task,
+    directive: Optional[dict[str, Any]],
+    *,
+    on_message: Optional[MessageCallback] = None,
+) -> bool:
+    """Pillar B §B.1 — at a build HALT / Implementer question, AUTO-EXECUTE a clear bounded-recovery directive
+    (no Director click) instead of escalating. Returns ``True`` when it executed (the caller CONTINUES the
+    build — the executor already re-dispatched via ``_begin_dispatch``), ``False`` to take the existing
+    escalate path. Conservative gate: an executable directive (conf ≥ floor + not director_decision) whose
+    ``proposed_action`` is in the bounded AUTO_SET, within the per-task cap. The executor + its per-action
+    safety guards already exist (CR-NS-053-verified); B only changes the TRIGGER (the Coordinator itself, when
+    first-principles-clear) vs the Director's click. Every autonomous decision is recorded VISIBLY."""
+    if not _coordinator_directive_executable(directive):
+        return False
+    assert directive is not None  # _coordinator_directive_executable returns False for None
+    if directive.get("proposed_action") not in _AUTONOMOUS_RECOVERY_ACTIONS:
+        return False  # route_to_designer / escalate_dedo / capture_backlog → escalate (design-quality / Director)
+    if _autonomous_count(db, state.version_id, task.id) >= _MAX_AUTONOMOUS_PER_TASK:
+        return False  # §B.4 cap: a repeat HALT after a clean fix is a design-quality signal → escalate
+    _execute_coordinator_directive(db, state, directive)  # mutates state + re-dispatches (agent_working)
+    await _record_autonomous_decision(db, state.version_id, task, directive, on_message=on_message)
+    return True
 
 
 def recover_orphaned_builds_on_startup(db: Session) -> int:
@@ -2597,6 +2713,7 @@ async def _run_build_round(
 
         prior_failures: list[str] = []
         task_done = False
+        autonomous_recovered = False  # Pillar B (CR-NS-055): the Coordinator auto-recovered this task → re-loop
         for attempt in range(1, _AUTO_FIX_RETRIES + 1):
             if attempt == 1 and pending_directive is not None:
                 prompt = pending_directive  # Director's framed return/answer for the resumed task
@@ -2616,9 +2733,14 @@ async def _run_build_round(
             if isinstance(result, ParseFailure):
                 prior_failures.append(f"neplatný status blok: {result.reason}")
             elif result.kind in ("question", "blocked"):
-                # The Programmer cannot proceed → Coordinator relay + HALT (Director input needed).
-                relay = await _coordinator_relay(db, state, result, on_message)
-                question_text = relay if relay is not None else result.question
+                # The Programmer cannot proceed → the Coordinator reviews. Pillar B (CR-NS-055, §B.1): if it
+                # proposes a clear bounded recovery with honest high confidence (within the per-task cap),
+                # AUTO-EXECUTE it + re-loop — no Director click. Else relay + HALT (Director input needed).
+                relay_text, directive = await _coordinator_relay(db, state, result, on_message)
+                if await _maybe_autonomous_recovery(db, state, task, directive, on_message=on_message):
+                    autonomous_recovered = True
+                    break  # the while loop re-picks the reset task (no failed settle)
+                question_text = relay_text if relay_text is not None else result.question
                 state.status = "blocked"
                 state.next_action = f"Programátor (úloha #{task.number}) sa pýta: {question_text}"
                 db.flush()
@@ -2669,6 +2791,11 @@ async def _run_build_round(
             db.execute(update(Feat).where(Feat.id == task.feat_id).values(auto_fix_count=Feat.auto_fix_count + 1))
             db.flush()
 
+        if autonomous_recovered:
+            # Pillar B (CR-NS-055): the Coordinator auto-recovered this task at an Implementer question
+            # (executor already reset it + set agent_working) → re-run the build loop, no failed settle.
+            continue
+
         if not task_done:  # auto-fix bound exhausted → task failed → HALT
             db.execute(update(Task).where(Task.id == task.id).values(status="failed"))
             db.flush()
@@ -2694,7 +2821,10 @@ async def _run_build_round(
                 prompt=(
                     f"Úloha #{task.number} '{task.title}' zlyhala po {_AUTO_FIX_RETRIES} auto-fix pokusoch. "
                     f"Posledný dôvod: {prior_failures[-1]}. Priprav pre Directora relay — čo treba rozhodnúť "
-                    "(vrátiť na prepracovanie / konzultovať). "
+                    "(vrátiť na prepracovanie / konzultovať). " + _FIRST_PRINCIPLES_TRIAGE +
+                    # Pillar B (CR-NS-055 §B.2): first-principles triage — a clear bounded recovery with honest
+                    # high confidence auto-executes (no Director click); ambiguity / design-scope / destructive
+                    # escalates.
                     # E7 (F-008 §3, CR-NS-033): this failed-task HALT is the PRIME triage point — classify
                     # it and propose a concrete fix (reset_task / move_baseline / route_to_designer /
                     # escalate_dedo) the Director approves + the engine executes.
@@ -2716,6 +2846,17 @@ async def _run_build_round(
                     failed=relay,
                     on_message=on_message,
                 )
+            else:
+                # Pillar B (CR-NS-055, §B.1): if the Coordinator proposes a clear bounded recovery with honest
+                # high confidence (within the per-task cap), AUTO-EXECUTE it + continue the build — no Director
+                # click. Else fall through to the existing escalate (awaiting_director).
+                directive = (
+                    relay.coordinator_directive.model_dump(mode="json")
+                    if relay.coordinator_directive is not None
+                    else None
+                )
+                if await _maybe_autonomous_recovery(db, state, task, directive, on_message=on_message):
+                    continue
             state.status = "awaiting_director"
             state.next_action = (
                 f"Úloha #{task.number} zlyhala po {_AUTO_FIX_RETRIES} pokusoch — Director: vrátiť / konzultovať."

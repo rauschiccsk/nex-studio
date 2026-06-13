@@ -68,4 +68,21 @@ describe("PipelineMessageBubble — synthesis rendering (CR-NS-053 §A.3)", () =
     expect(screen.queryByText("pôvodný report")).not.toBeInTheDocument();
     expect((container.firstChild as HTMLElement).className).not.toContain("opacity-60");
   });
+
+  // CR-NS-055 Pillar B (§B.3): an autonomous Coordinator decision renders distinctly.
+  it("renders an autonomous decision (payload.is_autonomous) with the 'Koordinátor rozhodol' badge + amber rail", () => {
+    const { container } = render(
+      <PipelineMessageBubble
+        message={mkMessage({
+          author: "coordinator",
+          kind: "notification",
+          content: "Koordinátor rozhodol: reset úlohy",
+          payload: { is_autonomous: true, action: "coordinator_reset_task" },
+        })}
+      />,
+    );
+    expect(screen.getByText("Koordinátor rozhodol")).toBeInTheDocument();
+    expect(screen.queryByText("Zhrnutie")).not.toBeInTheDocument();
+    expect((container.firstChild as HTMLElement).className).toContain("border-amber-500");
+  });
 });

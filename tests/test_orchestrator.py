@@ -3591,3 +3591,137 @@ async def test_task_summary_recorded_on_failed(db_session, fake_claude, monkeypa
     assert ts["audit_verdict"]["task_pass"] is False
     assert "chýba validácia DPH" in (ts["last_error"] or "")
     assert ts["task_number"] == task.number
+
+
+# ── CR-NS-055 Pillar B: Coordinator autonomous first-principles decision (§B.1–§B.4) ──
+
+
+async def test_autonomous_recovery_executes_bounded_high_conf(db_session, fake_claude):
+    """§B.1: an executable bounded-recovery directive (reset_task, conf 0.9, not director_decision) →
+    AUTO-EXECUTE (task reset) + a VISIBLE is_autonomous coordinator→director note; returns True."""
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _epic, _feat, (task,) = _seed_one_feat(db_session, version, project, ["T"])
+    state = _to_build(db_session, version)
+    directive = _coord_directive(
+        triage_class="nex_studio_bug",
+        proposed_action="coordinator_reset_task",
+        confidence=0.9,
+        target={"task_id": str(task.id)},
+    )
+
+    ok = await orchestrator._maybe_autonomous_recovery(db_session, state, task, directive)
+
+    assert ok is True
+    db_session.refresh(task)
+    assert task.status == "todo"  # reset by the executor
+    notes = [m for m in _msgs(db_session, version.id) if (m.payload or {}).get("is_autonomous")]
+    assert len(notes) == 1
+    assert notes[0].author == "coordinator" and notes[0].recipient == "director"
+    assert notes[0].payload["action"] == "coordinator_reset_task"
+
+
+async def test_autonomous_recovery_escalates_director_decision(db_session, fake_claude):
+    """§B.1: triage_class=director_decision → NOT executable → escalate (returns False, no note)."""
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _epic, _feat, (task,) = _seed_one_feat(db_session, version, project, ["T"])
+    state = _to_build(db_session, version)
+    directive = _coord_directive(
+        triage_class="director_decision",
+        proposed_action="coordinator_reset_task",
+        confidence=0.95,
+        target={"task_id": str(task.id)},
+    )
+    ok = await orchestrator._maybe_autonomous_recovery(db_session, state, task, directive)
+    assert ok is False
+    assert not any((m.payload or {}).get("is_autonomous") for m in _msgs(db_session, version.id))
+
+
+async def test_autonomous_recovery_escalates_low_confidence(db_session, fake_claude):
+    """§B.1: confidence < 0.80 → escalate (returns False)."""
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _epic, _feat, (task,) = _seed_one_feat(db_session, version, project, ["T"])
+    state = _to_build(db_session, version)
+    directive = _coord_directive(
+        triage_class="nex_studio_bug",
+        proposed_action="coordinator_reset_task",
+        confidence=0.5,
+        target={"task_id": str(task.id)},
+    )
+    assert await orchestrator._maybe_autonomous_recovery(db_session, state, task, directive) is False
+
+
+async def test_autonomous_recovery_escalates_route_to_designer(db_session, fake_claude):
+    """§B.1: route_to_designer is executable but NOT in the bounded AUTO_SET (design-quality signal) →
+    escalate (returns False)."""
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _epic, _feat, (task,) = _seed_one_feat(db_session, version, project, ["T"])
+    state = _to_build(db_session, version)
+    directive = _coord_directive(
+        triage_class="spec_problem",
+        proposed_action="coordinator_route_to_designer",
+        confidence=0.95,
+        target={"task_id": str(task.id)},
+    )
+    assert await orchestrator._maybe_autonomous_recovery(db_session, state, task, directive) is False
+
+
+async def test_autonomous_recovery_per_task_cap(db_session, fake_claude):
+    """§B.4: the Coordinator auto-recovers at most ONCE per task — a 2nd attempt on the same task escalates."""
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _epic, _feat, (task,) = _seed_one_feat(db_session, version, project, ["T"])
+    state = _to_build(db_session, version)
+    directive = _coord_directive(
+        triage_class="nex_studio_bug",
+        proposed_action="coordinator_reset_task",
+        confidence=0.9,
+        target={"task_id": str(task.id)},
+    )
+    first = await orchestrator._maybe_autonomous_recovery(db_session, state, task, directive)
+    second = await orchestrator._maybe_autonomous_recovery(db_session, state, task, directive)
+    assert first is True and second is False  # cap = 1
+    notes = [m for m in _msgs(db_session, version.id) if (m.payload or {}).get("is_autonomous")]
+    assert len(notes) == 1
+
+
+async def test_build_autonomous_recovery_then_cap_integration(db_session, fake_claude, monkeypatch):
+    """Integration §B.1+§B.4: a failed task → Coordinator AUTO-resets (is_autonomous, build CONTINUES) →
+    re-run fails again → 2nd HALT hits the cap → escalate (awaiting_director). Exactly ONE autonomous note."""
+    monkeypatch.setattr(orchestrator, "_repo_head", lambda root: "a" * 40)
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _epic, _feat, (task,) = _seed_one_feat(db_session, version, project, ["T"])
+    _to_build(db_session, version)
+
+    def _resp(prompt: str) -> str:
+        if prompt.startswith("Audítor"):
+            return _audit(False, ["zlyhal"])  # audit always fails → the task fails
+        if "zlyhala po" in prompt:  # the failed-HALT Coordinator relay → propose a bounded recovery
+            return _block(
+                stage="build",
+                kind="gate_report",
+                summary="reset",
+                awaiting="director",
+                coordinator_directive=_coord_directive(
+                    triage_class="nex_studio_bug",
+                    proposed_action="coordinator_reset_task",
+                    confidence=0.9,
+                    target={"task_id": str(task.id)},
+                ),
+            )
+        return _build_report()
+
+    fake_claude.response = _resp
+
+    state = await orchestrator.run_dispatch(db_session, version.id)
+
+    assert state.status == "awaiting_director"  # capped 2nd HALT escalated
+    notes = [m for m in _msgs(db_session, version.id) if (m.payload or {}).get("is_autonomous")]
+    assert len(notes) == 1  # exactly one autonomous recovery (the cap stopped a 2nd)
+    assert notes[0].payload["action"] == "coordinator_reset_task"
+    db_session.refresh(task)
+    assert task.status == "failed"

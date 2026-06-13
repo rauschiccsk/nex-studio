@@ -53,6 +53,10 @@ export const ROLE_LABELS: Record<PipelineParticipant, string> = {
 export const SYNTHESIS_LABEL = "Zhrnutie";
 export const RAW_REPORT_LABEL = "pôvodný report";
 
+// CR-NS-055 Pillar B: an AUTONOMOUS Coordinator decision (payload.is_autonomous) auto-executed a bounded
+// recovery without a Director click — the Director SEES it (never silent), badged distinctly.
+export const AUTONOMOUS_LABEL = "Koordinátor rozhodol";
+
 // Slovak labels for EPIC/FEAT/TASK node statuses in the TaskPlanPanel tree (CR-NS-020 CR-5).
 // Union of epic (planned/in_progress/done) + feat/task (todo/in_progress/done/failed).
 export const TASK_STATUS_LABELS: Record<string, string> = {

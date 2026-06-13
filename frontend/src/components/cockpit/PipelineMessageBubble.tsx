@@ -7,7 +7,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import type { PipelineMessage, PipelineParticipant } from "../../services/api/pipeline";
-import { ROLE_LABELS, SYNTHESIS_LABEL, RAW_REPORT_LABEL } from "./labels";
+import { ROLE_LABELS, SYNTHESIS_LABEL, RAW_REPORT_LABEL, AUTONOMOUS_LABEL } from "./labels";
 
 const PARTICIPANT_EMOJI: Record<PipelineParticipant, string> = {
   coordinator: "🧭",
@@ -55,15 +55,21 @@ export function PipelineMessageBubble({ message }: Props) {
   // Director-facing message — rendered prominently. The raw worker gate_report it summarizes stays in
   // the thread but as a SECONDARY, dimmed "pôvodný report" (drill-down; never removed).
   const isSynthesis = Boolean((message.payload as { is_synthesis?: boolean } | null)?.is_synthesis);
+  // CR-NS-055 Pillar B (§B.3): an AUTONOMOUS Coordinator decision (payload.is_autonomous) — the Director SEES
+  // every auto-executed bounded recovery (never silent), rendered distinctly ("Koordinátor rozhodol").
+  const isAutonomous = Boolean((message.payload as { is_autonomous?: boolean } | null)?.is_autonomous);
   const isRawReport = message.kind === "gate_report" && message.author !== "coordinator" && !isSynthesis;
 
   const badge = KIND_BADGE[message.kind] ?? "bg-slate-600/20 text-slate-300";
-  // Synthesis → prominent primary rail (thicker, ringed); else the per-author accent (dimmed for a raw report).
+  // Synthesis → prominent primary rail; autonomous decision → amber attention rail; else the per-author
+  // accent (dimmed for a raw report).
   const container = isSynthesis
     ? "rounded-r-lg border-l-[6px] border-primary-500 bg-primary-500/10 ring-1 ring-primary-500/20 px-3 py-2.5 text-sm"
-    : `rounded-r-lg border-l-4 ${PARTICIPANT_ACCENT[message.author] ?? PARTICIPANT_ACCENT.system} px-3 py-2 text-sm${
-        isRawReport ? " opacity-60" : ""
-      }`;
+    : isAutonomous
+      ? "rounded-r-lg border-l-[6px] border-amber-500 bg-amber-500/10 px-3 py-2.5 text-sm"
+      : `rounded-r-lg border-l-4 ${PARTICIPANT_ACCENT[message.author] ?? PARTICIPANT_ACCENT.system} px-3 py-2 text-sm${
+          isRawReport ? " opacity-60" : ""
+        }`;
 
   return (
     <div className={container}>
@@ -76,7 +82,11 @@ export function PipelineMessageBubble({ message }: Props) {
           <span className="text-slate-600">·</span>
           <span className="font-mono text-[10px] text-slate-500">{ts}</span>
         </div>
-        {isSynthesis ? (
+        {isAutonomous ? (
+          <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold bg-amber-500/20 text-amber-200">
+            {AUTONOMOUS_LABEL}
+          </span>
+        ) : isSynthesis ? (
           <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold bg-primary-500/20 text-primary-200">
             {SYNTHESIS_LABEL}
           </span>
