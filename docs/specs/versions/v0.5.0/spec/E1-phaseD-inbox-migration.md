@@ -4,14 +4,14 @@
 > frontend onto `nex-shared` in the unified **indigo** design, then deploy to PROD. The red-team revealed the
 > original "consume nex-shared chrome" plan rested on a false premise — **nex-shared is dark-only** (components
 > hardcode `slate-900/950`; `tokens.css` has only primary/status/fonts, no semantic/`.dark` layer) while **NEX
-> Inbox is light-by-default** (the MÁGERSTAV operator works in light mode) with a mature light+dark semantic token
+> Inbox supports BOTH themes** (a user light/dark toggle; default DARK per uiStore CR-022 #2) with a mature light+dark semantic token
 > system. **Director's decision: make nex-shared theme-aware** (option B) — the proper shared design system.
 >
 > **The clean realization:** NEX Inbox's existing light+dark semantic token set (`--color-canvas/surface/text/
 > border/state/radius/shadow` + a full `html.dark` override block — `globals.css`) is **promoted to the canonical
 > token layer in `nex-shared` v0.6.0**, merged with the indigo primary; nex-shared's components are refactored to
 > READ those tokens instead of hardcoded slate, so they adapt to light or dark via the `.dark` class. Outcome:
-> **Studio stays dark** (re-pin + its `<html class="dark">` default), **Inbox stays light** + gets the unified
+> **Studio stays dark** (re-pin + its `<html class="dark">` default), **Inbox keeps its dark default + working light toggle** + gets the unified
 > indigo accent, and Inbox's ~66 token-consuming files keep working (same token names, now shared). Inbox's own
 > design work becomes the ICC standard.
 
@@ -24,6 +24,12 @@ Shipped as **3 sequential CRs** (+ 1 precondition):
   audit FAIL — `duplicate_of` / `duplicate_of_display_ref` missing from the LIVE HTTP serializer path. Must be
   fixed + full re-audit (per the nex-inbox audit §9/§19) + **v1.0.1 (or the unified-design tag) tagged** BEFORE
   the CR-060 PROD step. See §D60 for the exact code location.
+
+**PUSH SEQUENCING (corrected — red-team):** CR-059 + CR-060 **push TOGETHER**. CR-059 adds the private
+`nex-shared` git-dep, which the CURRENT nex-inbox CI (ubuntu-latest `npm ci`, lines 58/123) CANNOT resolve →
+CI would go red. CR-060 stands up the self-hosted runner + the host-build CI that CAN resolve it. So CR-059's
+verified LOCAL commit is HELD until CR-060 is built + verified, then BOTH nex-inbox commits push together (CI then
+runs on the self-hosted runner). CR-058 (nex-shared, already LIVE) + CR-057 (GAP-1) are independent.
 
 **Auth/API migration is DEFERRED** (was the old CR-060). The red-team showed wholesale-replacing Inbox's
 api-client with nex-shared's `createApiClient` would break the **PDF/XML invoice download** (no Blob support), the
@@ -135,7 +141,7 @@ the Studio vzor's `../` is for `src/index.css` depth 1 — do NOT copy verbatim)
 AND its `html.dark` override block AND its local `@custom-variant dark` line (all now provided by
 nex-shared/tokens.css — same names, so the ~66 `var(--color-...)` consumers keep working, and the accent is now
 indigo automatically). KEEP Inbox-local-only base CSS: `body { background: var(--color-canvas); ... }`, the
-tabular-nums, the focus-visible ring, the reduced-motion block. Inbox stays **light by default** (no `.dark` class
+tabular-nums, the focus-visible ring, the reduced-motion block. Inbox keeps its **dark default** (uiStore CR-022 #2 — DO NOT change it) + working light toggle (`.dark` class
 unless the user toggles via `uiStore`/`ThemeProvider` — unchanged).
 
 ### §D59.2 — hardcoded blue→indigo sweep (enumerated)
@@ -253,7 +259,7 @@ the SPA on the host, Docker packages the dist into nginx (CR-NS-048). VZOR = Stu
 - **Deploy:** self-hosted for all npm-ci jobs (no label), `.dockerignore !frontend/dist`, release-smoke on
   self-hosted + host-build, `uat-deploy.py` host-build step, `name: prod-inbox` (not `-p`), `:prod` rolling-tag
   promotion, host-build `APP_VERSION`.
-- **Operator-facing PROD change (call out at UAT):** default theme stays LIGHT; the accent flips blue→indigo;
+- **Operator-facing PROD change (call out at UAT):** default theme stays DARK (uiStore CR-022 #2, unchanged); the accent flips blue→indigo;
   buttons/inputs restyle to the shared primitives (light surfaces); enumerate at the UAT acceptance test.
 
 ## Implementation seams (verify against real code; STOP+flag on contradiction)
@@ -271,7 +277,7 @@ the SPA on the host, Docker packages the dist into nginx (CR-NS-048). VZOR = Stu
 ## Acceptance
 
 - nex-shared v0.6.0 is theme-aware (Studio dark, a light consumer renders light); Inbox consumes it in the unified
-  **indigo** design, stays light-default with a working dark toggle, RR stays v6, **auth/api unchanged** (PDF/XML
+  **indigo** design, keeps its dark default + working light toggle, RR stays v6, **auth/api unchanged** (PDF/XML
   download + NIB-XXX errors + token-launch all work). `npm run build` + `lint` + `vitest` green in each repo/CR;
   Studio re-pinned + green; the deploy builds on the self-hosted runner; `release_smoke_test.sh` M1-M9 passes;
   GAP-1 fixed + tagged; UAT Director-accepted before PROD.
