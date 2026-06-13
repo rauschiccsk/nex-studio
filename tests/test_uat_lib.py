@@ -15,6 +15,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
 
 # Add scripts/ to sys.path so we can import _uat_lib (no package install).
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
@@ -895,3 +896,148 @@ def test_detect_alembic_strategy_external_nex_inbox_style(tmp_path):
 def test_detect_alembic_strategy_skip_when_no_alembic_dir(tmp_path):
     """No backend/alembic/ dir → skip (graceful degradation pre frontend-only project)."""
     assert _uat_lib.detect_alembic_strategy(tmp_path) == "skip"
+
+
+# ---------- CR-NS-061: secret-preserving redeploy ----------
+
+
+_SAMPLE_ENV = (
+    "# header comment\n"
+    "POSTGRES_USER=postgres\n"
+    "POSTGRES_PASSWORD=olddbpw123\n"
+    "DB_PASSWORD=olddbpw123\n"
+    "POSTGRES_DB=mager_uat\n"
+    "UAT_SLUG=mager\n"
+    "JWT_SECRET_KEY=oldjwtsecret\n"
+    "EMAIL_CREDS_ENCRYPTION_KEY=oldenckey==\n"
+    "LAUNCH_TOKEN=oldlaunchtoken\n"
+    "OLLAMA_BASE_URL=http://host.docker.internal:11434\n"
+)
+
+_SAMPLE_COMPOSE = (
+    "services:\n"
+    "  backend:\n"
+    "    image: x\n"
+    "    extra_hosts:\n"
+    '      - "mail.isnex.eu:192.168.55.250"\n'
+    '      - "host.docker.internal:host-gateway"\n'
+    "  frontend:\n"
+    "    image: y\n"
+)
+
+_EXTRA_HOSTS = ["mail.isnex.eu:192.168.55.250", "host.docker.internal:host-gateway"]
+
+
+def test_load_existing_env_secrets_returns_only_secret_keys(tmp_path):
+    (tmp_path / ".env").write_text(_SAMPLE_ENV)
+    secrets = _uat_lib.load_existing_env_secrets(tmp_path)
+    assert secrets["POSTGRES_PASSWORD"] == "olddbpw123"
+    assert secrets["DB_PASSWORD"] == "olddbpw123"
+    assert secrets["JWT_SECRET_KEY"] == "oldjwtsecret"
+    assert secrets["EMAIL_CREDS_ENCRYPTION_KEY"] == "oldenckey=="
+    assert secrets["LAUNCH_TOKEN"] == "oldlaunchtoken"
+    # non-secret keys excluded
+    for plain in ("POSTGRES_USER", "POSTGRES_DB", "UAT_SLUG", "OLLAMA_BASE_URL"):
+        assert plain not in secrets
+
+
+def test_load_existing_env_secrets_absent_returns_empty(tmp_path):
+    assert _uat_lib.load_existing_env_secrets(tmp_path) == {}
+
+
+def test_parse_compose_extra_hosts_list_form(tmp_path):
+    (tmp_path / "docker-compose.yml").write_text(_SAMPLE_COMPOSE)
+    assert _uat_lib.parse_compose_extra_hosts(tmp_path) == _EXTRA_HOSTS
+
+
+def test_parse_compose_extra_hosts_mapping_form(tmp_path):
+    (tmp_path / "docker-compose.yml").write_text(
+        "services:\n  backend:\n    extra_hosts:\n      mail.isnex.eu: 192.168.55.250\n"
+    )
+    assert _uat_lib.parse_compose_extra_hosts(tmp_path) == ["mail.isnex.eu:192.168.55.250"]
+
+
+def test_parse_compose_extra_hosts_absent_returns_empty(tmp_path):
+    assert _uat_lib.parse_compose_extra_hosts(tmp_path) == []
+    (tmp_path / "docker-compose.yml").write_text("services:\n  backend:\n    image: x\n")
+    assert _uat_lib.parse_compose_extra_hosts(tmp_path) == []
+
+
+def test_resolve_redeploy_preservation_redeploy_preserves(tmp_path):
+    (tmp_path / ".env").write_text(_SAMPLE_ENV)
+    (tmp_path / "docker-compose.yml").write_text(_SAMPLE_COMPOSE)
+    is_redeploy, secrets, hosts = _uat_lib.resolve_redeploy_preservation(tmp_path, rotate_secrets=False)
+    assert is_redeploy is True
+    assert secrets["JWT_SECRET_KEY"] == "oldjwtsecret"
+    assert hosts == _EXTRA_HOSTS
+
+
+def test_resolve_redeploy_preservation_fresh_no_env(tmp_path):
+    # compose present but NO .env → fresh deploy, nothing preserved.
+    (tmp_path / "docker-compose.yml").write_text(_SAMPLE_COMPOSE)
+    assert _uat_lib.resolve_redeploy_preservation(tmp_path, rotate_secrets=False) == (False, {}, [])
+
+
+def test_resolve_redeploy_preservation_rotate_forces_fresh(tmp_path):
+    # .env + compose exist, but --rotate-secrets → fresh (no preservation).
+    (tmp_path / ".env").write_text(_SAMPLE_ENV)
+    (tmp_path / "docker-compose.yml").write_text(_SAMPLE_COMPOSE)
+    assert _uat_lib.resolve_redeploy_preservation(tmp_path, rotate_secrets=True) == (False, {}, [])
+
+
+def test_detect_backend_env_vars_preserves_secret_on_redeploy(tmp_path):
+    (tmp_path / ".env.example").write_text(
+        "JWT_SECRET_KEY=\nEMAIL_CREDS_ENCRYPTION_KEY=\nLAUNCH_TOKEN=\nPLAIN_VAR=hello\n"
+    )
+    preserved = {
+        "JWT_SECRET_KEY": "keepthisjwt",
+        "EMAIL_CREDS_ENCRYPTION_KEY": "keepthisenckey",
+        "LAUNCH_TOKEN": "keepthistoken",
+    }
+    env = _uat_lib.detect_backend_env_vars(tmp_path, preserved_secrets=preserved)
+    assert env["JWT_SECRET_KEY"] == "keepthisjwt"
+    assert env["EMAIL_CREDS_ENCRYPTION_KEY"] == "keepthisenckey"
+    assert env["LAUNCH_TOKEN"] == "keepthistoken"
+    assert env["PLAIN_VAR"] == "hello"  # non-secret untouched
+
+
+def test_detect_backend_env_vars_generates_fresh_without_preserved(tmp_path):
+    (tmp_path / ".env.example").write_text("LAUNCH_TOKEN=\n")
+    env = _uat_lib.detect_backend_env_vars(tmp_path)
+    # fresh synthetic for a _token key → secrets.token_hex(32) = 64 hex chars (not a preserved value).
+    assert len(env["LAUNCH_TOKEN"]) == 64
+
+
+def _compose_context(extra_hosts: list[str]) -> dict[str, object]:
+    """Full context for rendering the real uat/docker-compose.yml.j2 (StrictUndefined → all keys)."""
+    return {
+        "SLUG": "mager",
+        "UAT_PORT": "19500",
+        "BACKEND_HOST_PORT": "19600",
+        "BACKEND_PORT": "8000",
+        "BACKEND_HEALTHCHECK_TEST": ["CMD", "curl", "-sf", "http://localhost:8000/health"],
+        "BACKEND_DOCKERFILE": "backend/Dockerfile",
+        "DB_PORT": "19700",
+        "PROJECT_PATH": "/opt/projects/nex-inbox",
+        "PROJECT_NAME": "nex-inbox",
+        "POSTGRES_USER": "postgres",
+        "POSTGRES_DB": "nex_inbox_uat",
+        "FRONTEND_CONTEXT": "/opt/projects/nex-inbox",
+        "FRONTEND_DOCKERFILE": "frontend/Dockerfile",
+        "FRONTEND_BUILD_ARGS": {},
+        "FRONTEND_CONTAINER_PORT": "80",
+        "ALEMBIC_STRATEGY": "self-bootstrap",
+        "EXTRA_HOSTS": extra_hosts,
+    }
+
+
+def test_compose_template_renders_extra_hosts_as_valid_yaml():
+    rendered = _uat_lib.render_template("uat/docker-compose.yml.j2", _compose_context(_EXTRA_HOSTS))
+    data = yaml.safe_load(rendered)
+    assert data["services"]["backend"]["extra_hosts"] == _EXTRA_HOSTS
+
+
+def test_compose_template_omits_extra_hosts_when_empty():
+    rendered = _uat_lib.render_template("uat/docker-compose.yml.j2", _compose_context([]))
+    data = yaml.safe_load(rendered)
+    assert "extra_hosts" not in data["services"]["backend"]

@@ -354,6 +354,7 @@ def detect_backend_env_vars(
     source_project_path: Path,
     *,
     synthetic_db_password: str | None = None,
+    preserved_secrets: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """Parse `.env.example` + services.backend.environment and produce synthetic UAT env.
 
@@ -377,6 +378,11 @@ def detect_backend_env_vars(
     compose UNION-MERGES on top, taking precedence for overlapping keys (compose
     has authoritative DB host/port overrides). Returns empty dict only when
     BOTH sources are empty/absent.
+
+    Per CR-NS-061: ``preserved_secrets`` (if given) maps secret keys → their existing UAT value;
+    on a redeploy each matching secret REUSES that value instead of being regenerated (so a
+    data-bearing instance keeps its JWT/encryption/launch secrets). The DB password is preserved
+    via ``synthetic_db_password`` (the caller threads the existing one).
     """
     # Baseline: .env.example (CR-026). Cast to mutable dict for compose update.
     raw_env: dict[str, Any] = dict(detect_env_example(source_project_path))
@@ -420,15 +426,83 @@ def detect_backend_env_vars(
             )
             continue
 
-        # Priority 3: Synthetic secret suffix match (CR-027 format heuristic)
+        # Priority 3: secret suffix — on redeploy REUSE the preserved value (CR-NS-061) so a
+        # data-bearing instance keeps its JWT/encryption/launch secrets; else synthesise (CR-027).
         if key_str.lower().endswith(SECRET_SUFFIXES):
-            out[key_str] = _synthetic_secret(key_str)
+            if preserved_secrets and key_str in preserved_secrets:
+                out[key_str] = preserved_secrets[key_str]
+            else:
+                out[key_str] = _synthetic_secret(key_str)
             continue
 
         # Priority 4: plain value (string-ified for .env file compatibility)
         out[key_str] = str(value)
 
     return out
+
+
+def load_existing_env_secrets(uat_dir: Path) -> dict[str, str]:
+    """Return the secret-bearing key→value pairs from an existing UAT ``.env`` (CR-NS-061 redeploy).
+
+    Secrets = keys whose lowercased name ends with :data:`SECRET_SUFFIXES`, PLUS the DB password
+    keys ``DB_PASSWORD`` / ``POSTGRES_PASSWORD``. Used to PRESERVE secrets across a redeploy so a
+    data-bearing instance keeps its DB password, email-cred encryption key, launch token, JWT
+    secret, etc. Returns ``{}`` when ``uat_dir/.env`` is absent. Same line parser as
+    :func:`read_uat_env` (no quote stripping / ``${VAR}`` expansion — UAT ``.env`` has neither).
+    """
+    env_path = uat_dir / ".env"
+    if not env_path.is_file():
+        return {}
+    out: dict[str, str] = {}
+    for raw in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        if key.lower().endswith(SECRET_SUFFIXES) or key in {"DB_PASSWORD", "POSTGRES_PASSWORD"}:
+            out[key] = value
+    return out
+
+
+def parse_compose_extra_hosts(uat_dir: Path) -> list[str]:
+    """Return the backend service's ``extra_hosts`` from an existing UAT compose (CR-NS-061 redeploy).
+
+    Preserves host-gateway / hairpin entries (e.g. ``mail.isnex.eu:192.168.55.250``,
+    ``host.docker.internal:host-gateway``) that were added to a live instance but are NOT emitted by
+    the generated template — so a redeploy doesn't drop IMAP / Ollama connectivity. Returns ``[]``
+    when ``uat_dir/docker-compose.yml`` is absent / unparseable / has none. Handles both the list
+    (``- "h:ip"``) and mapping (``h: ip``) compose forms.
+    """
+    compose_path = uat_dir / "docker-compose.yml"
+    if not compose_path.is_file():
+        return []
+    try:
+        data = yaml.safe_load(compose_path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError:
+        return []
+    backend = (data.get("services") or {}).get("backend") or {}
+    raw = backend.get("extra_hosts") or []
+    if isinstance(raw, dict):
+        return [f"{k}:{v}" for k, v in raw.items()]
+    if isinstance(raw, list):
+        return [str(h) for h in raw]
+    return []
+
+
+def resolve_redeploy_preservation(uat_dir: Path, *, rotate_secrets: bool) -> tuple[bool, dict[str, str], list[str]]:
+    """Decide what this deploy PRESERVES (CR-NS-061). Returns ``(is_redeploy, secrets, extra_hosts)``.
+
+    REDEPLOY (preserve) iff the instance already exists (``uat_dir/.env`` present) AND not
+    ``rotate_secrets`` → carry over its secrets + backend ``extra_hosts`` so a data-bearing instance
+    keeps its DB password / encryption key / launch token + IMAP/Ollama host routes. A FRESH deploy
+    (no ``.env``) or an explicit ``--rotate-secrets`` re-provision returns ``(False, {}, [])`` so
+    everything is generated fresh.
+    """
+    is_redeploy = (uat_dir / ".env").is_file() and not rotate_secrets
+    if not is_redeploy:
+        return False, {}, []
+    return True, load_existing_env_secrets(uat_dir), parse_compose_extra_hosts(uat_dir)
 
 
 def _parse_compose_port_container_side(port_entry: Any) -> int | None:

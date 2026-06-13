@@ -58,6 +58,7 @@ def generate_uat_env(
     postgres_db: str | None = None,
     backend_env_vars: dict[str, str] | None = None,
     postgres_password: str | None = None,
+    preserved_secrets: dict[str, str] | None = None,
 ) -> str:
     """Generate UAT .env content with detected + synthetic vars (CR-022 §C-1).
 
@@ -96,6 +97,9 @@ def generate_uat_env(
         for key, value in sorted(backend_env_vars.items()):
             if key == "DB_PASSWORD":
                 lines.append(f"{key}={postgres_password}")  # share password s postgres service
+            elif preserved_secrets and key in preserved_secrets:
+                # CR-NS-061 — redeploy reuses the existing secret value (no rotation).
+                lines.append(f"{key}={preserved_secrets[key]}")
             else:
                 lines.append(f"{key}={value}")
 
@@ -133,6 +137,8 @@ def _write_uat_files(
     frontend_cfg: dict[str, Any] | None,
     shared_db_password: str,
     alembic_strategy: str,
+    preserved_secrets: dict[str, str] | None = None,
+    extra_hosts: list[str] | None = None,
 ) -> Path:
     """Write docker-compose.yml + .env into /opt/uat/<slug>/. Returns uat dir.
 
@@ -184,6 +190,8 @@ def _write_uat_files(
             "FRONTEND_BUILD_ARGS": frontend_build_args,
             "FRONTEND_CONTAINER_PORT": str(frontend_container_port),
             "ALEMBIC_STRATEGY": alembic_strategy,
+            # CR-NS-061 — carry over the live instance's backend extra_hosts on redeploy.
+            "EXTRA_HOSTS": extra_hosts or [],
         },
     )
     (uat_dir / "docker-compose.yml").write_text(compose, encoding="utf-8")
@@ -196,6 +204,7 @@ def _write_uat_files(
         postgres_db=postgres_db,
         backend_env_vars=backend_env_vars,
         postgres_password=shared_db_password,
+        preserved_secrets=preserved_secrets,
     )
     (uat_dir / ".env").write_text(env_content, encoding="utf-8")
     (uat_dir / ".env").chmod(0o600)
@@ -248,6 +257,7 @@ def deploy(
     skip_env_detection: bool = False,
     db_user_override: str | None = None,
     db_name_override: str | None = None,
+    rotate_secrets: bool = False,
 ) -> int:
     """Main deploy orchestrator per F-003 §4.1 11-step postup.
 
@@ -285,14 +295,35 @@ def deploy(
     if db_name_override:
         db_creds["POSTGRES_DB"] = db_name_override
 
-    # CR-023: precompute shared synthetic DB password before backend env detection
-    # so POSTGRES_PASSWORD .env line, DB_PASSWORD overlap, and DATABASE_URL
-    # embedded password all agree (postgres container init vs backend connect).
-    shared_db_password = secrets.token_hex(32)
+    # CR-NS-061 — redeploy preservation. An EXISTING instance (uat_dir/.env present) keeps its
+    # secrets + backend extra_hosts by DEFAULT; --rotate-secrets forces a fresh re-provision. Never
+    # silently rotate a data-bearing instance (incident 2026-06-13: rotated DB pw → DB auth broke;
+    # rotated EMAIL_CREDS_ENCRYPTION_KEY → orphaned stored creds; rotated LAUNCH_TOKEN; dropped
+    # extra_hosts → IMAP + Ollama broke). See memory feedback-uat-deploy-fresh-only.
+    is_redeploy, preserved_secrets, preserved_extra_hosts = _uat_lib.resolve_redeploy_preservation(
+        UAT_ROOT / slug, rotate_secrets=rotate_secrets
+    )
+    if is_redeploy:
+        _uat_lib.console.print(
+            f"[cyan]redeploy:[/cyan] preserved {len(preserved_secrets)} secrets + "
+            f"{len(preserved_extra_hosts)} extra_hosts (use --rotate-secrets to regenerate)"
+        )
+
+    # CR-023: precompute the shared DB password before backend env detection so the POSTGRES_PASSWORD
+    # .env line, the DB_PASSWORD overlap, and the DATABASE_URL embedded password all agree (postgres
+    # container init vs backend connect). CR-NS-061: on redeploy REUSE the existing DB password — the
+    # data volume keeps the old one, a fresh password would break auth.
+    shared_db_password = (
+        preserved_secrets.get("DB_PASSWORD") or preserved_secrets.get("POSTGRES_PASSWORD") or secrets.token_hex(32)
+    )
     backend_env_vars = (
         {}
         if skip_env_detection
-        else _uat_lib.detect_backend_env_vars(project_path, synthetic_db_password=shared_db_password)
+        else _uat_lib.detect_backend_env_vars(
+            project_path,
+            synthetic_db_password=shared_db_password,
+            preserved_secrets=preserved_secrets,
+        )
     )
     frontend_cfg = _uat_lib.detect_frontend_config(project_path)
     alembic_detected = _uat_lib.detect_alembic_strategy(project_path)
@@ -351,6 +382,8 @@ def deploy(
             frontend_cfg=frontend_cfg,
             shared_db_password=shared_db_password,
             alembic_strategy=alembic_strategy,
+            preserved_secrets=preserved_secrets,
+            extra_hosts=preserved_extra_hosts,
         )
         write_nginx_config(slug, port=port)
 
@@ -475,6 +508,13 @@ def main() -> int:
         default=None,
         help="Override auto-detected POSTGRES_DB (CR-022).",
     )
+    parser.add_argument(
+        "--rotate-secrets",
+        action="store_true",
+        help="Force FRESH secrets (true re-provision). By DEFAULT an existing instance's secrets + "
+        "backend extra_hosts are PRESERVED on redeploy (CR-NS-061) — never silently rotate a "
+        "data-bearing instance.",
+    )
     args = parser.parse_args()
 
     try:
@@ -489,6 +529,7 @@ def main() -> int:
             skip_env_detection=args.skip_env_detection,
             db_user_override=args.db_user,
             db_name_override=args.db_name,
+            rotate_secrets=args.rotate_secrets,
         )
     except ValueError as exc:
         _uat_lib.error_console.print(f"[red]ERROR:[/red] slug: {exc}")
