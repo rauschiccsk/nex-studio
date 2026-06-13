@@ -372,6 +372,13 @@ def deploy(
             # No existing container → first-time deploy.
             pass
 
+        # CR-NS-060 — a frontend with a PRIVATE git-dep (e.g. nex-shared) ships a nginx-only
+        # Dockerfile that COPYs a PRE-BUILT dist (it can't npm-install in Docker). Build the SPA on
+        # the host (in the SOURCE tree — the UAT compose's frontend context points back there) BEFORE
+        # `docker compose build`, which then just packages frontend/dist into the nginx image.
+        if _uat_lib.frontend_needs_host_build(project_path, frontend_cfg):
+            _uat_lib.host_build_frontend(project_path)
+
         # Build + start
         _uat_lib.docker_compose(["build"], cwd=uat_dir)
         _uat_lib.docker_compose(["up", "-d"], cwd=uat_dir)

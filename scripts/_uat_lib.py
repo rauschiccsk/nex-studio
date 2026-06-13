@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
 import secrets
 import subprocess
@@ -499,6 +500,31 @@ def detect_frontend_config(source_project_path: Path) -> dict[str, Any] | None:
     }
 
 
+# In-container npm build commands — their PRESENCE means the Dockerfile builds the SPA itself
+# (multi-stage), their ABSENCE means it's nginx-only and expects a pre-built dist (CR-NS-060).
+_NPM_BUILD_PATTERN = re.compile(r"\bnpm\s+(?:ci|install|run)\b")
+
+
+def frontend_needs_host_build(source_project_path: Path, frontend_cfg: dict[str, Any] | None) -> bool:
+    """True iff the frontend image expects a HOST-built ``dist/`` (nginx-only Dockerfile).
+
+    CR-NS-060 — a frontend that consumes a PRIVATE git dependency (e.g. ``nex-shared``) cannot
+    ``npm ci`` inside Docker (no git creds in the build), so its Dockerfile is nginx-only: it
+    COPYs a ``dist/`` built on the host. When that's the case the SPA must be built on the host
+    BEFORE ``docker compose build``. Detected by the resolved Dockerfile carrying no in-container
+    npm build command. Returns ``False`` when there is no frontend service, the Dockerfile is
+    missing, or it builds in-container (multi-stage) — those need no host pre-build.
+    """
+    if frontend_cfg is None:
+        return False
+    ctx = frontend_cfg.get("context", ".")
+    ctx_dir = source_project_path / ctx.lstrip("./") if ctx.startswith(".") else Path(ctx)
+    dockerfile_path = ctx_dir / frontend_cfg.get("dockerfile", "Dockerfile")
+    if not dockerfile_path.is_file():
+        return False
+    return _NPM_BUILD_PATTERN.search(dockerfile_path.read_text(encoding="utf-8")) is None
+
+
 # Alembic command.upgrade detection patterns (covers both `command.upgrade(...)`
 # and fully-qualified `alembic.command.upgrade(...)`).
 _ALEMBIC_UPGRADE_PATTERN = re.compile(r"(?:alembic\.)?command\.upgrade\s*\(")
@@ -620,6 +646,35 @@ def docker_compose(
         check=True,
         capture_output=capture,
         text=True,
+    )
+
+
+def host_build_frontend(source_project_path: Path) -> None:
+    """Build the SPA on the HOST so a later `docker compose build` can package the resulting
+    `frontend/dist` into the nginx-only image (CR-NS-060).
+
+    Runs in the SOURCE tree `<project>/frontend` (NOT the deploy dir, which has no FE source — the
+    UAT compose's frontend build context is an absolute path back into the source tree). Bakes
+    `APP_VERSION` from `git describe --tags --always`, matching the CI build job + release-smoke
+    command byte-for-byte. Raises CalledProcessError on non-zero (npm/git must be on the host PATH
+    and able to resolve the private git dependency as the deploying user).
+    """
+    frontend_dir = source_project_path / "frontend"
+    console.print("[cyan]Host-building frontend[/cyan] (private git-dep → nginx-only image)…")
+    subprocess.run(["npm", "ci"], cwd=frontend_dir, check=True)
+    describe = subprocess.run(
+        ["git", "describe", "--tags", "--always"],
+        cwd=frontend_dir,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    app_version = describe.stdout.strip() or "0.0.0-dev"
+    subprocess.run(
+        ["npm", "run", "build"],
+        cwd=frontend_dir,
+        check=True,
+        env={**os.environ, "APP_VERSION": app_version},
     )
 
 

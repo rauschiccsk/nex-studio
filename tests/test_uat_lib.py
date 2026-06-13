@@ -803,6 +803,53 @@ def test_detect_frontend_config_strips_protocol_suffix(tmp_path):
     assert cfg["container_port"] == 80
 
 
+# ---------- CR-NS-060: frontend_needs_host_build ----------
+
+
+def test_frontend_needs_host_build_nginx_only_repo_root(tmp_path):
+    """nex-inbox shape: context='.', dockerfile='frontend/Dockerfile', nginx-only → True."""
+    (tmp_path / "frontend").mkdir()
+    (tmp_path / "frontend" / "Dockerfile").write_text(
+        "FROM nginx:1.27-alpine AS runtime\n"
+        "COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf\n"
+        "COPY frontend/dist /usr/share/nginx/html\n"
+    )
+    cfg = {"context": ".", "dockerfile": "frontend/Dockerfile"}
+    assert _uat_lib.frontend_needs_host_build(tmp_path, cfg) is True
+
+
+def test_frontend_needs_host_build_nginx_only_subdir(tmp_path):
+    """nex-studio shape: context='./frontend', dockerfile='Dockerfile', nginx-only → True."""
+    (tmp_path / "frontend").mkdir()
+    (tmp_path / "frontend" / "Dockerfile").write_text(
+        "FROM nginx:1.27-alpine AS production\nCOPY dist /usr/share/nginx/html\n"
+    )
+    cfg = {"context": "./frontend", "dockerfile": "Dockerfile"}
+    assert _uat_lib.frontend_needs_host_build(tmp_path, cfg) is True
+
+
+def test_frontend_needs_host_build_multistage_builds_in_container(tmp_path):
+    """A multi-stage Dockerfile that runs `npm ci`/`npm run build` builds in-container → False."""
+    (tmp_path / "frontend").mkdir()
+    (tmp_path / "frontend" / "Dockerfile").write_text(
+        "FROM node:22-alpine AS builder\nRUN npm ci\nRUN npm run build\n"
+        "FROM nginx:1.27-alpine\nCOPY --from=builder /app/dist /usr/share/nginx/html\n"
+    )
+    cfg = {"context": ".", "dockerfile": "frontend/Dockerfile"}
+    assert _uat_lib.frontend_needs_host_build(tmp_path, cfg) is False
+
+
+def test_frontend_needs_host_build_none_cfg(tmp_path):
+    """No frontend service (cfg is None) → False."""
+    assert _uat_lib.frontend_needs_host_build(tmp_path, None) is False
+
+
+def test_frontend_needs_host_build_missing_dockerfile(tmp_path):
+    """Frontend cfg present but the Dockerfile is missing → False (can't assert nginx-only)."""
+    cfg = {"context": ".", "dockerfile": "frontend/Dockerfile"}
+    assert _uat_lib.frontend_needs_host_build(tmp_path, cfg) is False
+
+
 # ---------- CR-022: detect_alembic_strategy ----------
 
 
