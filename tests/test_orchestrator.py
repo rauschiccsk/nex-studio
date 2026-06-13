@@ -686,7 +686,10 @@ async def test_run_dispatch_parse_retry_recovers(db_session, monkeypatch):
     # the retry prompt fed the failure reason back to the agent (CR-NS-029: assert the stable re-prompt
     # prefix, robust to the reason text — 35d1a28 rewrote the re-prompt away from the old "nebol platný JSON").
     assert any("sa nepodarilo spracovať" in p for p in fake.prompts)
-    assert len(fake.prompts) == 2  # primary + one recovery re-emit
+    # primary + one recovery re-emit. No synthesis turn: kickoff is coordinator-authored, and the
+    # synthesis fires ONLY for worker-authored decision points (CR-NS-053 fix-round 1 guard).
+    assert len(fake.prompts) == 2
+    assert not any("ZHRŇ" in p for p in fake.prompts)
 
 
 async def test_run_dispatch_parse_retry_exhausted_blocks(db_session, monkeypatch):
@@ -1439,6 +1442,9 @@ async def test_gate_e_topic_boundary_stops(db_session, monkeypatch):
                 topic="prihlasenie",
                 topic_done=True,
             ),
+            # CR-NS-053 §A.2 site 3: the Coordinator synthesis turn fires at the boundary before settling
+            # (kind ∈ BLOCK_KINDS — "done"; the FE distinguishes the synthesis via payload.is_synthesis).
+            _block(stage="gate_e", kind="done", summary="Okruh prihlásenie uzavretý — rozhodni.", awaiting="director"),
         ]
     )
     monkeypatch.setattr(orchestrator, "invoke_claude", seq)
@@ -1450,8 +1456,13 @@ async def test_gate_e_topic_boundary_stops(db_session, monkeypatch):
     state = await orchestrator.run_dispatch(db_session, version.id)
 
     assert state.status == "awaiting_director"
-    assert len(seq.prompts) == 1  # boundary on the Customer turn — no Designer routing
-    assert "prihlasenie" in state.next_action
+    # Customer boundary turn + the Coordinator synthesis turn — no Designer routing (that would be a 3rd turn).
+    assert len(seq.prompts) == 2
+    # The synthesis drives next_action (its summary), replacing the old raw boundary line.
+    assert state.next_action == "Okruh prihlásenie uzavretý — rozhodni."
+    # The synthesis is recorded as a coordinator→director message marked is_synthesis (site 3).
+    syn = [m for m in _msgs(db_session, version.id) if m.payload.get("is_synthesis")]
+    assert len(syn) == 1 and syn[0].author == "coordinator" and syn[0].recipient == "director"
 
 
 async def test_gate_e_fix_edits_then_next_question(db_session, monkeypatch):
@@ -3362,3 +3373,173 @@ async def test_verify_task_audit_judge_parse_failure_visible_note(db_session, mo
     assert len(notes) == 1 and notes[0].author == "system" and notes[0].recipient == "director"
     assert notes[0].payload["usage"] == {"input_tokens": 27, "output_tokens": 12, "model": "m"}  # 3×(9,4)
     assert notes[0].payload["timing"]["parse_attempts"] == 3
+
+
+# ── CR-NS-053 Pillar A: Coordinator synthesis turn (§A.1–§A.2) ──────────────────
+
+
+async def _synthesis_verify_pass(*args, **kwargs):
+    """Async stub for verify_done → PASS (None), so a gate_report settle reaches the synthesis turn
+    without a real Coordinator judge invocation consuming the fake's sequence."""
+    return None
+
+
+async def test_coordinator_synthesis_records_director_message(db_session, fake_claude):
+    """§A.1: the helper records a coordinator→director synthesis (payload.is_synthesis=true) and
+    returns its summary for the caller's next_action."""
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    state = orchestrator._get_state(db_session, version.id)
+    state.current_actor = "designer"  # a WORKER decision point (the guard skips coordinator-authored ones)
+    db_session.flush()
+    fake_claude.response = _block(
+        stage=state.current_stage, kind="done", summary="Zhrnutie: fáza prešla — schváľ.", awaiting="director"
+    )
+
+    summary = await orchestrator._coordinator_synthesis(db_session, state, trigger="fáza gate_a")
+
+    assert summary == "Zhrnutie: fáza prešla — schváľ."
+    syn = [m for m in _msgs(db_session, version.id) if m.payload.get("is_synthesis")]
+    assert len(syn) == 1
+    assert syn[0].author == "coordinator" and syn[0].recipient == "director"
+    # the synthesis prompt asked the Coordinator to summarize for the Director (structured, plain Slovak)
+    assert any("ZHRŇ" in c["prompt"] for c in fake_claude.calls)
+
+
+async def test_coordinator_synthesis_parse_failure_keeps_settle(db_session, fake_claude):
+    """§A.1 WS-E fallback (non-negotiable): a synthesis ParseFailure records a visible note, returns
+    None, and leaves the caller's settled state (next_action) UNCHANGED — no control-flow change."""
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    state = orchestrator._get_state(db_session, version.id)
+    state.current_actor = "designer"  # a WORKER decision point (else the guard short-circuits before invoke)
+    state.next_action = "PÔVODNÝ next_action"
+    db_session.flush()
+    fake_claude.response = "no valid status block"  # ParseFailure on every (re)emit
+
+    summary = await orchestrator._coordinator_synthesis(db_session, state, trigger="fáza gate_a")
+
+    assert summary is None
+    assert state.next_action == "PÔVODNÝ next_action"  # caller's settle preserved
+    notes = [m for m in _msgs(db_session, version.id) if m.author == "system" and m.recipient == "director"]
+    assert any("Zhrnutie Koordinátora" in n.content for n in notes)  # WS-E visibility note
+    assert not any(m.payload.get("is_synthesis") for m in _msgs(db_session, version.id))
+
+
+async def test_synthesis_at_gate_report_pass(db_session, monkeypatch):
+    """§A.2 site 1: a gate_report PASS emits the Coordinator synthesis as the primary Director-facing
+    message (next_action from it); the raw worker report stays recorded for drill-down."""
+    monkeypatch.setattr(orchestrator, "verify_done", _synthesis_verify_pass)
+    monkeypatch.setattr(orchestrator, "verify_mechanical", lambda slug, block, baseline_sha=None: None)
+    seq = SequenceClaude(
+        [
+            _block(stage="gate_a", kind="gate_report", summary="14 endpoints", awaiting="director"),  # worker
+            _block(
+                stage="gate_a", kind="done", summary="gate_a prešla — schváľ alebo vráť.", awaiting="director"
+            ),  # synthesis
+        ]
+    )
+    monkeypatch.setattr(orchestrator, "invoke_claude", seq)
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    state = orchestrator._get_state(db_session, version.id)
+    state.current_stage = "gate_a"
+    state.current_actor = "designer"
+    state.status = "agent_working"
+    db_session.flush()
+
+    state = await orchestrator.run_dispatch(db_session, version.id)
+
+    assert state.status == "awaiting_director"
+    assert state.next_action == "gate_a prešla — schváľ alebo vráť."
+    msgs = _msgs(db_session, version.id)
+    syn = [m for m in msgs if m.payload.get("is_synthesis")]
+    assert len(syn) == 1 and syn[0].author == "coordinator" and syn[0].recipient == "director"
+    # raw worker gate_report still present (audit trail / drill-down)
+    assert any(m.kind == "gate_report" and not m.payload.get("is_synthesis") for m in msgs)
+
+
+async def test_synthesis_at_build_completion(db_session, fake_claude):
+    """§A.2 site 2: build completion (no todo task) settles with a Coordinator synthesis sign-off."""
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _to_build(db_session, version)  # no tasks → the first loop iteration hits the final sign-off
+    fake_claude.response = _block(
+        stage="build", kind="done", summary="Build dokončený — finálne schválenie.", awaiting="director"
+    )
+
+    state = await orchestrator.run_dispatch(db_session, version.id)
+
+    assert state.status == "awaiting_director"
+    assert state.next_action == "Build dokončený — finálne schválenie."
+    syn = [m for m in _msgs(db_session, version.id) if m.payload.get("is_synthesis")]
+    assert len(syn) == 1 and syn[0].author == "coordinator" and syn[0].recipient == "director"
+
+
+async def test_no_synthesis_at_kickoff(db_session, fake_claude):
+    """§A.2 site 4 guard (fix-round 1): kickoff is coordinator-authored → NO synthesis (the Coordinator
+    never synthesizes its OWN output)."""
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    fake_claude.response = _block(
+        stage="kickoff", kind="done", summary="Discovery hotová — pokračuj na gate_a.", awaiting="director"
+    )
+
+    state = await orchestrator.run_dispatch(db_session, version.id)
+
+    assert state.status == "awaiting_director"
+    assert not any(m.payload.get("is_synthesis") for m in _msgs(db_session, version.id))
+    assert not any("ZHRŇ" in c["prompt"] for c in fake_claude.calls)  # no synthesis turn ran
+
+
+async def test_synthesis_at_worker_fallback(db_session, fake_claude):
+    """§A.2 site 4: a WORKER 'done'/answer output reaching the fallback (not gate_report/question) DOES
+    synthesize (the actor is a worker, not the Coordinator)."""
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    state = orchestrator._get_state(db_session, version.id)
+    state.current_stage = "gate_a"
+    state.current_actor = "designer"
+    state.status = "agent_working"
+    db_session.flush()
+    fake_claude.response = _block(
+        stage="gate_a", kind="done", summary="Návrhárov výstup zhrnutý — rozhodni.", awaiting="director"
+    )
+
+    state = await orchestrator.run_dispatch(db_session, version.id)
+
+    assert state.status == "awaiting_director"
+    assert state.next_action == "Návrhárov výstup zhrnutý — rozhodni."
+    syn = [m for m in _msgs(db_session, version.id) if m.payload.get("is_synthesis")]
+    assert len(syn) == 1 and syn[0].author == "coordinator" and syn[0].recipient == "director"
+
+
+async def test_synthesis_at_task_plan_pass(db_session, fake_claude, monkeypatch):
+    """§A.2 site 1 (task_plan PASS, fix-round 1 — its own settle branch): after the Designer's plan is
+    written, a Coordinator synthesis fires (is_synthesis) and drives next_action."""
+    seq = SequenceClaude(
+        [
+            _block(
+                stage="task_plan",
+                kind="gate_report",
+                summary="plán rozložený",
+                awaiting="director",
+                plan=_plan(("E1", [("F1", [("T1", "backend")])])),
+            ),  # Designer plan (worker) → written
+            _block(
+                stage="task_plan", kind="done", summary="Plán hotový — schváľ alebo vráť.", awaiting="director"
+            ),  # synthesis
+        ]
+    )
+    monkeypatch.setattr(orchestrator, "invoke_claude", seq)
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _to_task_plan(db_session, version)
+
+    state = await orchestrator.run_dispatch(db_session, version.id)
+
+    assert state.status == "awaiting_director" and state.current_stage == "task_plan"
+    assert _epics_of(db_session, version)  # plan materialized (worker turn)
+    assert state.next_action == "Plán hotový — schváľ alebo vráť."  # from the synthesis
+    syn = [m for m in _msgs(db_session, version.id) if m.payload.get("is_synthesis")]
+    assert len(syn) == 1 and syn[0].author == "coordinator" and syn[0].recipient == "director"

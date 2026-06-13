@@ -7,7 +7,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import type { PipelineMessage, PipelineParticipant } from "../../services/api/pipeline";
-import { ROLE_LABELS } from "./labels";
+import { ROLE_LABELS, SYNTHESIS_LABEL, RAW_REPORT_LABEL } from "./labels";
 
 const PARTICIPANT_EMOJI: Record<PipelineParticipant, string> = {
   coordinator: "🧭",
@@ -50,11 +50,23 @@ export function PipelineMessageBubble({ message }: Props) {
     hour: "2-digit",
     minute: "2-digit",
   });
-  const accent = PARTICIPANT_ACCENT[message.author] ?? PARTICIPANT_ACCENT.system;
+
+  // CR-NS-053 Pillar A (§A.3): the Coordinator's synthesis (payload.is_synthesis) is the PRIMARY
+  // Director-facing message — rendered prominently. The raw worker gate_report it summarizes stays in
+  // the thread but as a SECONDARY, dimmed "pôvodný report" (drill-down; never removed).
+  const isSynthesis = Boolean((message.payload as { is_synthesis?: boolean } | null)?.is_synthesis);
+  const isRawReport = message.kind === "gate_report" && message.author !== "coordinator" && !isSynthesis;
+
   const badge = KIND_BADGE[message.kind] ?? "bg-slate-600/20 text-slate-300";
+  // Synthesis → prominent primary rail (thicker, ringed); else the per-author accent (dimmed for a raw report).
+  const container = isSynthesis
+    ? "rounded-r-lg border-l-[6px] border-primary-500 bg-primary-500/10 ring-1 ring-primary-500/20 px-3 py-2.5 text-sm"
+    : `rounded-r-lg border-l-4 ${PARTICIPANT_ACCENT[message.author] ?? PARTICIPANT_ACCENT.system} px-3 py-2 text-sm${
+        isRawReport ? " opacity-60" : ""
+      }`;
 
   return (
-    <div className={`rounded-r-lg border-l-4 ${accent} px-3 py-2 text-sm`}>
+    <div className={container}>
       <div className="mb-1 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-xs text-slate-300">
           <span aria-hidden="true">{PARTICIPANT_EMOJI[message.author]}</span>
@@ -64,9 +76,15 @@ export function PipelineMessageBubble({ message }: Props) {
           <span className="text-slate-600">·</span>
           <span className="font-mono text-[10px] text-slate-500">{ts}</span>
         </div>
-        <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${badge}`}>
-          {message.kind}
-        </span>
+        {isSynthesis ? (
+          <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold bg-primary-500/20 text-primary-200">
+            {SYNTHESIS_LABEL}
+          </span>
+        ) : (
+          <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${badge}`}>
+            {isRawReport ? RAW_REPORT_LABEL : message.kind}
+          </span>
+        )}
       </div>
       <div
         className="prose prose-sm prose-invert max-w-none leading-relaxed text-slate-200

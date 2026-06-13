@@ -389,8 +389,9 @@ async def test_run_streams_dispatch_messages_in_order_with_parity(db_session, mo
     fake_reg = _wire_runner(db_session, monkeypatch)
     seq = _SeqClaude(
         [
-            _status_block("gate_a", "gate_report", summary="14 endpoints"),  # designer report
-            _status_block("gate_a", "gate_report", summary="verify ok"),  # coordinator judgment
+            _status_block("gate_a", "gate_report", summary="14 endpoints"),  # designer report (worker)
+            _status_block("gate_a", "gate_report", summary="verify ok"),  # coordinator verify judgment
+            _status_block("gate_a", "done", summary="gate_a prešla — schváľ"),  # coordinator synthesis (CR-NS-053)
         ]
     )
     monkeypatch.setattr(orchestrator, "invoke_claude", seq)
@@ -399,7 +400,8 @@ async def test_run_streams_dispatch_messages_in_order_with_parity(db_session, mo
     await pipeline_runner._run(version.id)
 
     added = [p["message"] for _, p in fake_reg.events if p["type"] == "message_added"]
-    assert [m["author"] for m in added] == ["designer", "coordinator"]  # incremental, in order
+    # designer report → coordinator verify judgment → coordinator synthesis (CR-NS-053 §A.2 site 1)
+    assert [m["author"] for m in added] == ["designer", "coordinator", "coordinator"]  # incremental, in order
     rows = db_session.execute(select(PipelineMessage).where(PipelineMessage.version_id == version.id)).scalars().all()
     assert len(added) == len(rows)  # parity — no dispatch message dropped
     ids = [m["id"] for m in added]

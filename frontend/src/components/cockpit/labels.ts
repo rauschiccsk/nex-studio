@@ -47,6 +47,12 @@ export const ROLE_LABELS: Record<PipelineParticipant, string> = {
   system: "Systém",
 };
 
+// CR-NS-053 Pillar A: the Coordinator's Director-facing synthesis (payload.is_synthesis) is the PRIMARY
+// message at each decision point — its badge label. The raw worker report it summarizes stays in the
+// thread as a secondary, dimmed "pôvodný report" (drill-down audit trail; never removed).
+export const SYNTHESIS_LABEL = "Zhrnutie";
+export const RAW_REPORT_LABEL = "pôvodný report";
+
 // Slovak labels for EPIC/FEAT/TASK node statuses in the TaskPlanPanel tree (CR-NS-020 CR-5).
 // Union of epic (planned/in_progress/done) + feat/task (todo/in_progress/done/failed).
 export const TASK_STATUS_LABELS: Record<string, string> = {

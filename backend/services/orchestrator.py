@@ -1182,6 +1182,68 @@ async def _record_internal_turn_parse_failure(
         await on_message(msg)
 
 
+async def _coordinator_synthesis(
+    db: Session,
+    state: PipelineState,
+    *,
+    trigger: str,
+    completed: bool = False,
+    on_message: Optional[MessageCallback] = None,
+) -> Optional[str]:
+    """§A.1 (CR-NS-053, Pillar A) — emit ONE Director-facing synthesis at a decision point.
+
+    At every Director decision point the Coordinator (the sole Director-facing voice) analyzes the
+    outcome like a senior dev and explains it in plain, STRUCTURED Slovak (markdown). Recorded as a
+    ``coordinator→director`` message marked ``payload.is_synthesis=true`` (the FE distinguishes it from
+    a raw worker report — mirrors the established ``is_fix_edit`` marker), so the raw worker report
+    stays recorded for drill-down while the synthesis is the primary Director-facing message.
+
+    Returns the synthesis ``summary`` for the caller to use as ``next_action``, or ``None`` on a
+    ``ParseFailure`` — on which the WS-E recorder makes the failed turn visible + metered and the caller
+    keeps its EXISTING settled state + ``next_action`` unchanged. **Additive observability only: never a
+    new control-flow branch, never a dead-end (WS-E HARD constraint).**
+
+    Synthesis fires ONLY for WORKER-authored decision points: the Coordinator never synthesizes its OWN
+    output (CR-NS-053 fix-round 1). ``kickoff`` and ``release`` are coordinator-authored (STAGE_ACTOR), so
+    a synthesis there would be a redundant second Coordinator turn that demotes its own Director-facing
+    message — the guard (one place, all 5 sites) returns ``None`` and the caller settles exactly as today.
+    """
+    if state.current_actor == "coordinator":
+        return None
+    verb = "je dokončená" if completed else "prešla overením"
+    result = await invoke_agent_with_parse_retry(
+        db,
+        version_id=state.version_id,
+        role="coordinator",
+        stage=state.current_stage,
+        prompt=(
+            f"Fáza/udalosť '{trigger}' {verb}. Pre Directora to ZHRŇ — analyzuj ako senior vývojár a "
+            "vysvetli zrozumiteľnou rečou, ŠTRUKTÚROVANE (krátke odseky, **tučné** zvýraznenie "
+            "podstatného — nie monolitný jednofarebný blok): (1) čo sa stalo, (2) čo je ďalší krok / čo "
+            "od Directora treba, (3) riziká alebo poznámky. Ukonči <<<PIPELINE_STATUS>>> blokom (§7.2)."
+        ),
+        recipient="director",
+        on_message=on_message,
+        # Structural marker (orchestrator record, not agent self-report) so the FE renders this as the
+        # PRIMARY Director-facing message and keeps the raw worker report as secondary drill-down.
+        extra_payload={"is_synthesis": True},
+    )
+    if isinstance(result, ParseFailure):
+        # WS-E graceful fallback (non-negotiable): visible + metered, NO control-flow / next_action
+        # change — the caller settles EXACTLY as before (keeps the raw report + the pre-existing
+        # next_action). The synthesis is additive observability, never a new dead-end.
+        await _record_internal_turn_parse_failure(
+            db,
+            state.version_id,
+            state.current_stage,
+            turn_label="Zhrnutie Koordinátora",
+            failed=result,
+            on_message=on_message,
+        )
+        return None
+    return result.summary or None
+
+
 # ---------------------------------------------------------------------------
 # Verify hooks (F-007 §5.4)
 # ---------------------------------------------------------------------------
@@ -1536,8 +1598,10 @@ async def run_dispatch(
             state.status = "blocked"
             state.next_action = "Plán úloh zamietnutý — Koordinátor poslal Directorovi vysvetlenie."
         else:
+            # §A.2 site 1 (gate_report PASS — task_plan): Coordinator synthesis before settling.
+            synthesis = await _coordinator_synthesis(db, state, trigger="plán úloh", on_message=on_message)
             state.status = "awaiting_director"
-            state.next_action = "Director: schváliť/vrátiť plán úloh."
+            state.next_action = synthesis or "Director: schváliť/vrátiť plán úloh."
         db.flush()
         return state
 
@@ -1549,14 +1613,18 @@ async def run_dispatch(
             state.status = "blocked"
             state.next_action = f"Fáza '{stage}' neprešla overením — pozri správy Koordinátora a rozhodni."
         else:
+            # §A.2 site 1 (gate_report PASS — gates A–D, release): Coordinator synthesis before settling.
+            synthesis = await _coordinator_synthesis(db, state, trigger=f"fáza '{stage}'", on_message=on_message)
             state.status = "awaiting_director"
-            state.next_action = f"Director: schváliť/vrátiť fázu '{stage}'."
+            state.next_action = synthesis or f"Director: schváliť/vrátiť fázu '{stage}'."
         db.flush()
         return state
 
     # kickoff / answer / done-class agent output → await the Director.
+    # §A.2 site 4 (kickoff/answer/fallback completion): Coordinator synthesis before settling.
+    synthesis = await _coordinator_synthesis(db, state, trigger=f"fáza '{stage}'", on_message=on_message)
     state.status = "awaiting_director"
-    state.next_action = f"Director: posúdiť výstup fázy '{stage}'."
+    state.next_action = synthesis or f"Director: posúdiť výstup fázy '{stage}'."
     db.flush()
     return state
 
@@ -1719,8 +1787,14 @@ async def _run_gate_e_round(
         return await _block_failed(state, db, cust.reason, failed=cust, on_message=on_message)
 
     if cust.kind == "gate_report" and cust.topic_done:  # round boundary
+        # §A.2 site 3 (Gate E topic boundary): Coordinator synthesis before settling.
+        synthesis = await _coordinator_synthesis(
+            db, state, trigger=f"okruh '{cust.topic or 'okruh'}'", on_message=on_message
+        )
         state.status = "awaiting_director"
-        state.next_action = f"Director: posúď okruh '{cust.topic or 'okruh'}' (nálezy + riešenia Návrhára)."
+        state.next_action = (
+            synthesis or f"Director: posúď okruh '{cust.topic or 'okruh'}' (nálezy + riešenia Návrhára)."
+        )
         db.flush()
         return state
 
@@ -2353,8 +2427,10 @@ async def _run_build_round(
             return state  # Director intervened (pause/return) — land cleanly at a task boundary
         task = task_service.get_next_todo_task(db, version_id)
         if task is None:  # no todo task remains → final build sign-off
+            # §A.2 site 2 (build completion): Coordinator synthesis before settling.
+            synthesis = await _coordinator_synthesis(db, state, trigger="build", completed=True, on_message=on_message)
             state.status = "awaiting_director"
-            state.next_action = "Director: finálne schválenie buildu (→ Audit)."
+            state.next_action = synthesis or "Director: finálne schválenie buildu (→ Audit)."
             db.flush()
             return state
 
