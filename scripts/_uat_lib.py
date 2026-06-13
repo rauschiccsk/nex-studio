@@ -522,7 +522,11 @@ def frontend_needs_host_build(source_project_path: Path, frontend_cfg: dict[str,
     dockerfile_path = ctx_dir / frontend_cfg.get("dockerfile", "Dockerfile")
     if not dockerfile_path.is_file():
         return False
-    return _NPM_BUILD_PATTERN.search(dockerfile_path.read_text(encoding="utf-8")) is None
+    # Strip `#` comments first — both real nginx-only Dockerfiles carry an explanatory comment with the
+    # literal "npm ci" ("a containerised `npm ci` cannot authenticate…"), which would otherwise match the
+    # in-container-build pattern and wrongly report False → skipped host-build → broken deploy (fix-round 1).
+    content = re.sub(r"#.*$", "", dockerfile_path.read_text(encoding="utf-8"), flags=re.MULTILINE)
+    return _NPM_BUILD_PATTERN.search(content) is None
 
 
 # Alembic command.upgrade detection patterns (covers both `command.upgrade(...)`

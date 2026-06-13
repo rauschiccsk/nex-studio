@@ -850,6 +850,22 @@ def test_frontend_needs_host_build_missing_dockerfile(tmp_path):
     assert _uat_lib.frontend_needs_host_build(tmp_path, cfg) is False
 
 
+def test_frontend_needs_host_build_ignores_npm_in_comment(tmp_path):
+    """Regression (fix-round 1): a nginx-only Dockerfile whose BODY has no npm but whose COMMENT mentions
+    `npm ci` (both real Dockerfiles carry exactly this comment) → still True. Comments must be stripped
+    before the in-container-build regex, else the gate wrongly returns False → host-build skipped → broken deploy.
+    """
+    (tmp_path / "frontend").mkdir()
+    (tmp_path / "frontend" / "Dockerfile").write_text(
+        "# a containerised `npm ci` cannot authenticate to the private repo — build on the host instead\n"
+        "FROM nginx:1.27-alpine AS runtime\n"
+        "COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf\n"
+        "COPY frontend/dist /usr/share/nginx/html\n"
+    )
+    cfg = {"context": ".", "dockerfile": "frontend/Dockerfile"}
+    assert _uat_lib.frontend_needs_host_build(tmp_path, cfg) is True
+
+
 # ---------- CR-022: detect_alembic_strategy ----------
 
 
