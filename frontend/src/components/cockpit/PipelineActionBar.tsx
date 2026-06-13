@@ -123,7 +123,10 @@ export function PipelineActionBar({
   // case offer only "Skús znova" (re-dispatch the current stage). A question-block
   // keeps the answer/approve/return choices (CR-NS-018).
   const errorBlock = blocked && isErrorBlock;
-  const questionBlock = blocked && !isErrorBlock && !gateE;
+  // CR-NS-056 §F1.7: at gate_g a blocked state is ALWAYS a Coordinator scope escalation (answerable), so
+  // render "Odpoveď" even when a trailing system note (a synthesis ParseFailure) flipped isErrorBlock — else
+  // the Director would be stuck on "Skús znova". The stage proxy is exact (PipelineActionBar gets only state).
+  const questionBlock = blocked && !gateE && (!isErrorBlock || current_stage === "gate_g");
 
   // The full ratify gate (Schváliť podľa Návrhára / Koordinátora / Vrátiť) shows
   // at an awaiting ratify stage. Schváliť/Vrátiť also show on a question-block
@@ -188,7 +191,9 @@ export function PipelineActionBar({
           had no matching button and the Director had to type it via Odpoveď. Show it ONLY when answer
           is offered but approve is NOT — i.e. exactly where the ratify approve is absent — so it never
           duplicates it (at a gate question-block the approve button already covers this). */}
-      {questionBlock && allowed("answer") && !allowed("approve") && (
+      {/* CR-NS-056 §F1.7: NEVER offer the rubber-stamp one-click at gate_g — a scope/design question must get
+          a real typed answer (or a FAIL→target verdict), never a blind "Schvaľujem, pokračuj". */}
+      {questionBlock && allowed("answer") && !allowed("approve") && current_stage !== "gate_g" && (
         <ActionRow hint="Schváliš agentov plán → pokračuje vo fáze (afirmatívna odpoveď jedným klikom).">
           <button
             onClick={() => onAction("answer", { text: "Schvaľujem, pokračuj podľa plánu." })}
@@ -527,7 +532,10 @@ export function PipelineActionBar({
         </ActionRow>
       )}
 
-      {errorBlock && allowed("return") && (
+      {/* CR-NS-056 §F1.7 #1b: never offer "Skús znova" at gate_g — a scope escalation + a synthesis
+          ParseFailure (trailing system note → isErrorBlock) must show ONLY the answer/verdict path, not a
+          re-dispatch of the audit. (errorBlock is a separate render block from questionBlock.) */}
+      {errorBlock && allowed("return") && current_stage !== "gate_g" && (
         <ActionRow hint="Znovu spustí agenta v aktuálnej fáze.">
           <button
             onClick={() => onAction("return", { comment: "Skús znova." })}

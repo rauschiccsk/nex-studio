@@ -12,6 +12,9 @@ const RELAYED_STAGES = new Set(["build", "task_plan", "gate_e"]);
 function decisionType(status: string, stage: string, actions: PipelineActionName[]): string | null {
   if (status === "agent_working" || status === "done") return null; // no Director decision
   if (status === "paused") return "Pokračovať alebo ukončiť build";
+  // CR-NS-056 §F1.7: a gate_g scope escalation reads as answer-or-decide (the action bar offers Odpoveď +
+  // Fix-2's FAIL→target). Checked BEFORE the verdict branch (Fix 2 adds verdict to gate_g/blocked).
+  if (stage === "gate_g" && status === "blocked") return "Odpovedz alebo rozhodni";
   if (actions.includes("verdict")) return "Verdikt auditu (PASS / FAIL)";
   if (actions.includes("uat_accept")) return "Akceptovať verziu (UAT)";
   if (status === "blocked") return actions.includes("answer") ? "Odpovedať / vrátiť" : "Vrátiť";

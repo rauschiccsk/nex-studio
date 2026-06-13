@@ -3298,7 +3298,7 @@ async def test_verify_done_judge_parse_failure_visible_note(db_session, monkeypa
     version, _ = _make_version(db_session)
     block = parse_status_block(_block(stage="gate_a", kind="gate_report", summary="hotovo", awaiting="director"))
 
-    reason = await orchestrator.verify_done(db_session, version.id, block)
+    reason, _ = await orchestrator.verify_done(db_session, version.id, block)  # (reason, directive) — CR-NS-056
 
     assert reason is not None and "unparseable" in reason  # control flow UNCHANGED (non-None reason = FAIL)
     notes = [m for m in _msgs(db_session, version.id) if "Overenie DONE reportu Koordinátorom" in m.content]
@@ -3324,7 +3324,7 @@ async def test_verify_retry_reemit_parse_failure_visible_note(db_session, monkey
     db_session.flush()
     block = parse_status_block(_block(stage="gate_a", kind="gate_report", summary="hotovo", awaiting="director"))
 
-    reason = await orchestrator._verify_with_retries(db_session, state, block)
+    reason, _ = await orchestrator._verify_with_retries(db_session, state, block)  # (reason, is_scope) — CR-NS-056
 
     assert reason is not None  # caller still blocks (control flow UNCHANGED)
     notes = [m for m in _msgs(db_session, version.id) if "Oprava po overení" in m.content]
@@ -3343,7 +3343,7 @@ async def test_internal_turn_failure_timing_only_when_usage_none(db_session, mon
     version, _ = _make_version(db_session)
     block = parse_status_block(_block(stage="gate_a", kind="gate_report", summary="hotovo", awaiting="director"))
 
-    reason = await orchestrator.verify_done(db_session, version.id, block)
+    reason, _ = await orchestrator.verify_done(db_session, version.id, block)  # (reason, directive) — CR-NS-056
 
     assert reason is not None  # control flow unchanged
     notes = [m for m in _msgs(db_session, version.id) if "Overenie DONE reportu Koordinátorom" in m.content]
@@ -3379,9 +3379,10 @@ async def test_verify_task_audit_judge_parse_failure_visible_note(db_session, mo
 
 
 async def _synthesis_verify_pass(*args, **kwargs):
-    """Async stub for verify_done → PASS (None), so a gate_report settle reaches the synthesis turn
-    without a real Coordinator judge invocation consuming the fake's sequence."""
-    return None
+    """Async stub for verify_done → PASS, so a gate_report settle reaches the synthesis turn without a real
+    Coordinator judge invocation consuming the fake's sequence. Returns the (reason, directive) 2-tuple
+    (CR-NS-056 §F1.1) — PASS = (None, None)."""
+    return None, None
 
 
 async def test_coordinator_synthesis_records_director_message(db_session, fake_claude):
@@ -3725,3 +3726,268 @@ async def test_build_autonomous_recovery_then_cap_integration(db_session, fake_c
     assert notes[0].payload["action"] == "coordinator_reset_task"
     db_session.refresh(task)
     assert task.status == "failed"
+
+
+# ── CR-NS-056 gate_g FAIL flow, Fix 1: verify-judge mechanical-vs-scope (§F1.8) ──
+
+
+def test_verify_reason_is_scope_predicate():
+    """§F1.2: scope iff triage_class=director_decision OR proposed_action=route_to_designer; else mechanical."""
+    assert orchestrator._verify_reason_is_scope(None) is False
+    assert orchestrator._verify_reason_is_scope(_coord_directive(triage_class="director_decision")) is True
+    assert (
+        orchestrator._verify_reason_is_scope(_coord_directive(proposed_action="coordinator_route_to_designer")) is True
+    )
+    assert (
+        orchestrator._verify_reason_is_scope(
+            _coord_directive(triage_class="spec_problem", proposed_action="coordinator_reset_task")
+        )
+        is False
+    )
+    assert orchestrator._verify_reason_is_scope(_coord_directive(triage_class="programmer_guidance")) is False
+
+
+async def test_verify_done_returns_directive(db_session, fake_claude):
+    """§F1.1: verify_done returns (reason, directive) — directive on a blocked verdict, (None,None) on PASS."""
+    version, _ = _make_version(db_session)
+    block = parse_status_block(_block(stage="gate_g", kind="gate_report", summary="audit", awaiting="director"))
+    fake_claude.response = _block(
+        stage="gate_g",
+        kind="blocked",
+        summary="otázka",
+        awaiting="director",
+        question="je to v rozsahu?",
+        coordinator_directive=_coord_directive(triage_class="director_decision", proposed_action="relay"),
+    )
+    reason, directive = await orchestrator.verify_done(db_session, version.id, block)
+    assert reason is not None and "flagged" in reason
+    assert directive is not None and directive["triage_class"] == "director_decision"
+
+    fake_claude.response = _block(stage="gate_g", kind="gate_report", summary="ok", awaiting="director")
+    assert await orchestrator.verify_done(db_session, version.id, block) == (None, None)
+
+
+def _to_gate_g(db_session, version):
+    state = orchestrator._get_state(db_session, version.id)
+    state.current_stage = "gate_g"
+    state.current_actor = "auditor"
+    state.status = "agent_working"
+    db_session.flush()
+    return state
+
+
+async def test_gate_g_verify_scope_question_escalates_once(db_session, monkeypatch):
+    """§F1.4: a gate_g scope question escalates ONCE — status=blocked, current_actor=auditor, NO auto-return
+    loop, the synthesis fired, exactly one scope escalation."""
+    monkeypatch.setattr(orchestrator, "verify_mechanical", lambda slug, block: None)
+    seq = SequenceClaude(
+        [
+            _block(stage="gate_g", kind="gate_report", summary="audit hotový", awaiting="director"),  # auditor
+            _block(
+                stage="gate_g",
+                kind="blocked",
+                summary="otázka rozsahu",
+                awaiting="director",
+                question="je X v rozsahu?",
+                coordinator_directive=_coord_directive(triage_class="director_decision", proposed_action="relay"),
+            ),  # verify-judge: SCOPE
+            _block(stage="gate_g", kind="done", summary="zhrnutie pre Directora", awaiting="director"),  # synthesis
+        ]
+    )
+    monkeypatch.setattr(orchestrator, "invoke_claude", seq)
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _to_gate_g(db_session, version)
+
+    state = await orchestrator.run_dispatch(db_session, version.id)
+
+    assert state.status == "blocked"
+    assert state.current_actor == "auditor" and state.current_stage == "gate_g"
+    returns = [m for m in _msgs(db_session, version.id) if m.author == "system" and m.kind == "return"]
+    assert returns == []  # the loop was broken at the scope detection — no auto-return to the Auditor
+    assert orchestrator._scope_escalations_this_iteration(db_session, version.id) == 1
+    assert any((m.payload or {}).get("is_synthesis") for m in _msgs(db_session, version.id))
+
+
+async def test_gate_g_scope_escalation_capped_second_time(db_session, monkeypatch):
+    """§F1.5: a 2nd scope flag in the same iteration → awaiting_director (no loop, no new escalation)."""
+    monkeypatch.setattr(orchestrator, "verify_mechanical", lambda slug, block: None)
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _to_gate_g(db_session, version)
+    # pre-seed the FIRST scope escalation this iteration (already answered once)
+    orchestrator._record_message(
+        db_session,
+        version_id=version.id,
+        stage="gate_g",
+        author="coordinator",
+        recipient="director",
+        kind="question",
+        content="otázka 1",
+        payload={"coordinator_directive": _coord_directive(triage_class="director_decision")},
+    )
+    db_session.flush()
+    seq = SequenceClaude(
+        [
+            _block(stage="gate_g", kind="gate_report", summary="audit", awaiting="director"),  # auditor
+            _block(
+                stage="gate_g",
+                kind="blocked",
+                summary="otázka 2",
+                awaiting="director",
+                question="znova rozsah?",
+                coordinator_directive=_coord_directive(triage_class="director_decision"),
+            ),  # 2nd SCOPE flag
+        ]
+    )
+    monkeypatch.setattr(orchestrator, "invoke_claude", seq)
+
+    state = await orchestrator.run_dispatch(db_session, version.id)
+
+    assert state.status == "awaiting_director"  # capped — no loop
+    assert orchestrator._scope_escalations_this_iteration(db_session, version.id) == 2
+
+
+async def test_gate_g_verify_mechanical_failure_auto_returns(db_session, fake_claude):
+    """§F1.3/§F1.4: a mechanical (no-directive / P-2) blocked verdict → the auto-return loop fires
+    _VERIFY_RETRIES, settles blocked — behaviorally today (NOT the scope branch). FakeClaude dispatches on
+    the prompt: the verify-judge stays blocked-no-directive; the Auditor + re-emits return a gate_report."""
+
+    def _resp(prompt: str) -> str:
+        if prompt.startswith("Verifikuj DONE report"):  # the verify-judge → mechanical (NO directive)
+            return _block(stage="gate_g", kind="blocked", summary="P-2", awaiting="director", question="chýba citácia")
+        return _block(stage="gate_g", kind="gate_report", summary="audit", awaiting="director")  # auditor + re-emits
+
+    fake_claude.response = _resp
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _to_gate_g(db_session, version)
+
+    state = await orchestrator.run_dispatch(db_session, version.id)
+
+    assert state.status == "blocked"
+    returns = [m for m in _msgs(db_session, version.id) if m.author == "system" and m.kind == "return"]
+    assert len(returns) == orchestrator._VERIFY_RETRIES  # mechanical auto-return fired the full bound
+
+
+async def test_scope_escalations_this_iteration_counts_from_verdict_boundary(db_session):
+    """§F1.5: the cap counter resets after a verdict (the iteration boundary)."""
+    version, _ = _make_version(db_session)
+    rec = orchestrator._record_message
+    rec(
+        db_session,
+        version_id=version.id,
+        stage="gate_g",
+        author="coordinator",
+        recipient="director",
+        kind="question",
+        content="old",
+        payload={"coordinator_directive": _coord_directive(triage_class="director_decision")},
+    )
+    rec(
+        db_session,
+        version_id=version.id,
+        stage="gate_g",
+        author="director",
+        recipient="auditor",
+        kind="verdict",
+        content="FAIL",
+    )
+    rec(
+        db_session,
+        version_id=version.id,
+        stage="gate_g",
+        author="coordinator",
+        recipient="director",
+        kind="question",
+        content="new",
+        payload={"coordinator_directive": _coord_directive(triage_class="director_decision")},
+    )
+    db_session.flush()
+    assert orchestrator._scope_escalations_this_iteration(db_session, version.id) == 1  # only the post-verdict one
+
+
+async def test_prior_scope_qa_pairs_any_director_channel(db_session):
+    """§F1.6: a scope question pairs with the Director's response via ANY channel (answer / return)."""
+    version, _ = _make_version(db_session)
+    rec = orchestrator._record_message
+    rec(
+        db_session,
+        version_id=version.id,
+        stage="gate_g",
+        author="coordinator",
+        recipient="director",
+        kind="question",
+        content="Q1",
+        payload={"coordinator_directive": _coord_directive(triage_class="director_decision")},
+    )
+    rec(
+        db_session,
+        version_id=version.id,
+        stage="gate_g",
+        author="director",
+        recipient="auditor",
+        kind="answer",
+        content="A1",
+    )
+    rec(
+        db_session,
+        version_id=version.id,
+        stage="gate_g",
+        author="coordinator",
+        recipient="director",
+        kind="question",
+        content="Q2",
+        payload={"coordinator_directive": _coord_directive(proposed_action="coordinator_route_to_designer")},
+    )
+    rec(
+        db_session,
+        version_id=version.id,
+        stage="gate_g",
+        author="director",
+        recipient="auditor",
+        kind="return",
+        content="A2",
+    )
+    db_session.flush()
+    pairs = orchestrator._prior_scope_qa(db_session, version.id)
+    assert ("Q1", "A1") in pairs and ("Q2", "A2") in pairs
+
+
+async def test_verify_prompt_injects_prior_scope_block(db_session, monkeypatch):
+    """§F1.6: when a prior scope Q&A exists, the verify prompt carries the Director's response + the
+    do-not-re-raise line. (Empty ⇒ byte-identical to today, covered implicitly elsewhere.)"""
+    monkeypatch.setattr(orchestrator, "verify_mechanical", lambda slug, block: None)
+    version, _ = _make_version(db_session)
+    rec = orchestrator._record_message
+    rec(
+        db_session,
+        version_id=version.id,
+        stage="gate_g",
+        author="coordinator",
+        recipient="director",
+        kind="question",
+        content="Q-rozsah",
+        payload={"coordinator_directive": _coord_directive(triage_class="director_decision")},
+    )
+    rec(
+        db_session,
+        version_id=version.id,
+        stage="gate_g",
+        author="director",
+        recipient="auditor",
+        kind="answer",
+        content="A-vysvetlenie",
+    )
+    db_session.flush()
+    captured = {}
+
+    async def _cap(db, *, version_id, role, stage, prompt, **kw):
+        captured["prompt"] = prompt
+        return PipelineStatusBlock(stage=stage, kind="gate_report", summary="ok", awaiting="director")
+
+    monkeypatch.setattr(orchestrator, "invoke_agent", _cap)
+    block = parse_status_block(_block(stage="gate_g", kind="gate_report", summary="audit", awaiting="director"))
+    await orchestrator.verify_done(db_session, version.id, block)
+    assert "A-vysvetlenie" in captured["prompt"]
+    assert "NEoznačuj ich znova ako blocker" in captured["prompt"]

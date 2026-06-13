@@ -178,6 +178,25 @@ describe("PipelineActionBar — gate action clarity", () => {
     screen.getByText("Skús znova").click();
     expect(onAction).toHaveBeenCalledWith("return", { comment: "Skús znova." });
   });
+
+  // CR-NS-056 §F1.7: at gate_g a blocked state is a Coordinator scope escalation — it must render "Odpoveď"
+  // even with a trailing system note (a synthesis ParseFailure flips isErrorBlock), and must NOT offer the
+  // rubber-stamp "Schváliť a pokračovať" one-click (a scope question needs a real typed answer).
+  it("(gate_g, blocked) scope question shows Odpoveď even with a trailing system note, NOT the one-click", () => {
+    render(
+      <PipelineActionBar
+        state={mkState("gate_g", "blocked")}
+        inFlight={false}
+        isErrorBlock
+        availableActions={["answer", "return", "ask", "verdict"]}
+        onAction={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("Odpoveď")).toBeInTheDocument();
+    expect(screen.queryByText("Schváliť a pokračovať")).not.toBeInTheDocument();
+    // §F1.7 #1b: the errorBlock "Skús znova" must NOT also render at gate_g (dual-render bug guard).
+    expect(screen.queryByText("Skús znova")).not.toBeInTheDocument();
+  });
 });
 
 describe("PipelineActionBar — Gate E per-question (revised §2)", () => {

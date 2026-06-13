@@ -178,6 +178,9 @@ STAGE_ACTOR: dict[str, str] = {
     "release": "coordinator",
 }
 _VERIFY_RETRIES = 2
+# gate_g FAIL flow Fix 1 (CR-NS-056 §F1.5): a scope/design question escalates to the Director at most ONCE
+# per gate_g iteration. A 2nd scope flag in the same iteration settles to awaiting_director (no loop).
+_MAX_SCOPE_ESCALATIONS_PER_ITERATION = 1
 # Per-task auto-fix bound (F-007 §6, CR-NS-020 CR-3): on a failed task the build loop
 # re-dispatches the Programmer with escalating context up to this many times; after the
 # last failure the task is marked ``failed`` and the pipeline HALTs for the Director.
@@ -1348,13 +1351,67 @@ def _repo_parent(project_root: Path, commit: str) -> Optional[str]:
         return None
 
 
+def _iteration_boundary_seq(db: Session, version_id: uuid.UUID) -> int:
+    """The seq of the latest ``verdict`` message — the current gate_g iteration boundary (a verdict is what
+    increments ``state.iteration``); 0 on the first iteration. Lets the scope-escalation cap (§F1.5) + the
+    prior-Q&A derivation (§F1.6) scope to the CURRENT iteration without an ``iteration`` column on messages."""
+    seq = db.execute(
+        select(func.max(PipelineMessage.seq)).where(
+            PipelineMessage.version_id == version_id,
+            PipelineMessage.kind == "verdict",
+        )
+    ).scalar_one_or_none()
+    return int(seq or 0)
+
+
+def _prior_scope_qa(db: Session, version_id: uuid.UUID) -> list[tuple[str, str]]:
+    """gate_g scope questions already answered by the Director THIS iteration (CR-NS-056 §F1.6) — prompt
+    CONTEXT so the verify-judge does not re-raise them. Each coordinator scope-question (kind=question, a
+    scope-class directive: triage_class=director_decision OR proposed_action=route_to_designer) paired with the
+    FIRST Director-authored message of greater seq in any answer channel (kind in {answer, return, question}).
+    Empty ⇒ the verify prompt stays byte-identical to today (this only reduces how often the §F1.5 cap is hit)."""
+    boundary = _iteration_boundary_seq(db, version_id)
+    msgs = (
+        db.execute(
+            select(PipelineMessage)
+            .where(
+                PipelineMessage.version_id == version_id,
+                PipelineMessage.stage == "gate_g",
+                PipelineMessage.seq > boundary,
+            )
+            .order_by(PipelineMessage.seq.asc())
+        )
+        .scalars()
+        .all()
+    )
+    pairs: list[tuple[str, str]] = []
+    for i, m in enumerate(msgs):
+        if m.author != "coordinator" or m.kind != "question":
+            continue
+        directive = (m.payload or {}).get("coordinator_directive") or {}
+        if not (
+            directive.get("triage_class") == "director_decision"
+            or directive.get("proposed_action") == "coordinator_route_to_designer"
+        ):
+            continue
+        answer = next(
+            (n.content for n in msgs[i + 1 :] if n.author == "director" and n.kind in ("answer", "return", "question")),
+            None,
+        )
+        if answer is not None:
+            pairs.append((m.content, answer))
+    return pairs
+
+
 async def verify_done(
     db: Session,
     version_id: uuid.UUID,
     block: PipelineStatusBlock,
     on_message: Optional[MessageCallback] = None,
-) -> Optional[str]:
-    """Verify a gate_report before awaiting the Director. Reason on FAIL, else None.
+) -> tuple[Optional[str], Optional[dict[str, Any]]]:
+    """Verify a gate_report before awaiting the Director. ``(reason, directive)``: reason on FAIL else None;
+    the judge's ``coordinator_directive`` (dict) on a blocked verdict so the caller can classify scope vs
+    mechanical (CR-NS-056 §F1.1). Mirrors ``_coordinator_relay``'s ``(text, directive)`` contract.
 
     Mechanical checks first (deterministic); then a judgment check by invoking
     the coordinator agent. The coordinator's block must report ``kind != blocked``
@@ -1364,7 +1421,18 @@ async def verify_done(
     slug = _project_slug_for_version(db, version_id)
     mech = verify_mechanical(slug, block)
     if mech is not None:
-        return mech
+        return mech, None
+
+    # §F1.6 (CR-NS-056): feed the Director's already-answered scope Q&A this iteration into the prompt so the
+    # judge does not re-raise them. Empty ⇒ ``prior_scope_block`` is "" → the prompt is byte-identical to today.
+    prior = _prior_scope_qa(db, version_id)
+    prior_scope_block = ""
+    if prior:
+        pairs = "\n".join(f"{i + 1}. Q: {q} / Director: {a}" for i, (q, a) in enumerate(prior))
+        prior_scope_block = (
+            pairs + " Na tieto otázky rozsahu už Director reagoval — NEoznačuj ich znova ako blocker, ak "
+            "nepribudol NOVÝ problém alebo mechanická chyba (chýbajúca citácia / P-2). "
+        )
 
     judgment = await invoke_agent(
         db,
@@ -1374,8 +1442,9 @@ async def verify_done(
         prompt=(
             f"Verifikuj DONE report fázy '{block.stage}': spec compliance + žiadny "
             "claim bez authoritative source (P-2). "
+            + prior_scope_block
             # E7 (F-008 §3, CR-NS-033): if you flag a problem, triage it + append a structured directive.
-            "Ak nájdeš problém, klasifikuj ho (triage podľa charteru §7.1) a popri slovenskom relayi "
+            + "Ak nájdeš problém, klasifikuj ho (triage podľa charteru §7.1) a popri slovenskom relayi "
             "pripoj štruktúrovaný `coordinator_directive` (triage_class, proposed_action, target, params, "
             "rationale, úprimná confidence) — pričom `target` musí byť OBJEKT {task_id?, role?, commit?} "
             "alebo úplne vynechaný, NIKDY nie voľný text. Ukonči <<<PIPELINE_STATUS>>> blokom (§7.2)."
@@ -1394,10 +1463,16 @@ async def verify_done(
             failed=judgment,
             on_message=on_message,
         )
-        return f"coordinator verify unparseable: {judgment.reason}"
+        return f"coordinator verify unparseable: {judgment.reason}", None
     if judgment.kind == "blocked":
-        return f"coordinator flagged: {judgment.question or judgment.summary}"
-    return None
+        # §F1.1 (CR-NS-056): plumb the judge's directive out so the caller classifies scope vs mechanical.
+        directive = (
+            judgment.coordinator_directive.model_dump(mode="json")
+            if judgment.coordinator_directive is not None
+            else None
+        )
+        return f"coordinator flagged: {judgment.question or judgment.summary}", directive
+    return None, None
 
 
 async def _coordinator_relay(
@@ -1616,8 +1691,30 @@ async def run_dispatch(
         return state
 
     if result.kind == "gate_report":
-        reason = await _verify_with_retries(db, state, result, on_message=on_message)
-        if reason is not None:
+        reason, is_scope = await _verify_with_retries(db, state, result, on_message=on_message)
+        if reason is not None and is_scope and state.current_stage == "gate_g":
+            # §F1.4 (CR-NS-056): a gate_g SCOPE/DESIGN question — escalate ONCE per iteration, never loop it
+            # against the Auditor. The cap counter INCLUDES this turn's just-recorded scope question (recorded
+            # by invoke_agent inside verify_done BEFORE this caller), so the guard is <= (the current question
+            # is the one allowed escalation): 1st flag count==1 (1<=1 escalate); 2nd flag count==2 (2<=1 cap).
+            if _scope_escalations_this_iteration(db, state.version_id) <= _MAX_SCOPE_ESCALATIONS_PER_ITERATION:
+                # Synthesis FIRST while current_actor is still 'auditor' (the §B guard lets it fire), THEN settle
+                # blocked — current_actor STAYS auditor, current_stage STAYS gate_g (the scope question is on the
+                # board as a coordinator→director message; answerable even if the synthesis ParseFails, per §F1.7).
+                await _coordinator_synthesis(
+                    db, state, trigger=f"fáza '{stage}' — otázka rozsahu", on_message=on_message
+                )
+                state.status = "blocked"
+                state.next_action = (
+                    "Audit položil otázku rozsahu — odpovedz (vysvetli) alebo rozhodni (PASS / FAIL → fáza)."
+                )
+            else:
+                # 2nd scope flag this iteration (the Director already responded once) → do NOT loop; the
+                # Director makes the definitive call (the FAIL→target verdict renders here — Fix 2).
+                state.status = "awaiting_director"
+                state.next_action = "Audit označil otázku rozsahu druhýkrát — rozhodni: PASS alebo FAIL → fáza."
+        elif reason is not None:
+            # Mechanical fail (or a scope flag at a non-gate_g gate — falls through to today's behavior).
             # The Coordinator already judged this (verify_done) — keep a plain next_action, no raw
             # reason on the board (CR-NS-022 §2 refinement: no technical dump reaches the Director).
             state.status = "blocked"
@@ -1845,13 +1942,20 @@ async def _verify_with_retries(
     state: PipelineState,
     block: PipelineStatusBlock,
     on_message: Optional[MessageCallback] = None,
-) -> Optional[str]:
+) -> tuple[Optional[str], bool]:
     """Verify; on failure auto-return to the agent up to ``_VERIFY_RETRIES`` times.
+
+    Returns ``(reason, is_scope)`` (CR-NS-056 §F1.3): ``reason`` on FAIL else None; ``is_scope`` True when the
+    judge's blocked verdict is a SCOPE/DESIGN class (``_verify_reason_is_scope``) — the caller escalates ONCE
+    instead of looping. A scope flag (before OR after a re-verify) STOPS the loop immediately. The mechanical
+    path is behaviorally unchanged (the auto-return loop fires up to ``_VERIFY_RETRIES``).
 
     Every recorded turn here is a dispatch-path message → ``on_message`` streams each
     live (the Coordinator judgment via :func:`verify_done`, the system auto-return, and
     the worker's corrected report) so none is lost once the end batch is dropped."""
-    reason = await verify_done(db, state.version_id, block, on_message)
+    reason, directive = await verify_done(db, state.version_id, block, on_message)
+    if reason is not None and _verify_reason_is_scope(directive):
+        return reason, True  # scope/design → break the loop (caller escalates once per iteration)
     attempts = 0
     while reason is not None and attempts < _VERIFY_RETRIES:
         attempts += 1
@@ -1887,12 +1991,14 @@ async def _verify_with_retries(
                 failed=retry,
                 on_message=on_message,
             )
-            return reason
+            return reason, False
         if retry.kind != "gate_report":
-            return reason  # give up on non-report → caller escalates
+            return reason, False  # give up on non-report → caller escalates
         block = retry
-        reason = await verify_done(db, state.version_id, block, on_message)
-    return reason
+        reason, directive = await verify_done(db, state.version_id, block, on_message)
+        if reason is not None and _verify_reason_is_scope(directive):
+            return reason, True  # scope flagged on re-verify → break the loop
+    return reason, False
 
 
 # ---------------------------------------------------------------------------
@@ -2032,6 +2138,52 @@ def _latest_coordinator_directive(db: Session, version_id: uuid.UUID) -> Optiona
         .limit(1)
     ).scalar_one_or_none()
     return (row.payload or {}).get("coordinator_directive") if row is not None else None
+
+
+def _verify_reason_is_scope(directive: Optional[dict[str, Any]]) -> bool:
+    """gate_g Fix 1 (CR-NS-056 §F1.2): a verify-judge blocked verdict is SCOPE/DESIGN (Auditor-unfixable →
+    escalate) iff its directive is a scope class — ``triage_class=="director_decision"`` OR
+    ``proposed_action=="coordinator_route_to_designer"``. Everything else (missing directive, a mechanical
+    action, spec_problem/programmer_guidance/nex_studio_bug, a P-2 defect) is MECHANICAL (Auditor CAN fix →
+    the existing auto-return loop). Fail-open: no directive ⇒ mechanical (False)."""
+    if not directive:
+        return False
+    return (
+        directive.get("triage_class") == "director_decision"
+        or directive.get("proposed_action") == "coordinator_route_to_designer"
+    )
+
+
+def _scope_escalations_this_iteration(db: Session, version_id: uuid.UUID) -> int:
+    """Count gate_g coordinator scope-questions in the CURRENT iteration (CR-NS-056 §F1.5) — the per-iteration
+    cap. A coordinator ``kind=="question"`` message at stage ``gate_g``, seq past the iteration boundary
+    (latest verdict seq), whose directive is a scope class. INCLUDES this turn's just-recorded question (it was
+    recorded by ``invoke_agent`` inside ``verify_done`` BEFORE the caller runs), so §F1.4's guard is ``<=``.
+    Null-safe: the ``coordinator_directive`` key is always present (JSON-null for a directive-less turn) —
+    ``(payload or {}).get('coordinator_directive') or {}`` (never ``.get(k, {}).get(...)``)."""
+    boundary = _iteration_boundary_seq(db, version_id)
+    rows = (
+        db.execute(
+            select(PipelineMessage.payload).where(
+                PipelineMessage.version_id == version_id,
+                PipelineMessage.author == "coordinator",
+                PipelineMessage.kind == "question",
+                PipelineMessage.stage == "gate_g",
+                PipelineMessage.seq > boundary,
+            )
+        )
+        .scalars()
+        .all()
+    )
+    count = 0
+    for payload in rows:
+        directive = (payload or {}).get("coordinator_directive") or {}
+        if (
+            directive.get("triage_class") == "director_decision"
+            or directive.get("proposed_action") == "coordinator_route_to_designer"
+        ):
+            count += 1
+    return count
 
 
 def _coordinator_directive_executable(directive: Optional[dict[str, Any]]) -> bool:

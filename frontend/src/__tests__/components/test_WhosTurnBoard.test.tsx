@@ -79,6 +79,14 @@ describe("WhosTurnBoard (WS-C2, CR-NS-035)", () => {
     expect(screen.getByText("Odpovedať / vrátiť")).toBeInTheDocument();
   });
 
+  // CR-NS-056 §F1.7: a gate_g scope escalation (blocked) reads as answer-or-decide — checked BEFORE the
+  // verdict branch (Fix 2 adds verdict to the gate_g/blocked action set).
+  it("gate_g blocked (scope escalation) → 'Odpovedz alebo rozhodni', not the verdict label", () => {
+    render(<WhosTurnBoard state={mkState("gate_g", "auditor", "blocked")} availableActions={["answer", "return", "verdict", "ask"]} />);
+    expect(screen.getByText("Odpovedz alebo rozhodni")).toBeInTheDocument();
+    expect(screen.queryByText("Verdikt auditu (PASS / FAIL)")).not.toBeInTheDocument();
+  });
+
   it("agent_working → '{actor} pracuje', no decision / relay (honest actor, not a stale stage label)", () => {
     render(<WhosTurnBoard state={mkState("build", "implementer", "agent_working")} availableActions={["pause"]} />);
     expect(screen.getByText("Programátor pracuje")).toBeInTheDocument();
