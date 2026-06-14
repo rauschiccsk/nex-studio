@@ -187,10 +187,10 @@ export function AgentTerminal({ sessionId, token, onEnded }: AgentTerminalProps)
   }, [sessionId, token]);
 
   return (
-    <div className="relative h-full w-full bg-slate-900">
+    <div className="relative h-full w-full bg-[var(--color-canvas)]">
       <div ref={containerRef} className="absolute inset-0" />
       {status === "connecting" && (
-        <div className="pointer-events-none absolute right-3 top-3 rounded bg-slate-800/80 px-2 py-1 text-[10px] text-slate-400">
+        <div className="pointer-events-none absolute right-3 top-3 rounded bg-[var(--color-surface-hover)] px-2 py-1 text-[10px] text-[var(--color-text-secondary)]">
           Connecting…
         </div>
       )}

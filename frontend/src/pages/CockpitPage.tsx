@@ -44,9 +44,9 @@ export default function CockpitPage() {
   if (!selectedProject || !selectedVersion) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
-        <FolderOpen className="h-10 w-10 text-slate-700" />
-        <h2 className="text-sm font-semibold text-slate-300">Nemáš vybranú verziu</h2>
-        <p className="max-w-md text-xs text-slate-500">
+        <FolderOpen className="h-10 w-10 text-[var(--color-text-muted)]" />
+        <h2 className="text-sm font-semibold text-[var(--color-text-secondary)]">Nemáš vybranú verziu</h2>
+        <p className="max-w-md text-xs text-[var(--color-text-muted)]">
           Orchestračný cockpit beží nad konkrétnou verziou. Otvor{" "}
           <span className="font-mono">Projekty</span> a pripni projekt + verziu.
         </p>
@@ -63,13 +63,13 @@ export default function CockpitPage() {
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
-      <div className="flex flex-shrink-0 items-center justify-between border-b border-slate-800 px-4 py-2">
+      <div className="flex flex-shrink-0 items-center justify-between border-b border-[var(--color-border-default)] px-4 py-2">
         <div className="flex items-center gap-2 text-sm">
-          <span className="font-semibold text-slate-200">{selectedProject.name}</span>
-          <span className="text-slate-600">·</span>
-          <span className="font-mono text-xs text-slate-400">{selectedVersion.versionNumber}</span>
+          <span className="font-semibold text-[var(--color-text-primary)]">{selectedProject.name}</span>
+          <span className="text-[var(--color-text-muted)]">·</span>
+          <span className="font-mono text-xs text-[var(--color-text-secondary)]">{selectedVersion.versionNumber}</span>
         </div>
-        <span className="text-[10px] uppercase tracking-wider text-slate-600">
+        <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">
           Orchestrácia
         </span>
       </div>
@@ -78,7 +78,7 @@ export default function CockpitPage() {
           ALSO fails, and stacking a red error under the amber "reconnecting" banner is contradictory.
           An actionError (a Director action that genuinely failed) always shows. */}
       {(actionError || (error && !reconnecting)) && (
-        <div className="flex-shrink-0 border-b border-red-500/30 bg-red-500/10 px-4 py-2 text-xs text-red-400">
+        <div className="flex-shrink-0 border-b border-[var(--color-state-error-bg)] bg-[var(--color-state-error-bg)] px-4 py-2 text-xs text-[var(--color-state-error-fg)]">
           {actionError ?? error}
         </div>
       )}
@@ -87,7 +87,7 @@ export default function CockpitPage() {
           backoff + re-fetches a fresh snapshot on reconnect. Surface the gap so a frozen board is never
           silent — before this a dropped socket (e.g. a backend redeploy) hid the action buttons. */}
       {reconnecting && (
-        <div className="flex flex-shrink-0 items-center gap-2 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs text-amber-400">
+        <div className="flex flex-shrink-0 items-center gap-2 border-b border-[var(--color-state-warning-bg)] bg-[var(--color-state-warning-bg)] px-4 py-2 text-xs text-[var(--color-state-warning-fg)]">
           <Loader2 className="h-3 w-3 animate-spin" />
           Spojenie s orchestrátorom stratené — obnovujem…
         </div>
@@ -95,7 +95,7 @@ export default function CockpitPage() {
 
       <div className="flex min-h-0 flex-1">
         {/* Left rail */}
-        <div className="w-56 flex-shrink-0 border-r border-slate-800">
+        <div className="w-56 flex-shrink-0 border-r border-[var(--color-border-default)]">
           <PipelineRail state={board?.state ?? null} activeAgent={deriveActiveAgent(board ?? null, activity)} />
         </div>
 
@@ -103,8 +103,8 @@ export default function CockpitPage() {
         <div className="flex min-w-0 flex-1 flex-col">
           {board && board.state === null ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
-              <Play className="h-8 w-8 text-slate-700" />
-              <p className="text-xs text-slate-500">Pipeline pre túto verziu ešte nebežala.</p>
+              <Play className="h-8 w-8 text-[var(--color-text-muted)]" />
+              <p className="text-xs text-[var(--color-text-muted)]">Pipeline pre túto verziu ešte nebežala.</p>
               <button
                 onClick={() => handleAction("start")}
                 disabled={inFlight}
@@ -117,7 +117,7 @@ export default function CockpitPage() {
           ) : board ? (
             <ExchangePanel board={board} inFlight={inFlight} activity={activity} onAction={handleAction} />
           ) : (
-            <div className="flex flex-1 items-center justify-center text-xs text-slate-600">
+            <div className="flex flex-1 items-center justify-center text-xs text-[var(--color-text-muted)]">
               <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Načítavam board…
             </div>
           )}
@@ -134,7 +134,7 @@ export default function CockpitPage() {
             task_plan / build, when the EPIC→FEAT→TASK plan exists and tasks are being built. */}
         {versionId &&
           (board?.state?.current_stage === "task_plan" || board?.state?.current_stage === "build") && (
-            <div className="flex w-80 flex-shrink-0 flex-col border-l border-slate-800">
+            <div className="flex w-80 flex-shrink-0 flex-col border-l border-[var(--color-border-default)]">
               <TaskPlanPanel versionId={versionId} messages={board?.recent_messages ?? []} />
             </div>
           )}

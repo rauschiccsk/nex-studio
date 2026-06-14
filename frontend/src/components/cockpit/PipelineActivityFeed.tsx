@@ -8,9 +8,9 @@ import { FileText, Loader2, Terminal, Wrench } from "lucide-react";
 import type { ActivityLine } from "../../services/api/pipeline";
 
 function KindIcon({ kind, line }: { kind: ActivityLine["kind"]; line: string }) {
-  if (kind === "text") return <FileText className="h-3 w-3 shrink-0 text-slate-500" />;
-  if (line.startsWith("spúšťa:")) return <Terminal className="h-3 w-3 shrink-0 text-sky-500" />;
-  return <Wrench className="h-3 w-3 shrink-0 text-emerald-500" />;
+  if (kind === "text") return <FileText className="h-3 w-3 shrink-0 text-[var(--color-text-muted)]" />;
+  if (line.startsWith("spúšťa:")) return <Terminal className="h-3 w-3 shrink-0 text-[var(--color-status-info)]" />;
+  return <Wrench className="h-3 w-3 shrink-0 text-[var(--color-status-success)]" />;
 }
 
 interface Props {
@@ -25,19 +25,19 @@ export function PipelineActivityFeed({ activity }: Props) {
   }, [activity.length]);
 
   return (
-    <div className="flex max-h-32 flex-col overflow-y-auto border-b border-slate-800 bg-slate-950/60 px-4 py-2">
+    <div className="flex max-h-32 flex-col overflow-y-auto border-b border-[var(--color-border-default)] bg-[var(--color-surface-hover)] px-4 py-2">
       {/* Blue = working (CR-NS-028): this feed only renders while the agent is working, so its accent
           follows the "in_progress/working = blue" taxonomy — not emerald (which means done). */}
-      <div className="mb-1 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-sky-400">
+      <div className="mb-1 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-status-info)]">
         <Loader2 className="h-3 w-3 animate-spin" />
         Živá aktivita agenta
       </div>
       {activity.length === 0 ? (
-        <div className="text-[11px] text-slate-600">Agent štartuje…</div>
+        <div className="text-[11px] text-[var(--color-text-muted)]">Agent štartuje…</div>
       ) : (
         <ul className="space-y-0.5">
           {activity.map((a, i) => (
-            <li key={i} className="flex items-center gap-1.5 font-mono text-[11px] text-slate-400">
+            <li key={i} className="flex items-center gap-1.5 font-mono text-[11px] text-[var(--color-text-secondary)]">
               <KindIcon kind={a.kind} line={a.line} />
               <span className="truncate">{a.line}</span>
             </li>

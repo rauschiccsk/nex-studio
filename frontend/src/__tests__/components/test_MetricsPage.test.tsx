@@ -38,6 +38,8 @@ vi.mock("recharts", () => {
 });
 
 import MetricsPage from "@/pages/MetricsPage";
+// MetricsPage now reads useTheme() for theme-aware chart colors (CR-NS-067b) → needs ThemeProvider.
+import { ThemeProvider } from "@/contexts/ThemeContext";
 
 const usage = { input_tokens: 1000, output_tokens: 500, duration_seconds: 600, messages: 3 };
 const version = {
@@ -97,7 +99,11 @@ describe("MetricsPage (E5 / CR-NS-044)", () => {
 
   it("renders the headline ROI when configured", async () => {
     mockGetMetrics.mockResolvedValue(CONFIGURED);
-    render(<MetricsPage />);
+    render(
+      <ThemeProvider username="test">
+        <MetricsPage />
+      </ThemeProvider>,
+    );
     await waitFor(() => expect(screen.getByText(/Metriky/i)).toBeInTheDocument());
     expect(screen.getByText(/240×/)).toBeInTheDocument();
     expect(screen.queryByText(/Ceny nenastavené/i)).toBeNull();
@@ -105,7 +111,11 @@ describe("MetricsPage (E5 / CR-NS-044)", () => {
 
   it("shows 'nenastavené' (never a fake number) when pricing + estimates are unset", async () => {
     mockGetMetrics.mockResolvedValue(UNSET);
-    render(<MetricsPage />);
+    render(
+      <ThemeProvider username="test">
+        <MetricsPage />
+      </ThemeProvider>,
+    );
     await waitFor(() => expect(screen.getByText(/Metriky/i)).toBeInTheDocument());
     // the unset banner + a Settings link, not a fabricated cost
     expect(screen.getAllByText(/nenastavené/i).length).toBeGreaterThan(0);

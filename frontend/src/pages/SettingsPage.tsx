@@ -49,9 +49,9 @@ interface AgentDraft {
 }
 
 function roleCls(role: string) {
-  if (role === "ri") return "text-indigo-400";
-  if (role === "ha") return "text-green-400";
-  return "text-amber-400";
+  if (role === "ri") return "text-[var(--color-accent-primary)]";
+  if (role === "ha") return "text-[var(--color-status-success)]";
+  return "text-[var(--color-status-warning)]";
 }
 
 /**
@@ -367,12 +367,12 @@ export default function SettingsPage() {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex-shrink-0 px-6 py-4 border-b border-slate-800 flex items-center justify-between">
-        <h1 className="text-base font-bold text-slate-100">Nastavenia</h1>
+      <div className="flex-shrink-0 px-6 py-4 border-b border-[var(--color-border-default)] flex items-center justify-between">
+        <h1 className="text-base font-bold text-[var(--color-text-primary)]">Nastavenia</h1>
         {user && (
-          <span className="text-xs text-slate-600">
+          <span className="text-xs text-[var(--color-text-muted)]">
             Prihlásený ako{" "}
-            <span className="text-slate-400 font-medium">{user.username}</span>
+            <span className="text-[var(--color-text-secondary)] font-medium">{user.username}</span>
             {" · "}
             <span className={`font-mono text-[11px] ${roleCls(user.role)}`}>{user.role}</span>
           </span>
@@ -380,7 +380,7 @@ export default function SettingsPage() {
       </div>
 
       {/* Tab bar */}
-      <div className="flex-shrink-0 flex gap-0 border-b border-slate-800 px-6">
+      <div className="flex-shrink-0 flex gap-0 border-b border-[var(--color-border-default)] px-6">
         {TABS.map((t) => (
           <button
             key={t.id}
@@ -388,7 +388,7 @@ export default function SettingsPage() {
             className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
               tab === t.id
                 ? "border-primary-500 text-primary-400"
-                : "border-transparent text-slate-500 hover:text-slate-300"
+                : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]"
             }`}
           >
             {t.label}
@@ -402,17 +402,17 @@ export default function SettingsPage() {
         {/* ── System settings ── */}
         {tab === "system" && (
           <div className="p-6 max-w-3xl">
-            <h2 className="text-sm font-semibold text-slate-300 mb-1">Systémové nastavenia</h2>
-            <p className="text-xs text-slate-600 mb-4">
+            <h2 className="text-sm font-semibold text-[var(--color-text-secondary)] mb-1">Systémové nastavenia</h2>
+            <p className="text-xs text-[var(--color-text-muted)] mb-4">
               Runtime-mutable ICC-wide settings. Editovateľné iba rolou <code>ri</code>; zmeny sa prejavia do 30 s (interná cache TTL).
             </p>
             {settingsLoadError && (
-              <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400 mb-4">
+              <div className="rounded-lg border border-[var(--color-state-error-bg)] bg-[var(--color-state-error-bg)] px-3 py-2 text-xs text-[var(--color-state-error-fg)] mb-4">
                 {settingsLoadError}
               </div>
             )}
             {!settingsLoaded && !settingsLoadError && (
-              <div className="text-xs text-slate-600">Načítavam…</div>
+              <div className="text-xs text-[var(--color-text-muted)]">Načítavam…</div>
             )}
             {settingsLoaded && (
               <div className="space-y-6">
@@ -421,11 +421,11 @@ export default function SettingsPage() {
                   if (rows.length === 0) return null;
                   return (
                     <section key={cat.id}>
-                      <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-1">{cat.label}</h3>
+                      <h3 className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-widest mb-1">{cat.label}</h3>
                       {cat.description && (
-                        <p className="text-[11px] text-slate-600 mb-2">{cat.description}</p>
+                        <p className="text-[11px] text-[var(--color-text-muted)] mb-2">{cat.description}</p>
                       )}
-                      <div className="rounded-lg border border-slate-700 bg-slate-900 divide-y divide-slate-800">
+                      <div className="rounded-lg border border-[var(--color-border-default)] bg-[var(--color-canvas)] divide-y divide-[var(--color-border-default)]">
                         {rows.map((s) => {
                           const draft = drafts[s.key] ?? s.value;
                           const dirty = draft !== s.value;
@@ -436,8 +436,8 @@ export default function SettingsPage() {
                             <div key={s.key} className="p-4">
                               <div className="flex items-start justify-between gap-4 mb-1">
                                 <div className="min-w-0">
-                                  <div className="text-sm font-medium text-slate-200 font-mono">{s.key}</div>
-                                  <div className="text-[10px] text-slate-600 uppercase tracking-widest mt-0.5">{s.value_type}</div>
+                                  <div className="text-sm font-medium text-[var(--color-text-primary)] font-mono">{s.key}</div>
+                                  <div className="text-[10px] text-[var(--color-text-muted)] uppercase tracking-widest mt-0.5">{s.value_type}</div>
                                 </div>
                                 {isRi && (
                                   <button
@@ -450,10 +450,10 @@ export default function SettingsPage() {
                                 )}
                               </div>
                               {s.description && (
-                                <p className="text-xs text-slate-500 mb-2 leading-relaxed">{s.description}</p>
+                                <p className="text-xs text-[var(--color-text-muted)] mb-2 leading-relaxed">{s.description}</p>
                               )}
                               {inputType === "checkbox" ? (
-                                <label className="flex items-center gap-2 text-xs text-slate-300">
+                                <label className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)]">
                                   <input
                                     type="checkbox"
                                     checked={draft.toLowerCase() === "true" || draft === "1"}
@@ -461,7 +461,7 @@ export default function SettingsPage() {
                                       setDrafts((prev) => ({ ...prev, [s.key]: e.target.checked ? "true" : "false" }))
                                     }
                                     disabled={!isRi}
-                                    className="rounded border-slate-700 bg-slate-800 text-primary-500 focus:ring-primary-500 disabled:opacity-50"
+                                    className="rounded border-[var(--color-border-default)] bg-[var(--color-surface)] text-primary-500 focus:ring-primary-500 disabled:opacity-50"
                                   />
                                   <span className="font-mono">{draft}</span>
                                 </label>
@@ -472,25 +472,25 @@ export default function SettingsPage() {
                                   onChange={(e) => setDrafts((prev) => ({ ...prev, [s.key]: e.target.value }))}
                                   disabled={!isRi}
                                   step={s.value_type === "float" ? "any" : undefined}
-                                  className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-primary-500 disabled:opacity-50"
+                                  className="w-full bg-[var(--color-surface)] border border-[var(--color-border-default)] rounded px-3 py-1.5 text-xs text-[var(--color-text-primary)] font-mono focus:outline-none focus:border-primary-500 disabled:opacity-50"
                                 />
                               )}
                               <div className="mt-2 text-[11px] flex items-center gap-2 flex-wrap">
                                 {s.is_default ? (
-                                  <span className="text-slate-600">Predvolená hodnota.</span>
+                                  <span className="text-[var(--color-text-muted)]">Predvolená hodnota.</span>
                                 ) : (
-                                  <span className="text-slate-500">
+                                  <span className="text-[var(--color-text-muted)]">
                                     Uložený override
                                     {s.updated_by_username && (
-                                      <> — <span className="text-slate-400 font-medium">{s.updated_by_username}</span></>
+                                      <> — <span className="text-[var(--color-text-secondary)] font-medium">{s.updated_by_username}</span></>
                                     )}
                                     {s.updated_at && (
                                       <> · {new Date(s.updated_at).toLocaleString("sk-SK")}</>
                                     )}
                                   </span>
                                 )}
-                                {flashKey === s.key && <span className="text-green-400">✓ Uložené</span>}
-                                {err && <span className="text-red-400">{err}</span>}
+                                {flashKey === s.key && <span className="text-[var(--color-status-success)]">✓ Uložené</span>}
+                                {err && <span className="text-[var(--color-status-error)]">{err}</span>}
                               </div>
                             </div>
                           );
@@ -500,7 +500,7 @@ export default function SettingsPage() {
                   );
                 })}
                 {!isRi && (
-                  <p className="text-[11px] text-slate-700 italic">
+                  <p className="text-[11px] text-[var(--color-text-muted)] italic">
                     Read-only — na úpravu je potrebná rola <code>ri</code>.
                   </p>
                 )}
@@ -512,18 +512,18 @@ export default function SettingsPage() {
         {/* ── Agenti (per-user model/effort, CR-NS-040) ── */}
         {tab === "agents" && (
           <div className="p-6 max-w-3xl">
-            <h2 className="text-sm font-semibold text-slate-300 mb-1">Agenti — model a effort</h2>
-            <p className="text-xs text-slate-600 mb-4">
+            <h2 className="text-sm font-semibold text-[var(--color-text-secondary)] mb-1">Agenti — model a effort</h2>
+            <p className="text-xs text-[var(--color-text-muted)] mb-4">
               Tvoja per-rola konfigurácia, ktorú cockpit aplikuje pri dispatchi agentov v <strong>tvojich</strong>{" "}
               projektoch (<code>--model</code> / <code>--effort</code>). Nenastavené pole = predvolené správanie
               (CLI default).
             </p>
             {agentsLoadError && (
-              <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400 mb-4">
+              <div className="rounded-lg border border-[var(--color-state-error-bg)] bg-[var(--color-state-error-bg)] px-3 py-2 text-xs text-[var(--color-state-error-fg)] mb-4">
                 {agentsLoadError}
               </div>
             )}
-            <div className="rounded-lg border border-slate-700 bg-slate-900 divide-y divide-slate-800">
+            <div className="rounded-lg border border-[var(--color-border-default)] bg-[var(--color-canvas)] divide-y divide-[var(--color-border-default)]">
               {AGENT_ROLES.map((r) => {
                 const draft = agentDrafts[r.id] ?? { model: "", effort: "" };
                 const saving = savingRole === r.id;
@@ -532,9 +532,9 @@ export default function SettingsPage() {
                   <div key={r.id} className="p-4">
                     <div className="flex items-start justify-between gap-4 mb-2">
                       <div>
-                        <div className="text-sm font-medium text-slate-200">{r.label}</div>
+                        <div className="text-sm font-medium text-[var(--color-text-primary)]">{r.label}</div>
                         {r.id === "coordinator" && !draft.effort && (
-                          <div className="text-[11px] text-slate-500 mt-0.5">
+                          <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
                             Predvolený effort: <span className="font-mono">max</span>
                           </div>
                         )}
@@ -549,7 +549,7 @@ export default function SettingsPage() {
                     </div>
                     <div className="grid grid-cols-2 gap-3">
                       <label className="block">
-                        <span className="text-[10px] text-slate-600 uppercase tracking-widest">Model</span>
+                        <span className="text-[10px] text-[var(--color-text-muted)] uppercase tracking-widest">Model</span>
                         <select
                           value={draft.model}
                           onChange={(e) =>
@@ -558,7 +558,7 @@ export default function SettingsPage() {
                               [r.id]: { ...draft, model: e.target.value as AgentModel | "" },
                             }))
                           }
-                          className="mt-1 w-full bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-primary-500"
+                          className="mt-1 w-full bg-[var(--color-surface)] border border-[var(--color-border-default)] rounded px-3 py-1.5 text-xs text-[var(--color-text-primary)] focus:outline-none focus:border-primary-500"
                         >
                           <option value="">— Predvolený —</option>
                           {AGENT_MODELS.map((m) => (
@@ -569,7 +569,7 @@ export default function SettingsPage() {
                         </select>
                       </label>
                       <label className="block">
-                        <span className="text-[10px] text-slate-600 uppercase tracking-widest">Úroveň</span>
+                        <span className="text-[10px] text-[var(--color-text-muted)] uppercase tracking-widest">Úroveň</span>
                         <select
                           value={draft.effort}
                           onChange={(e) =>
@@ -578,7 +578,7 @@ export default function SettingsPage() {
                               [r.id]: { ...draft, effort: e.target.value as AgentEffort | "" },
                             }))
                           }
-                          className="mt-1 w-full bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-primary-500"
+                          className="mt-1 w-full bg-[var(--color-surface)] border border-[var(--color-border-default)] rounded px-3 py-1.5 text-xs text-[var(--color-text-primary)] focus:outline-none focus:border-primary-500"
                         >
                           <option value="">— Predvolený —</option>
                           {AGENT_EFFORTS.map((ef) => (
@@ -590,8 +590,8 @@ export default function SettingsPage() {
                       </label>
                     </div>
                     <div className="mt-2 text-[11px] flex items-center gap-2">
-                      {flashRole === r.id && <span className="text-green-400">✓ Uložené</span>}
-                      {err && <span className="text-red-400">{err}</span>}
+                      {flashRole === r.id && <span className="text-[var(--color-status-success)]">✓ Uložené</span>}
+                      {err && <span className="text-[var(--color-status-error)]">{err}</span>}
                     </div>
                   </div>
                 );
@@ -604,7 +604,7 @@ export default function SettingsPage() {
         {tab === "users" && (
           <div className="p-6">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-semibold text-slate-300">Správa používateľov</h2>
+              <h2 className="text-sm font-semibold text-[var(--color-text-secondary)]">Správa používateľov</h2>
               <button
                 onClick={() => { setShowNewForm((v) => !v); setEditingUser(null); setConfirmingDeleteId(null); }}
                 className="flex items-center gap-1.5 bg-primary-600 hover:bg-primary-500 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors"
@@ -621,7 +621,7 @@ export default function SettingsPage() {
               <select
                 value={roleFilter}
                 onChange={(e) => setRoleFilter(e.target.value)}
-                className="bg-slate-800 border border-slate-700 text-xs text-slate-300 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-primary-500"
+                className="bg-[var(--color-surface)] border border-[var(--color-border-default)] text-xs text-[var(--color-text-secondary)] rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-primary-500"
               >
                 <option value="">Všetky role</option>
                 <option value="ri">ri — Director</option>
@@ -631,22 +631,22 @@ export default function SettingsPage() {
               <select
                 value={activeFilter}
                 onChange={(e) => setActiveFilter(e.target.value)}
-                className="bg-slate-800 border border-slate-700 text-xs text-slate-300 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-primary-500"
+                className="bg-[var(--color-surface)] border border-[var(--color-border-default)] text-xs text-[var(--color-text-secondary)] rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-primary-500"
               >
                 <option value="">Akýkoľvek stav</option>
                 <option value="active">Len aktívni</option>
                 <option value="inactive">Len neaktívni</option>
               </select>
-              <span className="ml-auto text-xs text-slate-600">
+              <span className="ml-auto text-xs text-[var(--color-text-muted)]">
                 {usersLoading ? "Načítavam…" : `${users.length} používateľov`}
               </span>
             </div>
 
             {/* Table */}
-            <div className="rounded-xl border border-slate-800 overflow-hidden">
+            <div className="rounded-xl border border-[var(--color-border-default)] overflow-hidden">
               <table className="w-full text-sm">
-                <thead className="bg-slate-900/80">
-                  <tr className="text-[10px] uppercase tracking-widest text-slate-600">
+                <thead className="bg-[var(--color-surface-hover)]">
+                  <tr className="text-[10px] uppercase tracking-widest text-[var(--color-text-muted)]">
                     <th className="px-4 py-2.5 text-left font-semibold">Meno</th>
                     <th className="px-4 py-2.5 text-left font-semibold">Používateľské meno</th>
                     <th className="px-4 py-2.5 text-left font-semibold">Email</th>
@@ -655,43 +655,43 @@ export default function SettingsPage() {
                     <th className="px-4 py-2.5 text-right font-semibold">Akcie</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800">
+                <tbody className="divide-y divide-[var(--color-border-default)]">
                   {users.map((u) => {
                     const fullName = [u.first_name, u.last_name]
                       .filter(Boolean)
                       .join(" ");
                     return (
-                    <tr key={u.id} className="hover:bg-slate-800/40 transition-colors">
-                      <td className="px-4 py-3 text-sm text-slate-300">
-                        {fullName || <span className="text-slate-600">—</span>}
+                    <tr key={u.id} className="hover:bg-[var(--color-surface-hover)] transition-colors">
+                      <td className="px-4 py-3 text-sm text-[var(--color-text-secondary)]">
+                        {fullName || <span className="text-[var(--color-text-muted)]">—</span>}
                       </td>
-                      <td className="px-4 py-3 text-sm font-medium text-slate-200 font-mono">{u.username}</td>
-                      <td className="px-4 py-3 text-xs text-slate-400">{u.email}</td>
+                      <td className="px-4 py-3 text-sm font-medium text-[var(--color-text-primary)] font-mono">{u.username}</td>
+                      <td className="px-4 py-3 text-xs text-[var(--color-text-secondary)]">{u.email}</td>
                       <td className="px-4 py-3">
                         <span className={`text-[11px] font-mono font-medium ${roleCls(u.role)}`}>{u.role}</span>
                       </td>
                       <td className="px-4 py-3">
                         {u.is_active ? (
-                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-500/10 border border-green-500/25 text-green-400">aktívny</span>
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-[var(--color-state-success-bg)] border border-[var(--color-state-success-bg)] text-[var(--color-state-success-fg)]">aktívny</span>
                         ) : (
-                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400">neaktívny</span>
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-[var(--color-state-warning-bg)] border border-[var(--color-state-warning-bg)] text-[var(--color-state-warning-fg)]">neaktívny</span>
                         )}
                       </td>
                       <td className="px-4 py-3 text-right">
                         {confirmingDeleteId === u.id ? (
                           <div className="flex items-center justify-end gap-2 text-xs">
-                            <span className="text-slate-400">Naozaj vymazať?</span>
+                            <span className="text-[var(--color-text-secondary)]">Naozaj vymazať?</span>
                             <button
                               onClick={() => handleConfirmDelete(u.id)}
                               disabled={deleting}
-                              className="px-2 py-0.5 text-red-400 border border-red-500/40 rounded hover:bg-red-500/10 disabled:opacity-40"
+                              className="px-2 py-0.5 text-[var(--color-status-error)] border border-[var(--color-state-error-bg)] rounded hover:bg-[var(--color-state-error-bg)] disabled:opacity-40"
                             >
                               Áno
                             </button>
                             <button
                               onClick={() => setConfirmingDeleteId(null)}
                               disabled={deleting}
-                              className="px-2 py-0.5 text-slate-400 border border-slate-700 rounded hover:bg-slate-800"
+                              className="px-2 py-0.5 text-[var(--color-text-secondary)] border border-[var(--color-border-default)] rounded hover:bg-[var(--color-surface-hover)]"
                             >
                               Nie
                             </button>
@@ -702,7 +702,7 @@ export default function SettingsPage() {
                             <button
                               onClick={() => handleEditClick(u)}
                               title="Upraviť"
-                              className="text-slate-500 hover:text-slate-200 transition-colors"
+                              className="text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-colors"
                             >
                               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -712,7 +712,7 @@ export default function SettingsPage() {
                             <button
                               onClick={() => { setConfirmingDeleteId(u.id); setDeleteError(""); }}
                               title="Vymazať"
-                              className="text-slate-500 hover:text-red-400 transition-colors"
+                              className="text-[var(--color-text-muted)] hover:text-[var(--color-status-error)] transition-colors"
                             >
                               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -721,7 +721,7 @@ export default function SettingsPage() {
                             {/* Existing toggle (preserved per Director directive) */}
                             <button
                               onClick={() => handleToggleActive(u)}
-                              className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
+                              className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors"
                             >
                               {u.is_active ? "Deaktivovať" : "Aktivovať"}
                             </button>
@@ -733,7 +733,7 @@ export default function SettingsPage() {
                   })}
                   {!usersLoading && users.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="px-4 py-6 text-center text-xs text-slate-600">Žiadni používatelia</td>
+                      <td colSpan={6} className="px-4 py-6 text-center text-xs text-[var(--color-text-muted)]">Žiadni používatelia</td>
                     </tr>
                   )}
                 </tbody>
@@ -743,9 +743,9 @@ export default function SettingsPage() {
             {/* Delete error banner (shown after a failed DELETE — e.g. 409
                 FK conflict). Dismiss on next action. */}
             {deleteError && (
-              <div className="mt-3 text-xs text-red-400 rounded bg-red-500/10 border border-red-500/20 px-3 py-2 flex items-center justify-between">
+              <div className="mt-3 text-xs text-[var(--color-state-error-fg)] rounded bg-[var(--color-state-error-bg)] border border-[var(--color-state-error-bg)] px-3 py-2 flex items-center justify-between">
                 <span>{deleteError}</span>
-                <button onClick={() => setDeleteError("")} className="text-red-400 hover:text-red-300 ml-2">×</button>
+                <button onClick={() => setDeleteError("")} className="text-[var(--color-state-error-fg)] hover:opacity-80 ml-2">×</button>
               </div>
             )}
 
@@ -778,12 +778,12 @@ export default function SettingsPage() {
         {/* ── Sessions ── */}
         {tab === "sessions" && (
           <div className="p-6">
-            <h2 className="text-sm font-semibold text-slate-300 mb-1">Relácie používateľa</h2>
-            <p className="text-xs text-slate-600 mb-4">Kotvy životného cyklu JWT pre používateľa. Vymazanie relácie zneplatní všetky zostávajúce tokeny.</p>
-            <div className="rounded-xl border border-slate-800 overflow-hidden">
+            <h2 className="text-sm font-semibold text-[var(--color-text-secondary)] mb-1">Relácie používateľa</h2>
+            <p className="text-xs text-[var(--color-text-muted)] mb-4">Kotvy životného cyklu JWT pre používateľa. Vymazanie relácie zneplatní všetky zostávajúce tokeny.</p>
+            <div className="rounded-xl border border-[var(--color-border-default)] overflow-hidden">
               <table className="w-full text-sm">
-                <thead className="bg-slate-900/80">
-                  <tr className="text-[10px] uppercase tracking-widest text-slate-600">
+                <thead className="bg-[var(--color-surface-hover)]">
+                  <tr className="text-[10px] uppercase tracking-widest text-[var(--color-text-muted)]">
                     <th className="px-4 py-2.5 text-left font-semibold">Používateľ</th>
                     <th className="px-4 py-2.5 text-left font-semibold">ID relácie</th>
                     <th className="px-4 py-2.5 text-right font-semibold">tv</th>
@@ -791,20 +791,20 @@ export default function SettingsPage() {
                     <th className="px-4 py-2.5 text-right font-semibold">Akcie</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800">
-                  <tr className="hover:bg-slate-800/40 transition-colors">
-                    <td className="px-4 py-3 text-sm font-medium text-slate-200">{user?.username ?? "—"}</td>
-                    <td className="px-4 py-3 font-mono text-[10px] text-slate-500">{user?.id?.slice(0, 22) ?? "—"}…</td>
-                    <td className="px-4 py-3 text-right font-mono text-xs text-slate-400">—</td>
-                    <td className="px-4 py-3 text-xs text-slate-500">—</td>
+                <tbody className="divide-y divide-[var(--color-border-default)]">
+                  <tr className="hover:bg-[var(--color-surface-hover)] transition-colors">
+                    <td className="px-4 py-3 text-sm font-medium text-[var(--color-text-primary)]">{user?.username ?? "—"}</td>
+                    <td className="px-4 py-3 font-mono text-[10px] text-[var(--color-text-muted)]">{user?.id?.slice(0, 22) ?? "—"}…</td>
+                    <td className="px-4 py-3 text-right font-mono text-xs text-[var(--color-text-secondary)]">—</td>
+                    <td className="px-4 py-3 text-xs text-[var(--color-text-muted)]">—</td>
                     <td className="px-4 py-3 text-right">
-                      <span className="text-xs text-slate-700">aktuálna relácia</span>
+                      <span className="text-xs text-[var(--color-text-muted)]">aktuálna relácia</span>
                     </td>
                   </tr>
                 </tbody>
               </table>
             </div>
-            <p className="text-[11px] text-slate-700 mt-3">Koncový bod správy relácií zatiaľ nie je implementovaný v backende.</p>
+            <p className="text-[11px] text-[var(--color-text-muted)] mt-3">Koncový bod správy relácií zatiaľ nie je implementovaný v backende.</p>
           </div>
         )}
       </div>

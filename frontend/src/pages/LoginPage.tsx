@@ -35,7 +35,7 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex items-center justify-center min-h-screen bg-slate-950">
+    <div className="flex items-center justify-center min-h-screen bg-[var(--color-canvas)]">
       <div className="w-full max-w-sm px-4">
         {/* Branding */}
         <div className="mb-8 text-center">
@@ -43,12 +43,12 @@ export default function LoginPage() {
             N
           </div>
           <h1 className="text-2xl font-bold text-primary-400 tracking-tight">NEX Studio</h1>
-          <p className="mt-1 text-sm text-slate-500">Prihláste sa na svoj účet</p>
+          <p className="mt-1 text-sm text-[var(--color-text-muted)]">Prihláste sa na svoj účet</p>
         </div>
 
         {/* Card — the form is the shared <LoginForm> (E1 Phase C); branding +
             card chrome + version footer + the already-logged-in redirect stay here. */}
-        <div className="rounded-xl border border-slate-800 bg-slate-900 p-8 shadow-2xl">
+        <div className="rounded-xl border border-[var(--color-border-default)] bg-[var(--color-surface)] p-8 shadow-2xl">
           <LoginForm
             fieldLabel="username"
             onSubmit={handleSubmit}
@@ -60,7 +60,7 @@ export default function LoginPage() {
           />
         </div>
 
-        <p className="mt-4 text-center text-[11px] text-slate-700">
+        <p className="mt-4 text-center text-[11px] text-[var(--color-text-muted)]">
           NEX Studio v{import.meta.env.VITE_APP_VERSION || "dev"} · ICC
         </p>
       </div>

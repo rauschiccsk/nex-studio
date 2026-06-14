@@ -26,7 +26,7 @@ const PARTICIPANT_ACCENT: Record<PipelineParticipant, string> = {
   implementer: "border-emerald-500/60 bg-emerald-500/5",
   auditor: "border-violet-500/60 bg-violet-500/5",
   director: "border-primary-500/60 bg-primary-500/5",
-  system: "border-slate-600/60 bg-slate-700/10",
+  system: "border-[var(--color-border-strong)] bg-[var(--color-surface-hover)]",
 };
 
 const KIND_BADGE: Record<string, string> = {
@@ -36,9 +36,9 @@ const KIND_BADGE: Record<string, string> = {
   approval: "bg-emerald-500/15 text-emerald-300",
   return: "bg-red-500/15 text-red-300",
   verdict: "bg-primary-500/15 text-primary-300",
-  notification: "bg-slate-600/20 text-slate-300",
-  directive: "bg-slate-600/20 text-slate-300",
-  kickoff: "bg-slate-600/20 text-slate-300",
+  notification: "bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)]",
+  directive: "bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)]",
+  kickoff: "bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)]",
 };
 
 interface Props {
@@ -60,7 +60,7 @@ export function PipelineMessageBubble({ message }: Props) {
   const isAutonomous = Boolean((message.payload as { is_autonomous?: boolean } | null)?.is_autonomous);
   const isRawReport = message.kind === "gate_report" && message.author !== "coordinator" && !isSynthesis;
 
-  const badge = KIND_BADGE[message.kind] ?? "bg-slate-600/20 text-slate-300";
+  const badge = KIND_BADGE[message.kind] ?? "bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)]";
   // Synthesis → prominent primary rail; autonomous decision → amber attention rail; else the per-author
   // accent (dimmed for a raw report).
   const container = isSynthesis
@@ -74,13 +74,13 @@ export function PipelineMessageBubble({ message }: Props) {
   return (
     <div className={container}>
       <div className="mb-1 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 text-xs text-slate-300">
+        <div className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)]">
           <span aria-hidden="true">{PARTICIPANT_EMOJI[message.author]}</span>
           <span className="font-semibold">{ROLE_LABELS[message.author]}</span>
-          <span className="text-slate-600">→</span>
-          <span className="text-slate-400">{ROLE_LABELS[message.recipient]}</span>
-          <span className="text-slate-600">·</span>
-          <span className="font-mono text-[10px] text-slate-500">{ts}</span>
+          <span className="text-[var(--color-text-muted)]">→</span>
+          <span className="text-[var(--color-text-secondary)]">{ROLE_LABELS[message.recipient]}</span>
+          <span className="text-[var(--color-text-muted)]">·</span>
+          <span className="font-mono text-[10px] text-[var(--color-text-muted)]">{ts}</span>
         </div>
         {isAutonomous ? (
           <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold bg-amber-500/20 text-amber-200">
@@ -97,11 +97,11 @@ export function PipelineMessageBubble({ message }: Props) {
         )}
       </div>
       <div
-        className="prose prose-sm prose-invert max-w-none leading-relaxed text-slate-200
-                   prose-headings:mt-3 prose-headings:font-semibold prose-headings:text-slate-100
+        className="prose prose-sm dark:prose-invert max-w-none leading-relaxed text-[var(--color-text-primary)]
+                   prose-headings:mt-3 prose-headings:font-semibold prose-headings:text-[var(--color-text-primary)]
                    prose-p:my-1.5 prose-p:text-sm
-                   prose-code:bg-slate-800/60 prose-code:px-1 prose-code:text-fuchsia-300
-                   prose-pre:bg-slate-900/80"
+                   prose-code:bg-[var(--color-surface-hover)] prose-code:px-1 prose-code:text-[var(--color-version-text)]
+                   prose-pre:bg-[var(--color-surface-hover)]"
       >
         <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
       </div>

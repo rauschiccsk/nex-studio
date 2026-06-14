@@ -158,9 +158,9 @@ export default function CredentialsPage() {
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      <div className="flex items-center gap-3 px-4 h-12 border-b border-slate-800 flex-shrink-0">
-        <span className="text-sm font-medium text-slate-200">Prístupy</span>
-        <span className="text-[11px] text-slate-600">
+      <div className="flex items-center gap-3 px-4 h-12 border-b border-[var(--color-border-default)] flex-shrink-0">
+        <span className="text-sm font-medium text-[var(--color-text-primary)]">Prístupy</span>
+        <span className="text-[11px] text-[var(--color-text-muted)]">
           {items.length} záznamov · /opt/data/nex-studio/credentials
         </span>
         <div className="ml-auto">
@@ -174,7 +174,7 @@ export default function CredentialsPage() {
       </div>
 
       {accessError && (
-        <div className="m-4 rounded border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-300">
+        <div className="m-4 rounded border border-[var(--color-state-warning-bg)] bg-[var(--color-state-warning-bg)] p-3 text-sm text-[var(--color-state-warning-fg)]">
           {accessError}
         </div>
       )}
@@ -182,23 +182,23 @@ export default function CredentialsPage() {
       {!accessError && (
         <div className="flex flex-1 overflow-hidden">
           {/* Left: list */}
-          <div className="w-72 flex-shrink-0 border-r border-slate-800 overflow-y-auto">
-            {loading && <div className="p-4 text-sm text-slate-500">Načítavam…</div>}
+          <div className="w-72 flex-shrink-0 border-r border-[var(--color-border-default)] overflow-y-auto">
+            {loading && <div className="p-4 text-sm text-[var(--color-text-muted)]">Načítavam…</div>}
             {!loading && items.length === 0 && (
-              <div className="p-4 text-sm text-slate-600">Žiadne credentials.</div>
+              <div className="p-4 text-sm text-[var(--color-text-muted)]">Žiadne credentials.</div>
             )}
             {items.map((c) => (
               <button
                 key={c.id}
                 onClick={() => handleSelect(c)}
-                className={`w-full text-left px-4 py-3 border-b border-slate-800/50 transition-colors ${
+                className={`w-full text-left px-4 py-3 border-b border-[var(--color-border-default)] transition-colors ${
                   selected?.id === c.id
                     ? "bg-primary-600/10 border-l-2 border-l-primary-500"
-                    : "hover:bg-slate-800/50 border-l-2 border-l-transparent"
+                    : "hover:bg-[var(--color-surface-hover)] border-l-2 border-l-transparent"
                 }`}
               >
-                <div className="text-sm font-medium text-slate-200 truncate">{c.title}</div>
-                <div className="text-[10px] font-mono text-slate-500 truncate mt-0.5">
+                <div className="text-sm font-medium text-[var(--color-text-primary)] truncate">{c.title}</div>
+                <div className="text-[10px] font-mono text-[var(--color-text-muted)] truncate mt-0.5">
                   {c.file_path.split("/").pop()}
                 </div>
               </button>
@@ -208,40 +208,40 @@ export default function CredentialsPage() {
           {/* Right: detail / edit / create */}
           <div className="flex-1 overflow-y-auto p-5">
             {mode === "view" && !selected && (
-              <div className="text-sm text-slate-500">Vyber credential zo zoznamu alebo vytvor nový.</div>
+              <div className="text-sm text-[var(--color-text-muted)]">Vyber credential zo zoznamu alebo vytvor nový.</div>
             )}
 
             {mode === "view" && selected && (
               <div className="max-w-3xl space-y-4">
                 <div className="flex items-center gap-2">
-                  <h2 className="text-lg font-semibold text-slate-100 flex-1">{selected.title}</h2>
+                  <h2 className="text-lg font-semibold text-[var(--color-text-primary)] flex-1">{selected.title}</h2>
                   <button
                     onClick={handleStartEdit}
-                    className="px-3 py-1.5 text-xs text-slate-400 border border-slate-700 hover:border-slate-500 rounded-lg transition-colors"
+                    className="px-3 py-1.5 text-xs text-[var(--color-text-secondary)] border border-[var(--color-border-default)] hover:border-[var(--color-border-strong)] rounded-lg transition-colors"
                   >
                     Upraviť obsah
                   </button>
                   {!deleteConfirm ? (
                     <button
                       onClick={() => setDeleteConfirm(true)}
-                      className="px-3 py-1.5 text-xs text-red-500/80 border border-red-500/30 hover:border-red-500/50 rounded-lg transition-colors"
+                      className="px-3 py-1.5 text-xs text-[var(--color-status-error)] border border-[var(--color-state-error-bg)] hover:border-[var(--color-state-error-bg)] rounded-lg transition-colors"
                     >
                       Zmazať
                     </button>
                   ) : (
                     <>
-                      <span className="text-xs text-red-400">Naozaj?</span>
+                      <span className="text-xs text-[var(--color-status-error)]">Naozaj?</span>
                       <button onClick={handleDelete} className="px-2 py-1 text-xs bg-red-600 hover:bg-red-500 text-white rounded">Áno</button>
-                      <button onClick={() => setDeleteConfirm(false)} className="px-2 py-1 text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 rounded">Nie</button>
+                      <button onClick={() => setDeleteConfirm(false)} className="px-2 py-1 text-xs bg-[var(--color-surface-active)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text-primary)] rounded">Nie</button>
                     </>
                   )}
                 </div>
-                <div className="text-xs font-mono text-slate-500">{selected.file_path}</div>
-                <div className="rounded-xl border border-slate-800 bg-slate-900 p-5">
-                  {contentLoading && <div className="text-sm text-slate-500">Načítavam obsah…</div>}
-                  {contentError && <div className="text-sm text-amber-400">{contentError}</div>}
+                <div className="text-xs font-mono text-[var(--color-text-muted)]">{selected.file_path}</div>
+                <div className="rounded-xl border border-[var(--color-border-default)] bg-[var(--color-canvas)] p-5">
+                  {contentLoading && <div className="text-sm text-[var(--color-text-muted)]">Načítavam obsah…</div>}
+                  {contentError && <div className="text-sm text-[var(--color-status-error)]">{contentError}</div>}
                   {!contentLoading && !contentError && (
-                    <article className="prose prose-invert prose-sm max-w-none">
+                    <article className="prose prose-invert prose-sm max-w-none text-[var(--color-text-primary)] prose-headings:text-[var(--color-text-primary)] prose-p:text-[var(--color-text-primary)] prose-strong:text-[var(--color-text-primary)] prose-li:text-[var(--color-text-primary)] prose-code:text-[var(--color-text-primary)]">
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
                     </article>
                   )}
@@ -252,7 +252,7 @@ export default function CredentialsPage() {
             {mode === "edit" && selected && (
               <div className="max-w-3xl space-y-3">
                 <div className="flex items-center gap-2">
-                  <h2 className="text-lg font-semibold text-slate-100 flex-1">{selected.title} — úprava</h2>
+                  <h2 className="text-lg font-semibold text-[var(--color-text-primary)] flex-1">{selected.title} — úprava</h2>
                   <button
                     onClick={handleSaveEdit}
                     disabled={saving}
@@ -262,7 +262,7 @@ export default function CredentialsPage() {
                   </button>
                   <button
                     onClick={() => setMode("view")}
-                    className="px-3 py-1.5 text-xs text-slate-400 border border-slate-700 hover:border-slate-500 rounded-lg transition-colors"
+                    className="px-3 py-1.5 text-xs text-[var(--color-text-secondary)] border border-[var(--color-border-default)] hover:border-[var(--color-border-strong)] rounded-lg transition-colors"
                   >
                     Zrušiť
                   </button>
@@ -270,7 +270,7 @@ export default function CredentialsPage() {
                 <textarea
                   value={editContent}
                   onChange={(e) => setEditContent(e.target.value)}
-                  className="w-full min-h-[400px] px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-slate-200 font-mono resize-y focus:outline-none focus:border-primary-500"
+                  className="w-full min-h-[400px] px-3 py-2 bg-[var(--color-canvas)] border border-[var(--color-border-default)] rounded-lg text-sm text-[var(--color-text-primary)] font-mono resize-y focus:outline-none focus:border-primary-500"
                 />
               </div>
             )}
@@ -278,7 +278,7 @@ export default function CredentialsPage() {
             {mode === "create" && (
               <div className="max-w-3xl space-y-3">
                 <div className="flex items-center gap-2">
-                  <h2 className="text-lg font-semibold text-slate-100 flex-1">Nový credential</h2>
+                  <h2 className="text-lg font-semibold text-[var(--color-text-primary)] flex-1">Nový credential</h2>
                   <button
                     onClick={handleSaveCreate}
                     disabled={saving}
@@ -288,40 +288,40 @@ export default function CredentialsPage() {
                   </button>
                   <button
                     onClick={() => setMode("view")}
-                    className="px-3 py-1.5 text-xs text-slate-400 border border-slate-700 hover:border-slate-500 rounded-lg transition-colors"
+                    className="px-3 py-1.5 text-xs text-[var(--color-text-secondary)] border border-[var(--color-border-default)] hover:border-[var(--color-border-strong)] rounded-lg transition-colors"
                   >
                     Zrušiť
                   </button>
                 </div>
                 {createError && (
-                  <div className="rounded border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">{createError}</div>
+                  <div className="rounded border border-[var(--color-state-error-bg)] bg-[var(--color-state-error-bg)] p-3 text-sm text-[var(--color-state-error-fg)]">{createError}</div>
                 )}
                 <div>
-                  <label className="block text-xs font-medium text-slate-400 mb-1">Názov</label>
+                  <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1">Názov</label>
                   <input
                     type="text"
                     value={createTitle}
                     onChange={(e) => setCreateTitle(e.target.value)}
                     placeholder="Popisný názov"
-                    className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-primary-500"
+                    className="w-full rounded-lg border border-[var(--color-border-default)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text-primary)] focus:outline-none focus:border-primary-500"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-400 mb-1">Názov súboru (bez slash-u)</label>
+                  <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1">Názov súboru (bez slash-u)</label>
                   <input
                     type="text"
                     value={createFilename}
                     onChange={(e) => setCreateFilename(e.target.value)}
                     placeholder="napr. AWS_KEYS.md"
-                    className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 font-mono focus:outline-none focus:border-primary-500"
+                    className="w-full rounded-lg border border-[var(--color-border-default)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text-primary)] font-mono focus:outline-none focus:border-primary-500"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-400 mb-1">Obsah (Markdown)</label>
+                  <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1">Obsah (Markdown)</label>
                   <textarea
                     value={createContent}
                     onChange={(e) => setCreateContent(e.target.value)}
-                    className="w-full min-h-[300px] px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-slate-200 font-mono resize-y focus:outline-none focus:border-primary-500"
+                    className="w-full min-h-[300px] px-3 py-2 bg-[var(--color-canvas)] border border-[var(--color-border-default)] rounded-lg text-sm text-[var(--color-text-primary)] font-mono resize-y focus:outline-none focus:border-primary-500"
                   />
                 </div>
               </div>

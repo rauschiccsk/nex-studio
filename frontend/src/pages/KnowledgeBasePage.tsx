@@ -358,28 +358,28 @@ export default function KnowledgeBasePage() {
   // --- Render ---
 
   return (
-    <div className="flex h-[calc(100vh-100px)] bg-gray-900 rounded-xl border border-gray-700 overflow-hidden">
+    <div className="flex h-[calc(100vh-100px)] bg-[var(--color-canvas)] rounded-xl border border-[var(--color-border-default)] overflow-hidden">
       {/* KB Tree column — unified hierarchical browser (replaces former
           categories sidebar + documents list) */}
-      <div className="w-80 bg-gray-800 border-r border-gray-700 flex flex-col min-w-0">
+      <div className="w-80 bg-[var(--color-surface)] border-r border-[var(--color-border-default)] flex flex-col min-w-0">
         {/* Header */}
-        <div className="p-3 border-b border-gray-700">
-          <h2 className="text-base font-semibold flex items-center gap-2 text-gray-100">
+        <div className="p-3 border-b border-[var(--color-border-default)]">
+          <h2 className="text-base font-semibold flex items-center gap-2 text-[var(--color-text-primary)]">
             <FolderOpen size={18} />
             Dokumentácia
           </h2>
-          <div className="mt-2 flex items-center gap-1.5 text-xs text-gray-400">
+          <div className="mt-2 flex items-center gap-1.5 text-xs text-[var(--color-text-secondary)]">
             <Database size={12} />
             <span>{documents.length} dokumentov</span>
           </div>
         </div>
 
         {/* Toolbar — Search + Hľadať + Refresh + Strom/Všetky toggle + Nový */}
-        <div className="p-3 border-b border-gray-700 flex flex-col gap-2">
+        <div className="p-3 border-b border-[var(--color-border-default)] flex flex-col gap-2">
           <div className="flex gap-1.5">
             <div className="flex-1 relative">
               <Search
-                className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400"
+                className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-secondary)]"
                 size={14}
               />
               <input
@@ -388,12 +388,12 @@ export default function KnowledgeBasePage() {
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && doSearch()}
                 placeholder="Hľadať..."
-                className="w-full pl-8 pr-2 py-1.5 bg-gray-900 border border-gray-700 rounded text-xs text-gray-200 placeholder:text-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="w-full pl-8 pr-2 py-1.5 bg-[var(--color-canvas)] border border-[var(--color-border-default)] rounded text-xs text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent-focus)]"
               />
             </div>
             <button
               onClick={doSearch}
-              className="px-2 py-1.5 bg-gray-700 text-gray-300 rounded hover:bg-gray-600 text-xs transition-colors"
+              className="px-2 py-1.5 bg-[var(--color-surface-active)] text-[var(--color-text-secondary)] rounded hover:bg-[var(--color-surface-hover)] text-xs transition-colors"
             >
               Hľadať
             </button>
@@ -404,7 +404,7 @@ export default function KnowledgeBasePage() {
                 setSearchResults(null);
                 refresh();
               }}
-              className="p-1.5 bg-gray-700 text-gray-300 rounded hover:bg-gray-600 transition-colors"
+              className="p-1.5 bg-[var(--color-surface-active)] text-[var(--color-text-secondary)] rounded hover:bg-[var(--color-surface-hover)] transition-colors"
               title="Obnoviť"
             >
               <RefreshCw size={14} />
@@ -417,8 +417,8 @@ export default function KnowledgeBasePage() {
               }
               className={`flex-1 px-2 py-1.5 rounded text-xs font-medium transition-colors ${
                 viewMode === "all"
-                  ? "bg-blue-600 text-white hover:bg-blue-500"
-                  : "bg-gray-700 text-gray-300 hover:bg-gray-600"
+                  ? "bg-[var(--color-accent-primary)] text-white hover:bg-[var(--color-accent-primary-hover)]"
+                  : "bg-[var(--color-surface-active)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]"
               }`}
               title="Prepínať medzi hierarchickým stromom a plochým zoznamom"
             >
@@ -436,7 +436,7 @@ export default function KnowledgeBasePage() {
                   setNewContent("");
                   setError("");
                 }}
-                className="flex items-center gap-1 px-2 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-500 text-xs font-medium transition-colors"
+                className="flex items-center gap-1 px-2 py-1.5 bg-[var(--color-accent-primary)] text-white rounded hover:bg-[var(--color-accent-primary-hover)] text-xs font-medium transition-colors"
               >
                 <Plus size={14} /> Nový
               </button>
@@ -445,11 +445,11 @@ export default function KnowledgeBasePage() {
         </div>
 
         {searchInfo && (
-          <div className="px-3 py-2 bg-blue-900/30 border-b border-blue-800/50 text-blue-300 text-xs flex items-center justify-between">
+          <div className="px-3 py-2 bg-[var(--color-state-info-bg)] border-b border-[var(--color-border-default)] text-[var(--color-state-info-fg)] text-xs flex items-center justify-between">
             <span className="truncate">{searchInfo}</span>
             <button
               onClick={() => setSearchInfo(null)}
-              className="text-blue-300 hover:text-blue-200 ml-2"
+              className="text-[var(--color-state-info-fg)] hover:opacity-80 ml-2"
             >
               <X size={12} />
             </button>
@@ -457,9 +457,9 @@ export default function KnowledgeBasePage() {
         )}
 
         {error && (
-          <div className="px-3 py-2 bg-red-900/30 border-b border-red-800/50 text-red-400 text-xs flex items-center justify-between">
+          <div className="px-3 py-2 bg-[var(--color-state-error-bg)] border-b border-[var(--color-border-default)] text-[var(--color-state-error-fg)] text-xs flex items-center justify-between">
             <span className="truncate">{error}</span>
-            <button onClick={() => setError("")} className="text-red-400 hover:text-red-300 ml-2">
+            <button onClick={() => setError("")} className="text-[var(--color-state-error-fg)] hover:opacity-80 ml-2">
               <X size={12} />
             </button>
           </div>
@@ -468,12 +468,12 @@ export default function KnowledgeBasePage() {
         {/* Tree / search results / flat-all list */}
         <div className="flex-1 overflow-y-auto py-1">
           {loading ? (
-            <div className="p-4 flex items-center gap-2 text-gray-400 text-sm">
+            <div className="p-4 flex items-center gap-2 text-[var(--color-text-secondary)] text-sm">
               <Loader2 size={14} className="animate-spin" /> Načítavam...
             </div>
           ) : searchResults !== null ? (
             searchResults.length === 0 ? (
-              <div className="p-4 text-gray-500 text-xs">Žiadne výsledky</div>
+              <div className="p-4 text-[var(--color-text-muted)] text-xs">Žiadne výsledky</div>
             ) : (
               searchResults.map((r) => (
                 <button
@@ -493,24 +493,24 @@ export default function KnowledgeBasePage() {
                       loadDocContentByPath(r.source_file);
                     }
                   }}
-                  className="w-full text-left p-3 border-b border-gray-700 hover:bg-gray-700/50 transition-colors"
+                  className="w-full text-left p-3 border-b border-[var(--color-border-default)] hover:bg-[var(--color-surface-hover)] transition-colors"
                 >
                   <div className="flex items-center gap-2">
-                    <Search size={12} className="text-blue-400 flex-shrink-0" />
-                    <span className="font-medium truncate text-xs text-gray-100">{r.title}</span>
+                    <Search size={12} className="text-[var(--color-text-link)] flex-shrink-0" />
+                    <span className="font-medium truncate text-xs text-[var(--color-text-primary)]">{r.title}</span>
                   </div>
-                  <div className="text-[10px] text-gray-500 mt-1">
+                  <div className="text-[10px] text-[var(--color-text-muted)] mt-1">
                     {r.category} · score: {r.score.toFixed(2)}
                   </div>
                   {r.snippet && (
-                    <div className="text-[10px] text-gray-500 mt-1 line-clamp-2">{r.snippet}</div>
+                    <div className="text-[10px] text-[var(--color-text-muted)] mt-1 line-clamp-2">{r.snippet}</div>
                   )}
                 </button>
               ))
             )
           ) : viewMode === "all" ? (
             documents.length === 0 ? (
-              <div className="p-4 text-gray-500 text-xs">Žiadne dokumenty</div>
+              <div className="p-4 text-[var(--color-text-muted)] text-xs">Žiadne dokumenty</div>
             ) : (
               documents.map((doc) => {
                 const project = extractProjectFromPath(doc.relative_path);
@@ -518,19 +518,19 @@ export default function KnowledgeBasePage() {
                   <button
                     key={doc.relative_path}
                     onClick={() => loadDocContent(doc)}
-                    className={`w-full text-left p-2 border-b border-gray-700/50 hover:bg-gray-700/50 transition-colors ${
-                      selectedDoc?.relative_path === doc.relative_path ? "bg-gray-700" : ""
+                    className={`w-full text-left p-2 border-b border-[var(--color-border-default)] hover:bg-[var(--color-surface-hover)] transition-colors ${
+                      selectedDoc?.relative_path === doc.relative_path ? "bg-[var(--color-surface-active)]" : ""
                     }`}
                   >
                     <div className="flex items-center gap-2">
-                      <FileText size={12} className="text-gray-400 flex-shrink-0" />
-                      <span className="font-medium truncate text-xs text-gray-100">
+                      <FileText size={12} className="text-[var(--color-text-secondary)] flex-shrink-0" />
+                      <span className="font-medium truncate text-xs text-[var(--color-text-primary)]">
                         {makeTitle(doc.filename)}
                       </span>
                     </div>
-                    <div className="text-[10px] text-gray-500 mt-0.5">
+                    <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
                       {project && (
-                        <span className="text-blue-400 mr-1.5">[{project}]</span>
+                        <span className="text-[var(--color-text-link)] mr-1.5">[{project}]</span>
                       )}
                       {doc.category} · {(doc.size_bytes / 1024).toFixed(1)} kB
                     </div>
@@ -555,10 +555,10 @@ export default function KnowledgeBasePage() {
         <div className="flex-1 flex flex-col overflow-hidden">
             {mode === "create" ? (
               <div className="flex-1 flex flex-col p-4 overflow-y-auto">
-                <h2 className="text-lg font-semibold text-gray-100 mb-4">Nový dokument</h2>
+                <h2 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4">Nový dokument</h2>
                 <div className="space-y-3 mb-4">
                   <div>
-                    <label className="block text-xs font-medium text-gray-400 mb-1">
+                    <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1">
                       Názov dokumentu
                     </label>
                     <input
@@ -566,18 +566,18 @@ export default function KnowledgeBasePage() {
                       value={newTitle}
                       onChange={(e) => setNewTitle(e.target.value)}
                       placeholder="Popisný názov..."
-                      className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-3 py-2 bg-[var(--color-surface)] border border-[var(--color-border-default)] rounded-lg text-sm text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-focus)]"
                     />
                   </div>
                   <div className="flex gap-3">
                     <div className="flex-1">
-                      <label className="block text-xs font-medium text-gray-400 mb-1">
+                      <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1">
                         Kategória
                       </label>
                       <select
                         value={newCategory}
                         onChange={(e) => setNewCategory(e.target.value)}
-                        className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        className="w-full px-3 py-2 bg-[var(--color-surface)] border border-[var(--color-border-default)] rounded-lg text-sm text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-focus)]"
                       >
                         {categories.map((c) => (
                           <option key={c} value={c}>
@@ -587,7 +587,7 @@ export default function KnowledgeBasePage() {
                       </select>
                     </div>
                     <div className="flex-1">
-                      <label className="block text-xs font-medium text-gray-400 mb-1">
+                      <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1">
                         Názov súboru
                       </label>
                       <input
@@ -595,12 +595,12 @@ export default function KnowledgeBasePage() {
                         value={newFilename}
                         onChange={(e) => setNewFilename(e.target.value)}
                         placeholder="NAZOV.md"
-                        className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-200 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        className="w-full px-3 py-2 bg-[var(--color-surface)] border border-[var(--color-border-default)] rounded-lg text-sm text-[var(--color-text-primary)] font-mono focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-focus)]"
                       />
                     </div>
                   </div>
                 </div>
-                <label className="block text-xs font-medium text-gray-400 mb-1">
+                <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1">
                   Obsah (Markdown)
                 </label>
                 <textarea
@@ -608,20 +608,20 @@ export default function KnowledgeBasePage() {
                   value={newContent}
                   onChange={(e) => setNewContent(e.target.value)}
                   placeholder="# Názov dokumentu&#10;&#10;Obsah v Markdown..."
-                  className="flex-1 min-h-[200px] px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-sm text-gray-200 font-mono resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="flex-1 min-h-[200px] px-3 py-2 bg-[var(--color-canvas)] border border-[var(--color-border-default)] rounded-lg text-sm text-[var(--color-text-primary)] font-mono resize-none focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-focus)]"
                 />
                 <div className="flex gap-2 mt-4">
                   <button
                     onClick={handleCreate}
                     disabled={saving || !newTitle.trim() || !newContent.trim()}
-                    className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500 text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex items-center gap-1.5 px-4 py-2 bg-[var(--color-accent-primary)] text-white rounded-lg hover:bg-[var(--color-accent-primary-hover)] text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
                     Uložiť
                   </button>
                   <button
                     onClick={() => setMode("browse")}
-                    className="flex items-center gap-1.5 px-4 py-2 bg-gray-700 text-gray-300 rounded-lg hover:bg-gray-600 text-sm transition-colors"
+                    className="flex items-center gap-1.5 px-4 py-2 bg-[var(--color-surface-active)] text-[var(--color-text-secondary)] rounded-lg hover:bg-[var(--color-surface-hover)] text-sm transition-colors"
                   >
                     <X size={16} /> Zrušiť
                   </button>
@@ -631,22 +631,22 @@ export default function KnowledgeBasePage() {
               mode === "edit" ? (
                 <div className="flex-1 flex flex-col p-4 overflow-hidden">
                   <div className="flex items-center justify-between mb-3">
-                    <h2 className="text-lg font-semibold text-gray-100">
+                    <h2 className="text-lg font-semibold text-[var(--color-text-primary)]">
                       {makeTitle(selectedDoc.filename)}
                     </h2>
-                    <span className="text-xs text-gray-500">{selectedDoc.relative_path}</span>
+                    <span className="text-xs text-[var(--color-text-muted)]">{selectedDoc.relative_path}</span>
                   </div>
                   <textarea
                     lang="sk"
                     value={editContent}
                     onChange={(e) => setEditContent(e.target.value)}
-                    className="flex-1 px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-sm text-gray-200 font-mono resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="flex-1 px-3 py-2 bg-[var(--color-canvas)] border border-[var(--color-border-default)] rounded-lg text-sm text-[var(--color-text-primary)] font-mono resize-none focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-focus)]"
                   />
                   <div className="flex gap-2 mt-3">
                     <button
                       onClick={handleUpdate}
                       disabled={saving}
-                      className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500 text-sm font-medium transition-colors disabled:opacity-50"
+                      className="flex items-center gap-1.5 px-4 py-2 bg-[var(--color-accent-primary)] text-white rounded-lg hover:bg-[var(--color-accent-primary-hover)] text-sm font-medium transition-colors disabled:opacity-50"
                     >
                       {saving ? (
                         <Loader2 size={16} className="animate-spin" />
@@ -657,7 +657,7 @@ export default function KnowledgeBasePage() {
                     </button>
                     <button
                       onClick={() => setMode("browse")}
-                      className="flex items-center gap-1.5 px-4 py-2 bg-gray-700 text-gray-300 rounded-lg hover:bg-gray-600 text-sm transition-colors"
+                      className="flex items-center gap-1.5 px-4 py-2 bg-[var(--color-surface-active)] text-[var(--color-text-secondary)] rounded-lg hover:bg-[var(--color-surface-hover)] text-sm transition-colors"
                     >
                       <X size={16} /> Zrušiť
                     </button>
@@ -665,12 +665,12 @@ export default function KnowledgeBasePage() {
                 </div>
               ) : (
                 <div className="flex-1 flex flex-col overflow-hidden">
-                  <div className="p-4 border-b border-gray-700 flex items-center justify-between">
+                  <div className="p-4 border-b border-[var(--color-border-default)] flex items-center justify-between">
                     <div>
-                      <h2 className="text-lg font-semibold text-gray-100">
+                      <h2 className="text-lg font-semibold text-[var(--color-text-primary)]">
                         {makeTitle(selectedDoc.filename)}
                       </h2>
-                      <div className="text-xs text-gray-500 mt-1 flex gap-3">
+                      <div className="text-xs text-[var(--color-text-muted)] mt-1 flex gap-3">
                         <span>{selectedDoc.category}</span>
                         <span>{(selectedDoc.size_bytes / 1024).toFixed(1)} kB</span>
                         <span className="font-mono">{selectedDoc.relative_path}</span>
@@ -679,13 +679,13 @@ export default function KnowledgeBasePage() {
                     <div className="flex gap-2">
                       <button
                         onClick={() => copyDoc(docContent)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-700 text-gray-300 rounded hover:bg-gray-600 text-sm transition-colors"
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-surface-active)] text-[var(--color-text-secondary)] rounded hover:bg-[var(--color-surface-hover)] text-sm transition-colors"
                         title={isDocCopied ? "Skopírované!" : "Kopírovať obsah"}
                       >
                         {isDocCopied ? (
                           <>
-                            <Check size={14} className="text-green-400" />
-                            <span className="text-green-400">Skopírované</span>
+                            <Check size={14} className="text-[var(--color-status-success)]" />
+                            <span className="text-[var(--color-status-success)]">Skopírované</span>
                           </>
                         ) : (
                           <>
@@ -700,20 +700,20 @@ export default function KnowledgeBasePage() {
                               setEditContent(docContent);
                               setMode("edit");
                             }}
-                            className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-700 text-gray-300 rounded hover:bg-gray-600 text-sm transition-colors"
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-surface-active)] text-[var(--color-text-secondary)] rounded hover:bg-[var(--color-surface-hover)] text-sm transition-colors"
                           >
                             <Pencil size={14} /> Upraviť
                           </button>
                           {!confirmDelete ? (
                             <button
                               onClick={() => setConfirmDelete(true)}
-                              className="flex items-center gap-1.5 px-3 py-1.5 bg-red-900/30 text-red-400 rounded hover:bg-red-900/50 text-sm transition-colors"
+                              className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-state-error-bg)] text-[var(--color-state-error-fg)] rounded hover:opacity-90 text-sm transition-colors"
                             >
                               <Trash2 size={14} /> Zmazať
                             </button>
                           ) : (
                             <div className="flex items-center gap-2">
-                              <span className="text-xs text-red-400">Naozaj zmazať?</span>
+                              <span className="text-xs text-[var(--color-status-error)]">Naozaj zmazať?</span>
                               <button
                                 onClick={handleDelete}
                                 disabled={deleting}
@@ -727,7 +727,7 @@ export default function KnowledgeBasePage() {
                               </button>
                               <button
                                 onClick={() => setConfirmDelete(false)}
-                                className="px-2 py-1 bg-gray-700 text-gray-300 rounded text-xs hover:bg-gray-600"
+                                className="px-2 py-1 bg-[var(--color-surface-active)] text-[var(--color-text-secondary)] rounded text-xs hover:bg-[var(--color-surface-hover)]"
                               >
                                 Nie
                               </button>
@@ -740,11 +740,11 @@ export default function KnowledgeBasePage() {
 
                   <div className="flex-1 overflow-y-auto p-6">
                     {loadingContent ? (
-                      <div className="flex items-center gap-2 text-gray-400">
+                      <div className="flex items-center gap-2 text-[var(--color-text-secondary)]">
                         <Loader2 size={16} className="animate-spin" /> Načítavam obsah...
                       </div>
                     ) : (
-                      <div className="prose prose-sm prose-invert max-w-none prose-headings:text-white prose-p:text-gray-200 prose-strong:text-white prose-li:text-gray-200 prose-code:text-gray-200 prose-a:text-blue-400 prose-td:text-gray-200 prose-th:text-gray-100 prose-table:border prose-table:border-gray-600 prose-td:border prose-td:border-gray-700 prose-td:px-3 prose-td:py-1 prose-th:border prose-th:border-gray-600 prose-th:px-3 prose-th:py-1 prose-th:bg-gray-800">
+                      <div className="prose prose-sm prose-invert max-w-none prose-headings:text-[var(--color-text-primary)] prose-p:text-[var(--color-text-primary)] prose-strong:text-[var(--color-text-primary)] prose-li:text-[var(--color-text-primary)] prose-code:text-[var(--color-text-primary)] prose-a:text-[var(--color-text-link)] prose-td:text-[var(--color-text-primary)] prose-th:text-[var(--color-text-primary)] prose-table:border prose-table:border-[var(--color-border-strong)] prose-td:border prose-td:border-[var(--color-border-default)] prose-td:px-3 prose-td:py-1 prose-th:border prose-th:border-[var(--color-border-strong)] prose-th:px-3 prose-th:py-1 prose-th:bg-[var(--color-surface)]">
                         <ReactMarkdown
                           remarkPlugins={[remarkGfm]}
                           components={{
@@ -768,7 +768,7 @@ export default function KnowledgeBasePage() {
                               }
                               return (
                                 <code
-                                  className="bg-gray-800 px-1.5 py-0.5 rounded text-sm"
+                                  className="bg-[var(--color-surface)] px-1.5 py-0.5 rounded text-sm"
                                   {...props}
                                 >
                                   {children}
@@ -788,8 +788,8 @@ export default function KnowledgeBasePage() {
                 </div>
               )
             ) : (
-              <div className="flex-1 flex flex-col items-center justify-center text-gray-500">
-                <Eye size={48} className="mb-4 text-gray-600" />
+              <div className="flex-1 flex flex-col items-center justify-center text-[var(--color-text-muted)]">
+                <Eye size={48} className="mb-4 text-[var(--color-text-muted)]" />
                 <p className="text-sm">Vyber dokument zo zoznamu alebo vytvor nový</p>
               </div>
             )}

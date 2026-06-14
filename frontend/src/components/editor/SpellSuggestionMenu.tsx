@@ -43,28 +43,28 @@ export default function SpellSuggestionMenu({ menu, onReplace, onIgnore, onClose
   return (
     <div
       style={{ position: "fixed", top: menu.y, left: menu.x, zIndex: 100 }}
-      className="min-w-[180px] rounded-lg border border-slate-700 bg-slate-900 shadow-xl py-1 text-sm"
+      className="min-w-[180px] rounded-lg border border-[var(--color-border-default)] bg-[var(--color-canvas)] shadow-xl py-1 text-sm"
       onMouseDown={(e) => e.stopPropagation()}
     >
-      <div className="px-3 py-1 text-[10px] uppercase tracking-widest text-slate-500 border-b border-slate-800">
-        <span className="text-slate-300 font-semibold">{menu.word}</span>
+      <div className="px-3 py-1 text-[10px] uppercase tracking-widest text-[var(--color-text-muted)] border-b border-[var(--color-border-default)]">
+        <span className="text-[var(--color-text-secondary)] font-semibold">{menu.word}</span>
       </div>
       {menu.suggestions.length === 0 && (
-        <div className="px-3 py-2 text-xs text-slate-600 italic">Žiadne návrhy</div>
+        <div className="px-3 py-2 text-xs text-[var(--color-text-muted)] italic">Žiadne návrhy</div>
       )}
       {menu.suggestions.map((s) => (
         <button
           key={s}
           onClick={() => onReplace(s)}
-          className="w-full text-left px-3 py-1.5 text-slate-200 hover:bg-slate-800 transition-colors"
+          className="w-full text-left px-3 py-1.5 text-[var(--color-text-primary)] hover:bg-[var(--color-surface-hover)] transition-colors"
         >
           {s}
         </button>
       ))}
-      <div className="border-t border-slate-800 mt-1 pt-1">
+      <div className="border-t border-[var(--color-border-default)] mt-1 pt-1">
         <button
           onClick={onIgnore}
-          className="w-full text-left px-3 py-1.5 text-xs text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors"
+          className="w-full text-left px-3 py-1.5 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)] transition-colors"
         >
           Pridať do slovníka
         </button>

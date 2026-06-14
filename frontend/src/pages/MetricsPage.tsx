@@ -13,6 +13,7 @@ import {
 } from "recharts";
 
 import { getProjectMetricsApi } from "@/services/api/metrics";
+import { useTheme } from "@/contexts/ThemeContext";
 import { useActiveContextStore } from "@/store/activeContextStore";
 import type { ProjectMetrics, ScopeUsage, VersionMetrics } from "@/types/metrics";
 
@@ -60,12 +61,16 @@ function Card({
   tone?: "default" | "good" | "muted";
 }) {
   const valueCls =
-    tone === "good" ? "text-green-400" : tone === "muted" ? "text-slate-500" : "text-slate-100";
+    tone === "good"
+      ? "text-[var(--color-status-success)]"
+      : tone === "muted"
+        ? "text-[var(--color-text-muted)]"
+        : "text-[var(--color-text-primary)]";
   return (
-    <div className="rounded-lg border border-slate-700 bg-slate-900 p-4">
-      <div className="text-[10px] uppercase tracking-widest text-slate-500">{label}</div>
+    <div className="rounded-lg border border-[var(--color-border-default)] bg-[var(--color-canvas)] p-4">
+      <div className="text-[10px] uppercase tracking-widest text-[var(--color-text-muted)]">{label}</div>
       <div className={`text-xl font-bold mt-1 ${valueCls}`}>{value}</div>
-      {hint && <div className="text-[11px] text-slate-600 mt-0.5">{hint}</div>}
+      {hint && <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">{hint}</div>}
     </div>
   );
 }
@@ -73,7 +78,15 @@ function Card({
 export default function MetricsPage() {
   const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
+  const { isDark } = useTheme();
   const selectedProject = useActiveContextStore((s) => s.selectedProject);
+
+  // ─── theme-aware chart chrome colors (data-series Bar fills stay fixed) ─────
+  const gridStroke = isDark ? "#334155" : "#e2e8f0";
+  const tickFill = isDark ? "#94a3b8" : "#64748b";
+  const tooltipBg = isDark ? "#1e293b" : "#ffffff";
+  const tooltipBorder = isDark ? "#334155" : "#e2e8f0";
+  const tooltipColor = isDark ? "#f1f5f9" : "#0f172a";
 
   const [metrics, setMetrics] = useState<ProjectMetrics | null>(null);
   const [loading, setLoading] = useState(true);
@@ -130,7 +143,7 @@ export default function MetricsPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-20 text-slate-500 text-sm gap-2">
+      <div className="flex items-center justify-center py-20 text-[var(--color-text-muted)] text-sm gap-2">
         <Loader2 className="w-4 h-4 animate-spin" /> Načítavam…
       </div>
     );
@@ -139,7 +152,7 @@ export default function MetricsPage() {
   if (error || !metrics) {
     return (
       <div className="p-6 max-w-5xl mx-auto">
-        <div className="rounded-lg bg-red-500/10 border border-red-500/30 p-4 text-sm text-red-400">
+        <div className="rounded-lg bg-[var(--color-state-error-bg)] border border-[var(--color-state-error-bg)] p-4 text-sm text-[var(--color-state-error-fg)]">
           {error || "Metriky nedostupné."}
         </div>
       </div>
@@ -156,9 +169,9 @@ export default function MetricsPage() {
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
-      <h1 className="text-base font-bold text-slate-100 mb-1">Metriky &amp; ROI</h1>
-      <p className="text-xs text-slate-600 mb-4">
-        Nameraná AI práca pre <span className="text-slate-400">{projectName}</span> (tokeny + čas) + odhad
+      <h1 className="text-base font-bold text-[var(--color-text-primary)] mb-1">Metriky &amp; ROI</h1>
+      <p className="text-xs text-[var(--color-text-muted)] mb-4">
+        Nameraná AI práca pre <span className="text-[var(--color-text-secondary)]">{projectName}</span> (tokeny + čas) + odhad
         ľudskej náročnosti z plánu. Čísla, ktoré chýbajú (ceny / odhady), sa nezobrazujú vymyslené.
       </p>
 
@@ -190,7 +203,7 @@ export default function MetricsPage() {
 
       {/* Unset-config banner */}
       {(!metrics.pricing_configured || !metrics.estimates_configured) && (
-        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300 mb-4">
+        <div className="rounded-lg border border-[var(--color-state-warning-bg)] bg-[var(--color-state-warning-bg)] px-3 py-2 text-xs text-[var(--color-state-warning-fg)] mb-4">
           {!metrics.pricing_configured && <>Ceny nenastavené — doplň sadzby v {settingsLink} pre výpočet nákladov a ROI. </>}
           {!metrics.estimates_configured && <>Odhady nenastavené — task-plan zatiaľ neobsahuje odhad ľudskej náročnosti (ROI sa zobrazí po doplnení).</>}
         </div>
@@ -224,18 +237,18 @@ export default function MetricsPage() {
       </div>
 
       {/* Per-version breakdown table */}
-      <h2 className="text-sm font-semibold text-slate-300 mb-2">Podľa verzie</h2>
-      <div className="rounded-lg border border-slate-700 bg-slate-900 divide-y divide-slate-800 mb-6">
+      <h2 className="text-sm font-semibold text-[var(--color-text-secondary)] mb-2">Podľa verzie</h2>
+      <div className="rounded-lg border border-[var(--color-border-default)] bg-[var(--color-canvas)] divide-y divide-[var(--color-border-default)] mb-6">
         {metrics.by_version.length === 0 ? (
-          <div className="p-4 text-sm text-slate-500">Žiadne pipeline dáta — metriky sa naplnia po prvom builde.</div>
+          <div className="p-4 text-sm text-[var(--color-text-muted)]">Žiadne pipeline dáta — metriky sa naplnia po prvom builde.</div>
         ) : (
           metrics.by_version.map((v) => (
             <div key={v.version_id} className="p-3 grid grid-cols-2 md:grid-cols-5 gap-2 text-xs">
-              <div className="font-mono text-slate-300">{v.version_number}</div>
-              <div className="text-slate-400">{fmtInt(v.usage.input_tokens + v.usage.output_tokens)} tokenov</div>
-              <div className="text-slate-400">{fmtDuration(v.usage.duration_seconds)} AI</div>
-              <div className="text-slate-500">prestoje {fmtDuration(v.director_wait_seconds)}</div>
-              <div className="text-slate-400">{v.api_cost !== null ? `${fmtCost(v.api_cost)} API` : "cena —"}</div>
+              <div className="font-mono text-[var(--color-text-secondary)]">{v.version_number}</div>
+              <div className="text-[var(--color-text-secondary)]">{fmtInt(v.usage.input_tokens + v.usage.output_tokens)} tokenov</div>
+              <div className="text-[var(--color-text-secondary)]">{fmtDuration(v.usage.duration_seconds)} AI</div>
+              <div className="text-[var(--color-text-muted)]">prestoje {fmtDuration(v.director_wait_seconds)}</div>
+              <div className="text-[var(--color-text-secondary)]">{v.api_cost !== null ? `${fmtCost(v.api_cost)} API` : "cena —"}</div>
             </div>
           ))
         )}
@@ -245,12 +258,12 @@ export default function MetricsPage() {
       {metrics.by_version.length > 0 && selectedVersion && (
         <>
           <div className="flex items-center justify-between mb-2">
-            <h2 className="text-sm font-semibold text-slate-300">Rozpad — {selectedVersion.version_number}</h2>
+            <h2 className="text-sm font-semibold text-[var(--color-text-secondary)]">Rozpad — {selectedVersion.version_number}</h2>
             <div className="flex items-center gap-2">
               <select
                 value={selectedVersionId}
                 onChange={(e) => setSelectedVersionId(e.target.value)}
-                className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-100"
+                className="bg-[var(--color-surface)] border border-[var(--color-border-default)] rounded px-2 py-1 text-xs text-[var(--color-text-primary)]"
               >
                 {metrics.by_version.map((v) => (
                   <option key={v.version_id} value={v.version_id}>
@@ -258,13 +271,13 @@ export default function MetricsPage() {
                   </option>
                 ))}
               </select>
-              <div className="flex rounded border border-slate-700 overflow-hidden">
+              <div className="flex rounded border border-[var(--color-border-default)] overflow-hidden">
                 {(["by_epic", "by_feat", "by_task"] as ScopeLevel[]).map((lvl) => (
                   <button
                     key={lvl}
                     onClick={() => setScopeLevel(lvl)}
                     className={`px-2.5 py-1 text-[11px] ${
-                      scopeLevel === lvl ? "bg-primary-600 text-white" : "bg-slate-800 text-slate-400 hover:text-slate-200"
+                      scopeLevel === lvl ? "bg-primary-600 text-white" : "bg-[var(--color-surface)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
                     }`}
                   >
                     {SCOPE_LABEL[lvl]}
@@ -274,17 +287,17 @@ export default function MetricsPage() {
             </div>
           </div>
 
-          <div className="rounded-lg border border-slate-700 bg-slate-900 p-3 mb-4">
-            <div className="text-[11px] text-slate-500 mb-2">Tokeny + čas podľa {SCOPE_LABEL[scopeLevel]}</div>
+          <div className="rounded-lg border border-[var(--color-border-default)] bg-[var(--color-canvas)] p-3 mb-4">
+            <div className="text-[11px] text-[var(--color-text-muted)] mb-2">Tokeny + čas podľa {SCOPE_LABEL[scopeLevel]}</div>
             {scopeChartData.length === 0 ? (
-              <div className="text-xs text-slate-600 py-8 text-center">Žiadne dáta na tejto úrovni.</div>
+              <div className="text-xs text-[var(--color-text-muted)] py-8 text-center">Žiadne dáta na tejto úrovni.</div>
             ) : (
               <ResponsiveContainer width="100%" height={260}>
                 <BarChart data={scopeChartData} margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                  <XAxis dataKey="name" tick={{ fontSize: 10, fill: "#94a3b8" }} interval={0} angle={-15} height={50} />
-                  <YAxis tick={{ fontSize: 10, fill: "#94a3b8" }} />
-                  <Tooltip contentStyle={{ background: "#0f172a", border: "1px solid #334155", fontSize: 12 }} />
+                  <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} />
+                  <XAxis dataKey="name" tick={{ fontSize: 10, fill: tickFill }} interval={0} angle={-15} height={50} />
+                  <YAxis tick={{ fontSize: 10, fill: tickFill }} />
+                  <Tooltip contentStyle={{ background: tooltipBg, border: `1px solid ${tooltipBorder}`, color: tooltipColor, fontSize: 12 }} />
                   <Legend wrapperStyle={{ fontSize: 11 }} />
                   <Bar dataKey="vstup" stackId="tok" fill="#38bdf8" />
                   <Bar dataKey="výstup" stackId="tok" fill="#818cf8" />
@@ -294,17 +307,17 @@ export default function MetricsPage() {
             )}
           </div>
 
-          <div className="rounded-lg border border-slate-700 bg-slate-900 p-3 mb-4">
-            <div className="text-[11px] text-slate-500 mb-2">Náklady / práca podľa roly</div>
+          <div className="rounded-lg border border-[var(--color-border-default)] bg-[var(--color-canvas)] p-3 mb-4">
+            <div className="text-[11px] text-[var(--color-text-muted)] mb-2">Náklady / práca podľa roly</div>
             {roleChartData.length === 0 ? (
-              <div className="text-xs text-slate-600 py-8 text-center">Žiadne dáta.</div>
+              <div className="text-xs text-[var(--color-text-muted)] py-8 text-center">Žiadne dáta.</div>
             ) : (
               <ResponsiveContainer width="100%" height={240}>
                 <BarChart data={roleChartData} margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                  <XAxis dataKey="name" tick={{ fontSize: 10, fill: "#94a3b8" }} />
-                  <YAxis tick={{ fontSize: 10, fill: "#94a3b8" }} />
-                  <Tooltip contentStyle={{ background: "#0f172a", border: "1px solid #334155", fontSize: 12 }} />
+                  <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} />
+                  <XAxis dataKey="name" tick={{ fontSize: 10, fill: tickFill }} />
+                  <YAxis tick={{ fontSize: 10, fill: tickFill }} />
+                  <Tooltip contentStyle={{ background: tooltipBg, border: `1px solid ${tooltipBorder}`, color: tooltipColor, fontSize: 12 }} />
                   <Legend wrapperStyle={{ fontSize: 11 }} />
                   <Bar dataKey="vstup" stackId="tok" fill="#38bdf8" />
                   <Bar dataKey="výstup" stackId="tok" fill="#818cf8" />

@@ -32,11 +32,11 @@ function Field({ label, error, hint, children }: FieldProps) {
   return (
     <div>
       <div className="flex items-center gap-2 mb-1">
-        <label className="block text-sm font-medium text-slate-300">{label}</label>
+        <label className="block text-sm font-medium text-[var(--color-text-secondary)]">{label}</label>
         {hint}
       </div>
       {children}
-      {error && <p className="mt-1 text-xs text-red-400">{error}</p>}
+      {error && <p className="mt-1 text-xs text-[var(--color-status-error)]">{error}</p>}
     </div>
   );
 }
@@ -44,10 +44,10 @@ function Field({ label, error, hint, children }: FieldProps) {
 // ─── Input styles ─────────────────────────────────────────────────────────────
 
 const inputCls =
-  "w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-primary-500 transition-colors";
+  "w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-canvas)] px-3 py-2 text-sm text-[var(--color-text-primary)] placeholder-[var(--color-text-muted)] focus:outline-none focus:border-primary-500 transition-colors";
 
 const portInputCls =
-  "w-full rounded-md border border-slate-700 bg-slate-800 px-2 py-1.5 text-sm text-slate-100 font-mono focus:outline-none focus:border-primary-500 transition-colors";
+  "w-full rounded-md border border-[var(--color-border-default)] bg-[var(--color-surface)] px-2 py-1.5 text-sm text-[var(--color-text-primary)] font-mono focus:outline-none focus:border-primary-500 transition-colors";
 
 // ─── NewProjectPage ───────────────────────────────────────────────────────────
 
@@ -205,16 +205,16 @@ export default function NewProjectPage() {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex-shrink-0 px-6 py-4 border-b border-slate-800 flex items-center gap-3 bg-slate-950">
+      <div className="flex-shrink-0 px-6 py-4 border-b border-[var(--color-border-default)] flex items-center gap-3 bg-[var(--color-canvas)]">
         <button
           onClick={() => navigate("/projects")}
-          className="text-slate-500 hover:text-slate-300 transition-colors"
+          className="text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors"
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
         </button>
-        <h1 className="text-base font-bold text-slate-100">Nový projekt</h1>
+        <h1 className="text-base font-bold text-[var(--color-text-primary)]">Nový projekt</h1>
       </div>
 
       {/* Scrollable form */}
@@ -224,7 +224,7 @@ export default function NewProjectPage() {
 
             {/* Category */}
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2">Typ projektu</label>
+              <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-2">Typ projektu</label>
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
@@ -232,7 +232,7 @@ export default function NewProjectPage() {
                   className={`p-3 rounded-lg border text-left transition-colors ${
                     category === "singlemodule"
                       ? "border-primary-500 bg-primary-500/10 text-primary-400"
-                      : "border-slate-600 text-slate-400 hover:border-slate-500"
+                      : "border-[var(--color-border-strong)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-strong)]"
                   }`}
                 >
                   <svg className="w-4 h-4 mb-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -247,7 +247,7 @@ export default function NewProjectPage() {
                   className={`p-3 rounded-lg border text-left transition-colors ${
                     category === "multimodule"
                       ? "border-primary-500 bg-primary-500/10 text-primary-400"
-                      : "border-slate-600 text-slate-400 hover:border-slate-500"
+                      : "border-[var(--color-border-strong)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-strong)]"
                   }`}
                 >
                   <svg className="w-4 h-4 mb-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -268,7 +268,7 @@ export default function NewProjectPage() {
                 autoComplete="off"
                 value={name}
                 onChange={(e) => handleNameChange(e.target.value)}
-                className={`${inputCls} ${errors.name ? "border-red-500/50" : ""}`}
+                className={`${inputCls} ${errors.name ? "border-[var(--color-status-error)]" : ""}`}
               />
             </Field>
 
@@ -289,7 +289,7 @@ export default function NewProjectPage() {
                 spellCheck={false}
                 value={slug}
                 onChange={(e) => handleSlugChange(e.target.value)}
-                className={`${inputCls} font-mono ${errors.slug ? "border-red-500/50" : ""}`}
+                className={`${inputCls} font-mono ${errors.slug ? "border-[var(--color-status-error)]" : ""}`}
               />
             </Field>
 
@@ -323,7 +323,7 @@ export default function NewProjectPage() {
             {/* Ports */}
             <div>
               <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-medium text-slate-300">Porty</span>
+                <span className="text-sm font-medium text-[var(--color-text-secondary)]">Porty</span>
                 {(backendPort || frontendPort || dbPort) && (
                   <span className="flex items-center gap-1 text-[11px] text-primary-400/70">
                     <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -333,14 +333,14 @@ export default function NewProjectPage() {
                   </span>
                 )}
               </div>
-              <div className="grid grid-cols-3 gap-3 p-3 bg-slate-900/60 rounded-lg border border-slate-700">
+              <div className="grid grid-cols-3 gap-3 p-3 bg-[var(--color-surface-hover)] rounded-lg border border-[var(--color-border-default)]">
                 {([
                   { label: "Backend",   value: backendPort,   set: setBackendPort,   placeholder: "10100" },
                   { label: "Frontend",  value: frontendPort,  set: setFrontendPort,  placeholder: "10101" },
                   { label: "Databáza",  value: dbPort,        set: setDbPort,        placeholder: "10102" },
                 ] as const).map(({ label, value, set, placeholder }) => (
                   <div key={label}>
-                    <label className="block text-xs text-slate-500 mb-1">{label}</label>
+                    <label className="block text-xs text-[var(--color-text-muted)] mb-1">{label}</label>
                     <input
                       type="number"
                       placeholder={placeholder}
@@ -357,14 +357,14 @@ export default function NewProjectPage() {
 
             {/* CR-NS-012 — notification owner */}
             <div>
-              <label htmlFor="np-owner" className="block text-sm font-medium text-slate-300 mb-2">
-                Vlastník <span className="text-slate-500 font-normal">(dostáva Telegram notifikácie od agenta)</span>
+              <label htmlFor="np-owner" className="block text-sm font-medium text-[var(--color-text-secondary)] mb-2">
+                Vlastník <span className="text-[var(--color-text-muted)] font-normal">(dostáva Telegram notifikácie od agenta)</span>
               </label>
               <select
                 id="np-owner"
                 value={ownerId}
                 onChange={(e) => setOwnerId(e.target.value)}
-                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
+                className="w-full bg-[var(--color-surface)] border border-[var(--color-border-default)] rounded-lg px-3 py-2 text-sm text-[var(--color-text-primary)] focus:outline-none focus:border-primary-500"
               >
                 <option value="">— žiadny —</option>
                 {users.map((u) => {
@@ -379,44 +379,44 @@ export default function NewProjectPage() {
             </div>
 
             {/* F-004 Setup options */}
-            <div className="space-y-2 rounded-lg border border-slate-800 p-4">
-              <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wide">
+            <div className="space-y-2 rounded-lg border border-[var(--color-border-default)] p-4">
+              <h3 className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wide">
                 Možnosti nastavenia
               </h3>
-              <label className="flex items-center gap-3 text-sm text-slate-200 cursor-pointer">
+              <label className="flex items-center gap-3 text-sm text-[var(--color-text-primary)] cursor-pointer">
                 <input
                   type="checkbox"
                   checked={enableCoordinator}
                   onChange={(e) => setEnableCoordinator(e.target.checked)}
-                  className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-primary-500 focus:ring-primary-500"
+                  className="w-4 h-4 rounded border-[var(--color-border-default)] bg-[var(--color-canvas)] text-primary-500 focus:ring-primary-500"
                 />
                 <span>Povoliť agenta Koordinátor</span>
-                <span className="text-xs text-slate-500">(predvolene zapnuté)</span>
+                <span className="text-xs text-[var(--color-text-muted)]">(predvolene zapnuté)</span>
               </label>
-              <label className="flex items-center gap-3 text-sm text-slate-200 cursor-pointer">
+              <label className="flex items-center gap-3 text-sm text-[var(--color-text-primary)] cursor-pointer">
                 <input
                   type="checkbox"
                   checked={enableCicd}
                   onChange={(e) => setEnableCicd(e.target.checked)}
-                  className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-primary-500 focus:ring-primary-500"
+                  className="w-4 h-4 rounded border-[var(--color-border-default)] bg-[var(--color-canvas)] text-primary-500 focus:ring-primary-500"
                 />
                 <span>Povoliť CI/CD (GitHub Actions)</span>
               </label>
-              <label className="flex items-center gap-3 text-sm text-slate-200 cursor-pointer">
+              <label className="flex items-center gap-3 text-sm text-[var(--color-text-primary)] cursor-pointer">
                 <input
                   type="checkbox"
                   checked={fullSmoke}
                   onChange={(e) => setFullSmoke(e.target.checked)}
-                  className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-primary-500 focus:ring-primary-500"
+                  className="w-4 h-4 rounded border-[var(--color-border-default)] bg-[var(--color-canvas)] text-primary-500 focus:ring-primary-500"
                 />
                 <span>Úplný smoke test (build + up + /health, ~5-7 min)</span>
               </label>
-              <label className="flex items-center gap-3 text-sm text-slate-200 cursor-pointer">
+              <label className="flex items-center gap-3 text-sm text-[var(--color-text-primary)] cursor-pointer">
                 <input
                   type="checkbox"
                   checked={enableBranchProtection}
                   onChange={(e) => setEnableBranchProtection(e.target.checked)}
-                  className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-primary-500 focus:ring-primary-500"
+                  className="w-4 h-4 rounded border-[var(--color-border-default)] bg-[var(--color-canvas)] text-primary-500 focus:ring-primary-500"
                 />
                 <span>Povoliť ochranu vetvy (vyžadovať PR, bez force push)</span>
               </label>
@@ -424,7 +424,7 @@ export default function NewProjectPage() {
 
             {/* Error banner */}
             {formError && (
-              <div className="rounded-lg bg-red-500/10 border border-red-500/30 p-3 text-sm text-red-400">
+              <div className="rounded-lg bg-[var(--color-state-error-bg)] border border-[var(--color-state-error-bg)] p-3 text-sm text-[var(--color-state-error-fg)]">
                 {formError}
               </div>
             )}
@@ -434,7 +434,7 @@ export default function NewProjectPage() {
               <button
                 type="button"
                 onClick={() => navigate("/projects")}
-                className="flex-1 px-4 py-2 text-sm text-slate-400 border border-slate-700 rounded-lg hover:bg-slate-800 transition-colors"
+                className="flex-1 px-4 py-2 text-sm text-[var(--color-text-secondary)] border border-[var(--color-border-default)] rounded-lg hover:bg-[var(--color-surface-hover)] transition-colors"
               >
                 Zrušiť
               </button>

@@ -48,8 +48,8 @@ function ProjectRow({ project, index, selected, onOpen, onTogglePin }: ProjectRo
   const port = project.backend_port ?? project.frontend_port ?? null;
 
   const rowClass = selected
-    ? "rounded-xl border border-slate-800 border-l-4 border-l-primary-500 bg-primary-500/5 p-4 flex items-center gap-4 transition-colors"
-    : "rounded-xl border border-slate-800 bg-slate-900 p-4 flex items-center gap-4 hover:border-slate-700 transition-colors";
+    ? "rounded-xl border border-[var(--color-border-default)] border-l-4 border-l-primary-500 bg-primary-500/5 p-4 flex items-center gap-4 transition-colors"
+    : "rounded-xl border border-[var(--color-border-default)] bg-[var(--color-canvas)] p-4 flex items-center gap-4 hover:border-[var(--color-border-default)] transition-colors";
 
   return (
     <div className={rowClass}>
@@ -61,7 +61,7 @@ function ProjectRow({ project, index, selected, onOpen, onTogglePin }: ProjectRo
       {/* Name + repo */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
-          <span className="font-semibold text-slate-100 text-sm">{project.name}</span>
+          <span className="font-semibold text-[var(--color-text-primary)] text-sm">{project.name}</span>
           {selected && (
             <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-primary-500/20 border border-primary-500/30 text-primary-400 font-medium">
               Vybraný
@@ -73,17 +73,17 @@ function ProjectRow({ project, index, selected, onOpen, onTogglePin }: ProjectRo
             </span>
           )}
           {project.status === "archived" && (
-            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-slate-700 text-slate-500">
+            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-[var(--color-surface-active)] text-[var(--color-text-muted)]">
               Archivovaný
             </span>
           )}
           {project.status === "paused" && (
-            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/30 text-amber-400">
+            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-[var(--color-state-warning-bg)] border border-[var(--color-state-warning-bg)] text-[var(--color-state-warning-fg)]">
               Pozastavený
             </span>
           )}
         </div>
-        <div className="text-xs text-slate-500 font-mono truncate">
+        <div className="text-xs text-[var(--color-text-muted)] font-mono truncate">
           {project.repo_url || project.slug}
           {port ? ` · :${port}` : ""}
         </div>
@@ -91,14 +91,14 @@ function ProjectRow({ project, index, selected, onOpen, onTogglePin }: ProjectRo
 
       {/* Versions — placeholder until Phase 3 */}
       <div className="text-center shrink-0 w-12">
-        <div className="text-sm font-semibold text-slate-200">—</div>
-        <div className="text-[10px] text-slate-500">verzií</div>
+        <div className="text-sm font-semibold text-[var(--color-text-primary)]">—</div>
+        <div className="text-[10px] text-[var(--color-text-muted)]">verzií</div>
       </div>
 
       {/* Active version — placeholder until Phase 3 */}
       <div className="text-center shrink-0 w-14">
         <div className="text-sm font-semibold text-primary-400">—</div>
-        <div className="text-[10px] text-slate-500">verzia</div>
+        <div className="text-[10px] text-[var(--color-text-muted)]">verzia</div>
       </div>
 
       {/* Actions */}
@@ -109,7 +109,7 @@ function ProjectRow({ project, index, selected, onOpen, onTogglePin }: ProjectRo
           className={
             selected
               ? "text-primary-400 hover:text-primary-300 transition-colors"
-              : "text-slate-500 hover:text-slate-300 transition-colors"
+              : "text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors"
           }
         >
           {selected ? <Pin className="w-4 h-4 fill-current" /> : <PinOff className="w-4 h-4" />}
@@ -175,7 +175,7 @@ export default function ProjectsPage() {
     <div className="p-6 max-w-5xl mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-lg font-bold text-slate-100">Projekty</h1>
+        <h1 className="text-lg font-bold text-[var(--color-text-primary)]">Projekty</h1>
         <button
           onClick={() => navigate("/projects/new")}
           className="flex items-center gap-1.5 bg-primary-600 hover:bg-primary-500 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition-colors"
@@ -189,7 +189,7 @@ export default function ProjectsPage() {
 
       {/* States */}
       {loading && (
-        <div className="flex items-center justify-center py-16 text-slate-500 text-sm gap-2">
+        <div className="flex items-center justify-center py-16 text-[var(--color-text-muted)] text-sm gap-2">
           <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
@@ -199,20 +199,20 @@ export default function ProjectsPage() {
       )}
 
       {error && !loading && (
-        <div className="rounded-lg bg-red-500/10 border border-red-500/30 p-4 text-sm text-red-400">
+        <div className="rounded-lg bg-[var(--color-state-error-bg)] border border-[var(--color-state-error-bg)] p-4 text-sm text-[var(--color-state-error-fg)]">
           {error}
         </div>
       )}
 
       {!loading && !error && projects.length === 0 && (
-        <div className="rounded-xl border border-dashed border-slate-800 p-10 text-center">
-          <div className="w-10 h-10 rounded-xl bg-slate-800 flex items-center justify-center mx-auto mb-3">
-            <svg className="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <div className="rounded-xl border border-dashed border-[var(--color-border-default)] p-10 text-center">
+          <div className="w-10 h-10 rounded-xl bg-[var(--color-surface)] flex items-center justify-center mx-auto mb-3">
+            <svg className="w-5 h-5 text-[var(--color-text-muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
             </svg>
           </div>
-          <p className="text-sm text-slate-500 mb-1">Žiadne projekty</p>
-          <p className="text-xs text-slate-700">Vytvor prvý projekt a začni s NEX Studio pipeline.</p>
+          <p className="text-sm text-[var(--color-text-muted)] mb-1">Žiadne projekty</p>
+          <p className="text-xs text-[var(--color-text-muted)]">Vytvor prvý projekt a začni s NEX Studio pipeline.</p>
           <button
             onClick={() => navigate("/projects/new")}
             className="mt-4 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-primary-600 hover:bg-primary-500 rounded-lg transition-colors"

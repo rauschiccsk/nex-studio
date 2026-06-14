@@ -24,7 +24,7 @@ function nextVersionNumber(versions: Version[]): string {
 // ─── Input style ──────────────────────────────────────────────────────────────
 
 const inputCls =
-  "w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-primary-500 transition-colors";
+  "w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text-primary)] placeholder-[var(--color-text-muted)] focus:outline-none focus:border-primary-500 transition-colors";
 
 // ─── NewVersionPage ───────────────────────────────────────────────────────────
 
@@ -105,7 +105,7 @@ export default function NewVersionPage() {
   if (loadError) {
     return (
       <div className="p-6 max-w-5xl mx-auto">
-        <div className="rounded-lg bg-red-500/10 border border-red-500/30 p-4 text-sm text-red-400">
+        <div className="rounded-lg bg-[var(--color-state-error-bg)] border border-[var(--color-state-error-bg)] p-4 text-sm text-[var(--color-state-error-fg)]">
           {loadError}
         </div>
       </div>
@@ -115,24 +115,24 @@ export default function NewVersionPage() {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex-shrink-0 px-6 py-4 border-b border-slate-800 flex items-center gap-3 bg-slate-950">
+      <div className="flex-shrink-0 px-6 py-4 border-b border-[var(--color-border-default)] flex items-center gap-3 bg-[var(--color-canvas)]">
         <button
           onClick={() => navigate(`/projects/${slug}`)}
-          className="text-slate-500 hover:text-slate-300 transition-colors"
+          className="text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors"
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
         </button>
         <div>
-          <h1 className="text-base font-bold text-slate-100">Nová verzia</h1>
+          <h1 className="text-base font-bold text-[var(--color-text-primary)]">Nová verzia</h1>
           {project && (
-            <p className="text-xs text-slate-500 mt-0.5">
+            <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
               {project.name}
               {lastVersion && (
                 <>
                   {" · nadväzuje na "}
-                  <span className="text-slate-400 font-mono">{lastVersion.version_number}</span>
+                  <span className="text-[var(--color-text-secondary)] font-mono">{lastVersion.version_number}</span>
                 </>
               )}
             </p>
@@ -149,7 +149,7 @@ export default function NewVersionPage() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <div className="flex items-center gap-2 mb-1">
-                  <label className="block text-sm font-medium text-slate-300">
+                  <label className="block text-sm font-medium text-[var(--color-text-secondary)]">
                     Číslo verzie *
                   </label>
                   {!versionManual && versionNumber && (
@@ -168,16 +168,16 @@ export default function NewVersionPage() {
                     setVersionManual(true);
                     if (errors.versionNumber) setErrors((er) => ({ ...er, versionNumber: "" }));
                   }}
-                  className={`${inputCls} font-mono ${errors.versionNumber ? "border-red-500/50" : ""}`}
+                  className={`${inputCls} font-mono ${errors.versionNumber ? "border-[var(--color-state-error-bg)]" : ""}`}
                 />
                 {errors.versionNumber && (
-                  <p className="mt-1 text-xs text-red-400">{errors.versionNumber}</p>
+                  <p className="mt-1 text-xs text-[var(--color-status-error)]">{errors.versionNumber}</p>
                 )}
-                <p className="mt-1 text-[11px] text-slate-600">Začnite na v0.1 · v1.0 = prvé produkčné vydanie</p>
+                <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">Začnite na v0.1 · v1.0 = prvé produkčné vydanie</p>
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-1">
-                  Názov <span className="text-slate-600 font-normal text-xs">(voliteľné)</span>
+                <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-1">
+                  Názov <span className="text-[var(--color-text-muted)] font-normal text-xs">(voliteľné)</span>
                 </label>
                 <input
                   type="text"
@@ -191,27 +191,27 @@ export default function NewVersionPage() {
 
             {/* Target date */}
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1">
-                Cieľový dátum <span className="text-slate-600 font-normal text-xs">(voliteľné)</span>
+              <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-1">
+                Cieľový dátum <span className="text-[var(--color-text-muted)] font-normal text-xs">(voliteľné)</span>
               </label>
               <input
                 type="date"
                 value={targetDate}
                 onChange={(e) => setTargetDate(e.target.value)}
-                className={`${inputCls} [color-scheme:dark]`}
+                className={inputCls}
               />
             </div>
 
             {/* Previous version context */}
             {lastVersion && (
-              <div className="rounded-lg border border-slate-700 bg-slate-800/40 p-4">
+              <div className="rounded-lg border border-[var(--color-border-default)] bg-[var(--color-surface-hover)] p-4">
                 <div className="flex items-center justify-between mb-3">
-                  <span className="text-xs text-slate-500">Predchádzajúca verzia</span>
-                  <span className="text-xs font-medium text-slate-300 bg-slate-700 px-2.5 py-1 rounded font-mono">
+                  <span className="text-xs text-[var(--color-text-muted)]">Predchádzajúca verzia</span>
+                  <span className="text-xs font-medium text-[var(--color-text-secondary)] bg-[var(--color-surface-active)] px-2.5 py-1 rounded font-mono">
                     {lastVersion.version_number}
                   </span>
                 </div>
-                <div className="flex items-start gap-3 pt-3 border-t border-slate-700/60">
+                <div className="flex items-start gap-3 pt-3 border-t border-[var(--color-border-default)]">
                   <input
                     type="checkbox"
                     id="inherit-design"
@@ -219,10 +219,10 @@ export default function NewVersionPage() {
                     className="mt-0.5 accent-indigo-500 shrink-0 cursor-pointer"
                   />
                   <label htmlFor="inherit-design" className="cursor-pointer">
-                    <div className="text-xs text-slate-300 font-medium">
+                    <div className="text-xs text-[var(--color-text-secondary)] font-medium">
                       Zdediť DESIGN.md z {lastVersion.version_number}
                     </div>
-                    <div className="text-[11px] text-slate-600 mt-0.5">
+                    <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
                       AI použije predchádzajúcu architektúru ako východiskový bod
                     </div>
                   </label>
@@ -232,9 +232,9 @@ export default function NewVersionPage() {
 
             {/* Description / Intent */}
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1">
+              <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-1">
                 Zámer verzie{" "}
-                <span className="ml-1 text-slate-600 font-normal text-xs">(3–5 viet, nie celá špecifikácia)</span>
+                <span className="ml-1 text-[var(--color-text-muted)] font-normal text-xs">(3–5 viet, nie celá špecifikácia)</span>
               </label>
               <textarea
                 rows={4}
@@ -243,14 +243,14 @@ export default function NewVersionPage() {
                 onChange={(e) => setDescription(e.target.value)}
                 className={`${inputCls} resize-none leading-relaxed`}
               />
-              <p className="text-[11px] text-slate-600 mt-1.5">
+              <p className="text-[11px] text-[var(--color-text-muted)] mt-1.5">
                 Raw Spec sa zadáva v kroku 1 pipeline po vytvorení verzie.
               </p>
             </div>
 
             {/* Error banner */}
             {formError && (
-              <div className="rounded-lg bg-red-500/10 border border-red-500/30 p-3 text-sm text-red-400">
+              <div className="rounded-lg bg-[var(--color-state-error-bg)] border border-[var(--color-state-error-bg)] p-3 text-sm text-[var(--color-state-error-fg)]">
                 {formError}
               </div>
             )}
@@ -260,7 +260,7 @@ export default function NewVersionPage() {
               <button
                 type="button"
                 onClick={() => navigate(`/projects/${slug}`)}
-                className="flex-1 px-4 py-2 text-sm text-slate-400 border border-slate-700 rounded-lg hover:bg-slate-800 transition-colors"
+                className="flex-1 px-4 py-2 text-sm text-[var(--color-text-secondary)] border border-[var(--color-border-default)] rounded-lg hover:bg-[var(--color-surface-hover)] transition-colors"
               >
                 Zrušiť
               </button>

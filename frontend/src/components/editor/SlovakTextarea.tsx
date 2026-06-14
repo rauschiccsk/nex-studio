@@ -207,7 +207,7 @@ export default function SlovakTextarea({
         onContextMenu={handleContextMenu}
         spellCheck={false}
         lang="sk"
-        className="relative w-full h-full bg-transparent px-4 py-3 text-sm text-slate-200 font-mono leading-relaxed resize-none focus:outline-none"
+        className="relative w-full h-full bg-transparent px-4 py-3 text-sm text-[var(--color-text-primary)] font-mono leading-relaxed resize-none focus:outline-none"
       />
       {menu && (
         <SpellSuggestionMenu

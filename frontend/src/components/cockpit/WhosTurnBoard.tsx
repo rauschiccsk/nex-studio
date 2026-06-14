@@ -58,53 +58,53 @@ export function WhosTurnBoard({
   const relayed = RELAYED_STAGES.has(current_stage) && status !== "agent_working" && status !== "done";
 
   return (
-    <div className="flex-shrink-0 border-b border-slate-800 px-4 py-2 text-[11px]">
+    <div className="flex-shrink-0 border-b border-[var(--color-border-default)] px-4 py-2 text-[11px]">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span className="font-semibold text-slate-200">{whoseTurn}</span>
-        <span className="text-slate-600">·</span>
-        <span className="text-slate-400">fáza {stageLabel}</span>
+        <span className="font-semibold text-[var(--color-text-primary)]">{whoseTurn}</span>
+        <span className="text-[var(--color-text-muted)]">·</span>
+        <span className="text-[var(--color-text-secondary)]">fáza {stageLabel}</span>
         {decision && (
           <>
-            <span className="text-slate-600">·</span>
-            <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-300">{decision}</span>
+            <span className="text-[var(--color-text-muted)]">·</span>
+            <span className="rounded bg-[var(--color-surface)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-secondary)]">{decision}</span>
           </>
         )}
         {currentTask && (
           <>
-            <span className="text-slate-600">·</span>
-            <span className="text-sky-300">
-              úloha #{currentTask.number}: <span className="text-slate-300">{currentTask.title}</span>
+            <span className="text-[var(--color-text-muted)]">·</span>
+            <span className="text-[var(--color-status-info)]">
+              úloha #{currentTask.number}: <span className="text-[var(--color-text-secondary)]">{currentTask.title}</span>
             </span>
           </>
         )}
       </div>
 
       {relayed && (
-        <div className="mt-1 flex items-center gap-1 text-[10px] text-slate-500">
+        <div className="mt-1 flex items-center gap-1 text-[10px] text-[var(--color-text-muted)]">
           <span>Director</span>
-          <span className="text-slate-600">→</span>
-          <span className="text-slate-400">Koordinátor</span>
-          <span className="text-slate-600">→</span>
+          <span className="text-[var(--color-text-muted)]">→</span>
+          <span className="text-[var(--color-text-secondary)]">Koordinátor</span>
+          <span className="text-[var(--color-text-muted)]">→</span>
           <span>{actorLabel}</span>
-          <span className="ml-1 rounded bg-slate-800 px-1 text-[9px] text-slate-500">cez Koordinátora</span>
+          <span className="ml-1 rounded bg-[var(--color-surface)] px-1 text-[9px] text-[var(--color-text-muted)]">cez Koordinátora</span>
         </div>
       )}
 
       {coordinatorProposal && (
-        <div className="mt-1 text-[10px] text-indigo-300">
+        <div className="mt-1 text-[10px] text-[var(--color-accent-primary)]">
           Návrh Koordinátora:{" "}
           {COORDINATOR_ACTION_LABELS[coordinatorProposal.proposed_action] ?? coordinatorProposal.proposed_action}
           {coordinatorProposal.rationale ? (
-            <span className="text-slate-500"> — {coordinatorProposal.rationale}</span>
+            <span className="text-[var(--color-text-muted)]"> — {coordinatorProposal.rationale}</span>
           ) : null}
         </div>
       )}
 
       {/* CR-NS-057 §F2.4: at gate_g (awaiting OR blocked) propose the FAIL re-gate target. */}
       {regateProposal && (STAGE_LABELS[regateProposal.entry_stage] ?? null) && (
-        <div className="mt-1 text-[10px] text-indigo-300">
+        <div className="mt-1 text-[10px] text-[var(--color-accent-primary)]">
           Navrhovaný návrat pri FAIL: {STAGE_LABELS[regateProposal.entry_stage]}
-          {regateProposal.reason ? <span className="text-slate-500"> — {regateProposal.reason}</span> : null}
+          {regateProposal.reason ? <span className="text-[var(--color-text-muted)]"> — {regateProposal.reason}</span> : null}
         </div>
       )}
     </div>

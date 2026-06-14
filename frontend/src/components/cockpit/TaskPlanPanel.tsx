@@ -26,7 +26,7 @@ function StatusBadge({ status }: { status: string }) {
   // Dot colour from the unified palette (CR-NS-028): in_progress=blue, done=green, todo/planned=amber,
   // failed=red — never amber-for-in_progress.
   return (
-    <span className="inline-flex flex-shrink-0 items-center gap-1 text-[10px] text-slate-400">
+    <span className="inline-flex flex-shrink-0 items-center gap-1 text-[10px] text-[var(--color-text-secondary)]">
       <span className={`h-1.5 w-1.5 rounded-full ${TONE_DOT[TASK_STATUS_TONE[status] ?? "neutral"]}`} />
       {TASK_STATUS_LABELS[status] ?? status}
     </span>
@@ -131,25 +131,25 @@ export default function TaskPlanPanel({ versionId, messages }: Props) {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex flex-shrink-0 items-center justify-between border-b border-slate-800 px-3 py-2">
-        <span className="text-xs font-semibold text-slate-300">Plán úloh</span>
+      <div className="flex flex-shrink-0 items-center justify-between border-b border-[var(--color-border-default)] px-3 py-2">
+        <span className="text-xs font-semibold text-[var(--color-text-secondary)]">Plán úloh</span>
         {plan && (
-          <span className="text-[10px] text-slate-500">
+          <span className="text-[10px] text-[var(--color-text-muted)]">
             {plan.epic_count} epic · {plan.feat_count} feat · {plan.task_count} úloh
           </span>
         )}
       </div>
 
       {showProgress && (
-        <div className="flex-shrink-0 border-b border-slate-800 px-3 py-2.5">
+        <div className="flex-shrink-0 border-b border-[var(--color-border-default)] px-3 py-2.5">
           <div className="mb-1.5 flex items-baseline justify-between gap-2 text-[11px]">
-            <span className="text-slate-400">
-              Stav: <span className="text-slate-300">{doneCount}/{totalCount} úloh</span>
-              {failedCount > 0 && <span className="font-medium text-red-400"> · {failedCount} zlyhané</span>}
+            <span className="text-[var(--color-text-secondary)]">
+              Stav: <span className="text-[var(--color-text-secondary)]">{doneCount}/{totalCount} úloh</span>
+              {failedCount > 0 && <span className="font-medium text-[var(--color-status-error)]"> · {failedCount} zlyhané</span>}
             </span>
-            <span className="font-semibold tabular-nums text-slate-100">{pct} %</span>
+            <span className="font-semibold tabular-nums text-[var(--color-text-primary)]">{pct} %</span>
           </div>
-          <div className="h-2 w-full overflow-hidden rounded-full bg-slate-800/80">
+          <div className="h-2 w-full overflow-hidden rounded-full bg-[var(--color-surface-hover)]">
             <div
               data-testid="taskplan-progress-fill"
               // Always green (CR-NS-028): the fill shows completed progress, and green = done.
@@ -162,13 +162,13 @@ export default function TaskPlanPanel({ versionId, messages }: Props) {
 
       <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2 text-xs">
         {error ? (
-          <p className="px-1 text-[11px] text-red-400">{error}</p>
+          <p className="px-1 text-[11px] text-[var(--color-status-error)]">{error}</p>
         ) : !plan ? (
-          <p className="flex items-center gap-1.5 px-1 text-slate-600">
+          <p className="flex items-center gap-1.5 px-1 text-[var(--color-text-muted)]">
             <Loader2 className="h-3 w-3 animate-spin" /> Načítavam plán…
           </p>
         ) : plan.plan.length === 0 ? (
-          <p className="px-1 text-[11px] text-slate-600">Plán úloh ešte nebol vytvorený.</p>
+          <p className="px-1 text-[11px] text-[var(--color-text-muted)]">Plán úloh ešte nebol vytvorený.</p>
         ) : (
           plan.plan.map((epic: TaskPlanEpicNode) => {
             const epicCollapsed = collapsed.has(epic.id);
@@ -181,9 +181,9 @@ export default function TaskPlanPanel({ versionId, messages }: Props) {
               <div key={epic.id} className="mb-1">
                 <button
                   onClick={() => toggle(epic.id)}
-                  className="flex w-full items-center justify-between gap-2 rounded px-1 py-1 text-left hover:bg-slate-800/60"
+                  className="flex w-full items-center justify-between gap-2 rounded px-1 py-1 text-left hover:bg-[var(--color-surface-hover)]"
                 >
-                  <span className="flex min-w-0 items-center gap-1 text-slate-200">
+                  <span className="flex min-w-0 items-center gap-1 text-[var(--color-text-primary)]">
                     {epicCollapsed ? <ChevronRight className="h-3 w-3 flex-shrink-0" /> : <ChevronDown className="h-3 w-3 flex-shrink-0" />}
                     <span className="truncate font-medium">
                       {epic.number}. {epic.title}
@@ -200,9 +200,9 @@ export default function TaskPlanPanel({ versionId, messages }: Props) {
                       <div key={feat.id} className="ml-3">
                         <button
                           onClick={() => toggle(feat.id)}
-                          className="flex w-full items-center justify-between gap-2 rounded px-1 py-0.5 text-left hover:bg-slate-800/60"
+                          className="flex w-full items-center justify-between gap-2 rounded px-1 py-0.5 text-left hover:bg-[var(--color-surface-hover)]"
                         >
-                          <span className="flex min-w-0 items-center gap-1 text-slate-300">
+                          <span className="flex min-w-0 items-center gap-1 text-[var(--color-text-secondary)]">
                             {featCollapsed ? <ChevronRight className="h-3 w-3 flex-shrink-0" /> : <ChevronDown className="h-3 w-3 flex-shrink-0" />}
                             <span className="truncate">
                               {feat.number}. {feat.title}
@@ -219,15 +219,15 @@ export default function TaskPlanPanel({ versionId, messages }: Props) {
                               <button
                                 key={task.id}
                                 onClick={() => setSelectedTaskId(isSelected ? null : task.id)}
-                                className={`ml-6 flex w-[calc(100%-1.5rem)] items-center justify-between gap-2 rounded px-1 py-0.5 text-left hover:bg-slate-800/60 ${
-                                  isSelected ? "bg-slate-800" : ""
-                                } ${isCurrent ? "ring-1 ring-sky-400/40" : ""}`}
+                                className={`ml-6 flex w-[calc(100%-1.5rem)] items-center justify-between gap-2 rounded px-1 py-0.5 text-left hover:bg-[var(--color-surface-hover)] ${
+                                  isSelected ? "bg-[var(--color-surface-active)]" : ""
+                                } ${isCurrent ? "ring-1 ring-[var(--color-status-info)]/40" : ""}`}
                               >
-                                <span className="flex min-w-0 items-center gap-1.5 text-slate-400">
+                                <span className="flex min-w-0 items-center gap-1.5 text-[var(--color-text-secondary)]">
                                   <span className="truncate">
                                     {task.number}. {task.title}
                                   </span>
-                                  <span className="flex-shrink-0 text-[9px] uppercase text-slate-600">{task.task_type}</span>
+                                  <span className="flex-shrink-0 text-[9px] uppercase text-[var(--color-text-muted)]">{task.task_type}</span>
                                 </span>
                                 <StatusBadge status={task.status} />
                               </button>
@@ -250,22 +250,22 @@ export default function TaskPlanPanel({ versionId, messages }: Props) {
 function TaskAuditPanel({ task, messages }: { task: TaskPlanTaskNode; messages: PipelineMessage[] }) {
   const { audit, reasons } = readTaskAudit(messages, task.id);
   return (
-    <div className="flex-shrink-0 border-t border-slate-800 px-3 py-2 text-xs">
+    <div className="flex-shrink-0 border-t border-[var(--color-border-default)] px-3 py-2 text-xs">
       <div className="mb-1 flex items-center justify-between">
-        <span className="truncate font-medium text-slate-300">
+        <span className="truncate font-medium text-[var(--color-text-secondary)]">
           Audit — {task.number}. {task.title}
         </span>
         <StatusBadge status={task.status} />
       </div>
       {!audit ? (
-        <p className="text-[11px] text-slate-600">Úloha ešte nebola auditovaná.</p>
+        <p className="text-[11px] text-[var(--color-text-muted)]">Úloha ešte nebola auditovaná.</p>
       ) : (
-        <p className={`text-[11px] ${audit.task_pass ? "text-emerald-400" : "text-red-400"}`}>
+        <p className={`text-[11px] ${audit.task_pass ? "text-[var(--color-status-success)]" : "text-[var(--color-status-error)]"}`}>
           {audit.task_pass ? "Audit PASS" : "Audit FAIL"}
         </p>
       )}
       {audit?.findings && audit.findings.length > 0 && (
-        <ul className="mt-1 list-disc pl-4 text-[11px] text-slate-400">
+        <ul className="mt-1 list-disc pl-4 text-[11px] text-[var(--color-text-secondary)]">
           {audit.findings.map((f, i) => (
             <li key={i}>{f}</li>
           ))}
@@ -273,8 +273,8 @@ function TaskAuditPanel({ task, messages }: { task: TaskPlanTaskNode; messages: 
       )}
       {reasons.length > 0 && (
         <div className="mt-1.5">
-          <span className="text-[10px] uppercase tracking-wide text-slate-600">Auto-fix dôvody</span>
-          <ul className="mt-0.5 list-disc pl-4 text-[11px] text-slate-500">
+          <span className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">Auto-fix dôvody</span>
+          <ul className="mt-0.5 list-disc pl-4 text-[11px] text-[var(--color-text-muted)]">
             {reasons.map((r, i) => (
               <li key={i}>{r}</li>
             ))}

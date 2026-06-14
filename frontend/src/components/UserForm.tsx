@@ -117,11 +117,11 @@ export function UserForm({
 
   return (
     <Card className="mt-4 p-4">
-      <h3 className="text-sm font-semibold text-slate-300 mb-3">
+      <h3 className="text-sm font-semibold text-[var(--color-text-secondary)] mb-3">
         {isEdit ? (
           <>
             Upraviť používateľa ·{" "}
-            <span className="font-mono text-slate-400">{initial?.username}</span>
+            <span className="font-mono text-[var(--color-text-secondary)]">{initial?.username}</span>
           </>
         ) : (
           title
@@ -129,14 +129,14 @@ export function UserForm({
       </h3>
 
       {error && (
-        <div className="mb-3 text-xs text-red-400 rounded bg-red-500/10 border border-red-500/20 px-3 py-2">
+        <div className="mb-3 text-xs text-[var(--color-state-error-fg)] rounded bg-[var(--color-state-error-bg)] border border-[var(--color-state-error-bg)] px-3 py-2">
           {error}
         </div>
       )}
 
       <div className="grid grid-cols-2 gap-3 mb-3">
         <div>
-          <label htmlFor="uf-first-name" className="block text-xs text-slate-500 mb-1">Meno</label>
+          <label htmlFor="uf-first-name" className="block text-xs text-[var(--color-text-muted)] mb-1">Meno</label>
           <Input
             id="uf-first-name"
             type="text"
@@ -147,7 +147,7 @@ export function UserForm({
         </div>
 
         <div>
-          <label htmlFor="uf-last-name" className="block text-xs text-slate-500 mb-1">Priezvisko</label>
+          <label htmlFor="uf-last-name" className="block text-xs text-[var(--color-text-muted)] mb-1">Priezvisko</label>
           <Input
             id="uf-last-name"
             type="text"
@@ -158,7 +158,7 @@ export function UserForm({
         </div>
 
         <div>
-          <label htmlFor="uf-username" className="block text-xs text-slate-500 mb-1">
+          <label htmlFor="uf-username" className="block text-xs text-[var(--color-text-muted)] mb-1">
             Používateľské meno {isEdit ? "" : "*"}
           </label>
           <input
@@ -171,14 +171,14 @@ export function UserForm({
             placeholder="napr. tibi"
             className={`w-full border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-primary-500 ${
               isEdit
-                ? "bg-slate-800/60 border-slate-700 text-slate-500 cursor-not-allowed"
-                : "bg-slate-800 border-slate-700 text-slate-100"
+                ? "bg-[var(--color-surface-hover)] border-[var(--color-border-default)] text-[var(--color-text-muted)] cursor-not-allowed"
+                : "bg-[var(--color-surface)] border-[var(--color-border-default)] text-[var(--color-text-primary)]"
             }`}
           />
         </div>
 
         <div>
-          <label htmlFor="uf-email" className="block text-xs text-slate-500 mb-1">Email *</label>
+          <label htmlFor="uf-email" className="block text-xs text-[var(--color-text-muted)] mb-1">Email *</label>
           <Input
             id="uf-email"
             type="email"
@@ -189,11 +189,11 @@ export function UserForm({
         </div>
 
         <div>
-          <label htmlFor="uf-password" className="block text-xs text-slate-500 mb-1">
+          <label htmlFor="uf-password" className="block text-xs text-[var(--color-text-muted)] mb-1">
             {isEdit ? (
               <>
                 Nové heslo{" "}
-                <span className="text-slate-600">(nechaj prázdne ak nemeniť)</span>
+                <span className="text-[var(--color-text-muted)]">(nechaj prázdne ak nemeniť)</span>
               </>
             ) : (
               "Heslo *"
@@ -208,14 +208,14 @@ export function UserForm({
             invalid={passwordTooShort}
           />
           {passwordTooShort && (
-            <div className="mt-1 text-[10px] text-red-400">
+            <div className="mt-1 text-[10px] text-[var(--color-status-error)]">
               Heslo musí mať aspoň {PASSWORD_MIN_LENGTH} znakov ({data.password.length}/{PASSWORD_MIN_LENGTH}).
             </div>
           )}
         </div>
 
         <div>
-          <label htmlFor="uf-role" className="block text-xs text-slate-500 mb-1">Rola</label>
+          <label htmlFor="uf-role" className="block text-xs text-[var(--color-text-muted)] mb-1">Rola</label>
           <Select
             id="uf-role"
             value={data.role}
@@ -228,7 +228,7 @@ export function UserForm({
         </div>
 
         <div>
-          <label htmlFor="uf-telegram" className="block text-xs text-slate-500 mb-1">
+          <label htmlFor="uf-telegram" className="block text-xs text-[var(--color-text-muted)] mb-1">
             Telegram chat_id
           </label>
           <Input
@@ -242,13 +242,13 @@ export function UserForm({
 
         {isEdit && (
           <div className="flex items-end">
-            <label htmlFor="uf-active" className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer">
+            <label htmlFor="uf-active" className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)] cursor-pointer">
               <input
                 id="uf-active"
                 type="checkbox"
                 checked={data.is_active}
                 onChange={(e) => update("is_active", e.target.checked)}
-                className="rounded bg-slate-800 border-slate-700"
+                className="rounded bg-[var(--color-surface)] border-[var(--color-border-default)]"
               />
               Aktívny
             </label>
@@ -260,7 +260,7 @@ export function UserForm({
         <button
           type="button"
           onClick={onCancel}
-          className="px-3 py-1.5 text-xs text-slate-400 border border-slate-700 rounded-lg hover:bg-slate-800 transition-colors"
+          className="px-3 py-1.5 text-xs text-[var(--color-text-secondary)] border border-[var(--color-border-default)] rounded-lg hover:bg-[var(--color-surface-hover)] transition-colors"
         >
           Zrušiť
         </button>

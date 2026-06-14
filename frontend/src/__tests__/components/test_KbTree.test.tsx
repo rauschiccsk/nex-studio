@@ -85,7 +85,7 @@ describe("KbTree", () => {
     expect(onSelect).toHaveBeenCalledWith(aDoc);
   });
 
-  it("AC6: selected file carries the highlight class (bg-blue-700)", () => {
+  it("AC6: selected file carries the highlight class (accent-primary)", () => {
     render(
       <KbTree
         documents={[doc("icc/A.md")]}
@@ -95,7 +95,8 @@ describe("KbTree", () => {
     );
     // selectedPath causes the folder to auto-expand (AC11), so the leaf is rendered.
     const leaf = screen.getByText("A.md").closest("button");
-    expect(leaf).toHaveClass("bg-blue-700");
+    // CR-NS-067b: selection highlight unified blue-700 → the brand accent token (indigo, theme-aware).
+    expect(leaf).toHaveClass("bg-[var(--color-accent-primary)]");
   });
 
   it("AC7: credentials/ branch hidden when hideCredentials=true", () => {

@@ -25,10 +25,10 @@ const MODULE_COLORS = [
 ];
 
 function statusCls(status: string) {
-  if (status === "done") return "bg-green-500/10 border border-green-500/25 text-green-400";
-  if (status === "in_development") return "bg-yellow-500/15 border border-yellow-500/30 text-yellow-400";
-  if (status === "in_design") return "bg-indigo-500/20 border border-indigo-500/30 text-indigo-400";
-  return "bg-slate-700/60 border border-slate-600 text-slate-400";
+  if (status === "done") return "bg-[var(--color-state-success-bg)] border border-[var(--color-state-success-bg)] text-[var(--color-state-success-fg)]";
+  if (status === "in_development") return "bg-[var(--color-state-warning-bg)] border border-[var(--color-state-warning-bg)] text-[var(--color-state-warning-fg)]";
+  if (status === "in_design") return "bg-[var(--color-state-info-bg)] border border-[var(--color-state-info-bg)] text-[var(--color-state-info-fg)]";
+  return "bg-[var(--color-surface-active)] border border-[var(--color-border-strong)] text-[var(--color-text-secondary)]";
 }
 
 function statusLabel(status: string) {
@@ -130,7 +130,7 @@ export default function MMModulePage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-20 text-slate-500 text-sm gap-2">
+      <div className="flex items-center justify-center py-20 text-[var(--color-text-muted)] text-sm gap-2">
         <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
@@ -143,7 +143,7 @@ export default function MMModulePage() {
   if (error || !project || !mod) {
     return (
       <div className="p-6 max-w-5xl mx-auto">
-        <div className="rounded-lg bg-red-500/10 border border-red-500/30 p-4 text-sm text-red-400">
+        <div className="rounded-lg bg-[var(--color-state-error-bg)] border border-[var(--color-state-error-bg)] p-4 text-sm text-[var(--color-state-error-fg)]">
           {error || "Modul nebol nájdený."}
         </div>
       </div>
@@ -174,10 +174,10 @@ export default function MMModulePage() {
   return (
     <div className="flex flex-col h-full">
       {/* Topbar */}
-      <div className="flex-shrink-0 bg-slate-900/50 border-b border-slate-800 px-5 py-2.5 flex items-center gap-3">
+      <div className="flex-shrink-0 bg-[var(--color-surface-hover)] border-b border-[var(--color-border-default)] px-5 py-2.5 flex items-center gap-3">
         <button
           onClick={() => navigate(`/projects/${slug}/mm`)}
-          className="text-slate-500 hover:text-slate-300 transition-colors"
+          className="text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -186,7 +186,7 @@ export default function MMModulePage() {
         <span className={`text-[11px] font-bold px-2 py-0.5 rounded border font-mono ${badgeColor}`}>
           {mod.code}
         </span>
-        <span className="text-sm font-semibold text-slate-100">{mod.name}</span>
+        <span className="text-sm font-semibold text-[var(--color-text-primary)]">{mod.name}</span>
         <span className={`text-[10px] px-2.5 py-0.5 rounded-full border font-medium ${statusCls(mod.status)}`}>
           {statusLabel(mod.status)}
         </span>
@@ -201,7 +201,7 @@ export default function MMModulePage() {
               className={`text-[10px] px-2 py-1 rounded transition-colors ${
                 mod.status === s
                   ? "bg-primary-600 text-white"
-                  : "text-slate-500 hover:text-slate-300 hover:bg-slate-800"
+                  : "text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]"
               }`}
             >
               {statusLabel(s)}
@@ -211,7 +211,7 @@ export default function MMModulePage() {
       </div>
 
       {/* Tabs */}
-      <div className="flex-shrink-0 border-b border-slate-800 px-5 flex items-center gap-0">
+      <div className="flex-shrink-0 border-b border-[var(--color-border-default)] px-5 flex items-center gap-0">
         {(["workflow", "deps"] as Tab[]).map((t) => (
           <button
             key={t}
@@ -219,7 +219,7 @@ export default function MMModulePage() {
             className={`px-4 py-2.5 text-xs font-medium border-b-2 transition-colors ${
               tab === t
                 ? "border-primary-500 text-primary-400"
-                : "border-transparent text-slate-500 hover:text-slate-300"
+                : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]"
             }`}
           >
             {t === "workflow" ? "Postup" : "Závislosti"}
@@ -235,29 +235,29 @@ export default function MMModulePage() {
           {tab === "workflow" && (
             <div className="space-y-3">
               {/* Info card */}
-              <div className="rounded-xl border border-slate-800 bg-slate-900 p-4">
+              <div className="rounded-xl border border-[var(--color-border-default)] bg-[var(--color-canvas)] p-4">
                 <div className="grid grid-cols-2 gap-3 text-sm">
                   <div>
-                    <span className="text-slate-500 text-xs">Kategória</span>
-                    <div className="text-slate-200 mt-0.5">{mod.category}</div>
+                    <span className="text-[var(--color-text-muted)] text-xs">Kategória</span>
+                    <div className="text-[var(--color-text-primary)] mt-0.5">{mod.category}</div>
                   </div>
                   <div>
-                    <span className="text-slate-500 text-xs">Kód</span>
-                    <div className="font-mono text-slate-200 mt-0.5">{mod.code}</div>
+                    <span className="text-[var(--color-text-muted)] text-xs">Kód</span>
+                    <div className="font-mono text-[var(--color-text-primary)] mt-0.5">{mod.code}</div>
                   </div>
                   {mod.design_doc_path && (
                     <div className="col-span-2">
-                      <span className="text-slate-500 text-xs">DESIGN.md</span>
-                      <div className="font-mono text-slate-400 text-xs mt-0.5 truncate">{mod.design_doc_path}</div>
+                      <span className="text-[var(--color-text-muted)] text-xs">DESIGN.md</span>
+                      <div className="font-mono text-[var(--color-text-secondary)] text-xs mt-0.5 truncate">{mod.design_doc_path}</div>
                     </div>
                   )}
                 </div>
               </div>
 
               {/* Pipeline placeholder — linked to version pipeline in future */}
-              <div className="rounded-xl border border-dashed border-slate-800 p-6 text-center">
-                <p className="text-sm text-slate-500">Postup</p>
-                <p className="text-xs text-slate-700 mt-1">
+              <div className="rounded-xl border border-dashed border-[var(--color-border-default)] p-6 text-center">
+                <p className="text-sm text-[var(--color-text-muted)]">Postup</p>
+                <p className="text-xs text-[var(--color-text-muted)] mt-1">
                   Pipeline sa zobrazí po priradení modulu k verzii projektu.
                 </p>
               </div>
@@ -269,23 +269,23 @@ export default function MMModulePage() {
             <div className="space-y-4">
               {/* This module depends on */}
               <div>
-                <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-2">
+                <h3 className="text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-widest mb-2">
                   {mod.code} závisí od
                 </h3>
                 {outgoingModules.length === 0 ? (
-                  <p className="text-xs text-slate-600 py-2">Žiadne závislosti.</p>
+                  <p className="text-xs text-[var(--color-text-muted)] py-2">Žiadne závislosti.</p>
                 ) : (
                   <div className="space-y-2">
                     {outgoingModules.map(({ dep, mod: m }) => (
-                      <div key={dep.id} className="flex items-center gap-3 rounded-lg border border-slate-800 bg-slate-900 px-3 py-2">
-                        <span className="font-mono font-bold text-xs text-slate-300">{m.code}</span>
-                        <span className="text-sm text-slate-300 flex-1">{m.name}</span>
+                      <div key={dep.id} className="flex items-center gap-3 rounded-lg border border-[var(--color-border-default)] bg-[var(--color-canvas)] px-3 py-2">
+                        <span className="font-mono font-bold text-xs text-[var(--color-text-secondary)]">{m.code}</span>
+                        <span className="text-sm text-[var(--color-text-secondary)] flex-1">{m.name}</span>
                         <span className={`text-[10px] px-2 py-0.5 rounded-full ${statusCls(m.status)}`}>
                           {statusLabel(m.status)}
                         </span>
                         <button
                           onClick={() => handleRemoveDep(dep.id)}
-                          className="text-slate-600 hover:text-red-400 transition-colors"
+                          className="text-[var(--color-text-muted)] hover:text-[var(--color-status-error)] transition-colors"
                           title="Odstrániť závislosť"
                         >
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -302,7 +302,7 @@ export default function MMModulePage() {
                     <select
                       value={selectedDepId}
                       onChange={(e) => setSelectedDepId(e.target.value)}
-                      className="flex-1 text-xs bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-slate-300 focus:outline-none focus:border-primary-500"
+                      className="flex-1 text-xs bg-[var(--color-surface)] border border-[var(--color-border-default)] rounded-lg px-2 py-1.5 text-[var(--color-text-secondary)] focus:outline-none focus:border-primary-500"
                     >
                       <option value="">Vybrať modul…</option>
                       {availableForDep.map((m) => (
@@ -323,14 +323,14 @@ export default function MMModulePage() {
               {/* Modules that depend on this */}
               {incomingModules.length > 0 && (
                 <div>
-                  <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-2">
+                  <h3 className="text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-widest mb-2">
                     Závisí od {mod.code}
                   </h3>
                   <div className="space-y-2">
                     {incomingModules.map(({ dep, mod: m }) => (
-                      <div key={dep.id} className="flex items-center gap-3 rounded-lg border border-slate-800 bg-slate-900 px-3 py-2">
-                        <span className="font-mono font-bold text-xs text-slate-300">{m.code}</span>
-                        <span className="text-sm text-slate-300 flex-1">{m.name}</span>
+                      <div key={dep.id} className="flex items-center gap-3 rounded-lg border border-[var(--color-border-default)] bg-[var(--color-canvas)] px-3 py-2">
+                        <span className="font-mono font-bold text-xs text-[var(--color-text-secondary)]">{m.code}</span>
+                        <span className="text-sm text-[var(--color-text-secondary)] flex-1">{m.name}</span>
                         <span className={`text-[10px] px-2 py-0.5 rounded-full ${statusCls(m.status)}`}>
                           {statusLabel(m.status)}
                         </span>

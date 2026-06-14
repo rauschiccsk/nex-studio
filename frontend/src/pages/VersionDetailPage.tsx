@@ -9,9 +9,9 @@ import { useActiveContextSync } from "@/hooks/useActiveContextSync";
 // ─── Status helpers ───────────────────────────────────────────────────────────
 
 function versionStatusCls(status: string) {
-  if (status === "active") return "bg-yellow-500/15 border border-yellow-500/30 text-yellow-400";
-  if (status === "released") return "bg-green-500/10 border border-green-500/25 text-green-400";
-  return "bg-slate-700/60 border border-slate-600 text-slate-400";
+  if (status === "active") return "bg-[var(--color-state-warning-bg)] border border-[var(--color-state-warning-bg)] text-[var(--color-state-warning-fg)]";
+  if (status === "released") return "bg-[var(--color-state-success-bg)] border border-[var(--color-state-success-bg)] text-[var(--color-state-success-fg)]";
+  return "bg-[var(--color-surface-active)] border border-[var(--color-border-strong)] text-[var(--color-text-secondary)]";
 }
 
 function versionStatusLabel(status: string) {
@@ -55,7 +55,7 @@ export default function VersionDetailPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-20 text-slate-500 text-sm gap-2">
+      <div className="flex items-center justify-center py-20 text-[var(--color-text-muted)] text-sm gap-2">
         <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
@@ -68,7 +68,7 @@ export default function VersionDetailPage() {
   if (error || !project || !version) {
     return (
       <div className="p-6 max-w-5xl mx-auto">
-        <div className="rounded-lg bg-red-500/10 border border-red-500/30 p-4 text-sm text-red-400">
+        <div className="rounded-lg bg-[var(--color-state-error-bg)] border border-[var(--color-state-error-bg)] p-4 text-sm text-[var(--color-state-error-fg)]">
           {error || "Verzia nebola nájdená."}
         </div>
       </div>
@@ -81,24 +81,24 @@ export default function VersionDetailPage() {
   return (
     <div className="flex flex-col h-full">
       {/* ── Header ── */}
-      <div className="border-b border-slate-800 bg-slate-900/60 shrink-0">
+      <div className="border-b border-[var(--color-border-default)] bg-[var(--color-surface-hover)] shrink-0">
         <div className="flex items-center gap-3 px-5 py-2.5">
           <button
             onClick={() => navigate(`/projects/${slug}`)}
-            className="text-slate-500 hover:text-slate-300 transition-colors"
+            className="text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
           </button>
           <div className="flex items-center gap-2 text-xs">
-            <span className="text-slate-400 font-medium">{project.name}</span>
-            <span className="text-slate-600">·</span>
-            <span className="bg-slate-800 text-slate-300 font-mono px-2 py-0.5 rounded">
+            <span className="text-[var(--color-text-secondary)] font-medium">{project.name}</span>
+            <span className="text-[var(--color-text-muted)]">·</span>
+            <span className="bg-[var(--color-surface)] text-[var(--color-text-secondary)] font-mono px-2 py-0.5 rounded">
               {version.version_number}
             </span>
             {version.name && (
-              <span className="text-slate-400">{version.name}</span>
+              <span className="text-[var(--color-text-secondary)]">{version.name}</span>
             )}
           </div>
           <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${versionStatusCls(version.status)}`}>
@@ -108,18 +108,18 @@ export default function VersionDetailPage() {
           {/* Stats */}
           <div className="flex items-center gap-5 text-center">
             <div>
-              <div className="text-sm font-bold text-slate-100">{epicsDone}/{epicCount}</div>
-              <div className="text-[10px] text-slate-500">epic hotových</div>
+              <div className="text-sm font-bold text-[var(--color-text-primary)]">{epicsDone}/{epicCount}</div>
+              <div className="text-[10px] text-[var(--color-text-secondary)]">epic hotových</div>
             </div>
             <div>
-              <div className="text-sm font-bold text-slate-100">{version.epic_count}</div>
-              <div className="text-[10px] text-slate-500">epic</div>
+              <div className="text-sm font-bold text-[var(--color-text-primary)]">{version.epic_count}</div>
+              <div className="text-[10px] text-[var(--color-text-secondary)]">epic</div>
             </div>
             <div>
-              <div className={`text-sm font-bold ${version.bug_count > 0 ? "text-red-400" : "text-slate-100"}`}>
+              <div className={`text-sm font-bold ${version.bug_count > 0 ? "text-[var(--color-status-error)]" : "text-[var(--color-text-primary)]"}`}>
                 {version.bug_count}
               </div>
-              <div className="text-[10px] text-slate-500">chyby</div>
+              <div className="text-[10px] text-[var(--color-text-secondary)]">chyby</div>
             </div>
           </div>
         </div>
@@ -128,11 +128,11 @@ export default function VersionDetailPage() {
       {/* ── Body ── */}
       <div className="flex-1 overflow-y-auto p-6">
         <div className="max-w-3xl mx-auto">
-          <div className="rounded-xl border border-slate-800 bg-slate-900 p-5">
-            <div className="text-sm font-semibold text-slate-100 mb-1">
+          <div className="rounded-xl border border-[var(--color-border-default)] bg-[var(--color-surface)] p-5">
+            <div className="text-sm font-semibold text-[var(--color-text-primary)] mb-1">
               {version.version_number}{version.name ? ` — ${version.name}` : ""}
             </div>
-            <div className="text-xs text-slate-500">
+            <div className="text-xs text-[var(--color-text-muted)]">
               {epicCount} epic · {epicsDone} hotových · {version.bug_count} chýb.
               Epics, feats a tasks pre túto verziu spravujú agenti (Designer / Implementer / Auditor).
             </div>

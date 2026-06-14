@@ -88,7 +88,7 @@ export function PipelineRail({ state, activeAgent = null }: Props) {
   return (
     <div className="flex h-full flex-col gap-5 overflow-y-auto p-4">
       <section>
-        <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+        <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
           Pipeline
         </h3>
         <ul className="space-y-1">
@@ -97,16 +97,16 @@ export function PipelineRail({ state, activeAgent = null }: Props) {
             const current = idx === currentIdx;
             const marker = done ? "✓" : current ? ">" : "·";
             const color = done
-              ? "text-emerald-500"
+              ? "text-[var(--color-status-success)]"
               : current
                 ? "text-primary-400 font-semibold"
-                : "text-slate-600";
+                : "text-[var(--color-text-muted)]";
             return (
               <li key={stage} className={`flex items-center gap-2 text-xs ${color}`}>
                 <span className="w-3 text-center font-mono">{marker}</span>
                 <span title={STAGE_CODES[stage]}>{STAGE_LABELS[stage]}</span>
                 {current && state?.is_regate && (
-                  <span className="rounded bg-amber-500/15 px-1 text-[9px] text-amber-300">
+                  <span className="rounded bg-[var(--color-state-warning-bg)] px-1 text-[9px] text-[var(--color-state-warning-fg)]">
                     re-gate #{state.iteration}
                   </span>
                 )}
@@ -117,7 +117,7 @@ export function PipelineRail({ state, activeAgent = null }: Props) {
       </section>
 
       <section>
-        <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+        <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
           Agenti
         </h3>
         <ul className="space-y-1.5">
@@ -125,7 +125,7 @@ export function PipelineRail({ state, activeAgent = null }: Props) {
             const s = chipStatusFor(actor, state, activeAgent);
             return (
               <li key={actor} className="flex items-center justify-between gap-2 text-xs">
-                <span className="flex items-center gap-1.5 text-slate-400">
+                <span className="flex items-center gap-1.5 text-[var(--color-text-secondary)]">
                   <span aria-hidden="true">{emoji}</span>
                   {ROLE_LABELS[actor]}
                 </span>

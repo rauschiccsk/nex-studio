@@ -156,8 +156,8 @@ export default function ProjectSpecsPage() {
   if (!isDirector) {
     // Non-ri users see a clear gate instead of an empty list.
     return (
-      <div className="flex h-[calc(100vh-100px)] items-center justify-center bg-gray-900 rounded-xl border border-gray-700">
-        <div className="flex flex-col items-center gap-3 text-gray-400">
+      <div className="flex h-[calc(100vh-100px)] items-center justify-center bg-[var(--color-canvas)] rounded-xl border border-[var(--color-border-default)]">
+        <div className="flex flex-col items-center gap-3 text-[var(--color-text-secondary)]">
           <Lock size={48} />
           <p className="text-sm">
             Špecifikácie sú dostupné iba Directorovi (ri rola).
@@ -168,26 +168,26 @@ export default function ProjectSpecsPage() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-100px)] bg-gray-900 rounded-xl border border-gray-700 overflow-hidden">
+    <div className="flex h-[calc(100vh-100px)] bg-[var(--color-canvas)] rounded-xl border border-[var(--color-border-default)] overflow-hidden">
       {/* Tree column — identický pattern s /kb stránkou */}
-      <div className="w-80 bg-gray-800 border-r border-gray-700 flex flex-col min-w-0">
+      <div className="w-80 bg-[var(--color-surface)] border-r border-[var(--color-border-default)] flex flex-col min-w-0">
         {/* Header */}
-        <div className="p-3 border-b border-gray-700">
-          <h2 className="text-base font-semibold flex items-center gap-2 text-gray-100">
+        <div className="p-3 border-b border-[var(--color-border-default)]">
+          <h2 className="text-base font-semibold flex items-center gap-2 text-[var(--color-text-primary)]">
             <FolderOpen size={18} />
             Špecifikácie
           </h2>
-          <div className="mt-2 flex items-center gap-1.5 text-xs text-gray-400">
+          <div className="mt-2 flex items-center gap-1.5 text-xs text-[var(--color-text-secondary)]">
             <Database size={12} />
             <span>{documents.length} dokumentov</span>
           </div>
         </div>
 
         {/* Toolbar */}
-        <div className="p-3 border-b border-gray-700 flex gap-1.5">
+        <div className="p-3 border-b border-[var(--color-border-default)] flex gap-1.5">
           <button
             onClick={refresh}
-            className="p-1.5 bg-gray-700 text-gray-300 rounded hover:bg-gray-600 transition-colors"
+            className="p-1.5 bg-[var(--color-surface-active)] text-[var(--color-text-secondary)] rounded hover:bg-[var(--color-surface-hover)] transition-colors"
             title="Obnoviť"
           >
             <RefreshCw size={14} />
@@ -196,8 +196,8 @@ export default function ProjectSpecsPage() {
             onClick={() => setViewMode((m) => (m === "tree" ? "all" : "tree"))}
             className={`flex-1 px-2 py-1.5 rounded text-xs font-medium transition-colors ${
               viewMode === "all"
-                ? "bg-blue-600 text-white hover:bg-blue-500"
-                : "bg-gray-700 text-gray-300 hover:bg-gray-600"
+                ? "bg-primary-600 text-white hover:bg-primary-500"
+                : "bg-[var(--color-surface-active)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]"
             }`}
             title="Prepínať medzi hierarchickým stromom a plochým zoznamom"
           >
@@ -206,11 +206,11 @@ export default function ProjectSpecsPage() {
         </div>
 
         {error && (
-          <div className="px-3 py-2 bg-red-900/30 border-b border-red-800/50 text-red-400 text-xs flex items-center justify-between">
+          <div className="px-3 py-2 bg-[var(--color-state-error-bg)] border-b border-[var(--color-border-default)] text-[var(--color-state-error-fg)] text-xs flex items-center justify-between">
             <span className="truncate">{error}</span>
             <button
               onClick={() => setError("")}
-              className="text-red-400 hover:text-red-300 ml-2"
+              className="text-[var(--color-state-error-fg)] hover:opacity-80 ml-2"
             >
               <X size={12} />
             </button>
@@ -220,29 +220,29 @@ export default function ProjectSpecsPage() {
         {/* Tree / flat list */}
         <div className="flex-1 overflow-y-auto py-1">
           {loading ? (
-            <div className="p-4 flex items-center gap-2 text-gray-400 text-sm">
+            <div className="p-4 flex items-center gap-2 text-[var(--color-text-secondary)] text-sm">
               <Loader2 size={14} className="animate-spin" /> Načítavam...
             </div>
           ) : documents.length === 0 ? (
-            <div className="p-4 text-gray-500 text-xs">Žiadne dokumenty</div>
+            <div className="p-4 text-[var(--color-text-muted)] text-xs">Žiadne dokumenty</div>
           ) : viewMode === "all" ? (
             documents.map((doc) => (
               <button
                 key={doc.relative_path}
                 onClick={() => loadDocContent(doc)}
-                className={`w-full text-left p-2 border-b border-gray-700/50 hover:bg-gray-700/50 transition-colors ${
+                className={`w-full text-left p-2 border-b border-[var(--color-border-default)] hover:bg-[var(--color-surface-hover)] transition-colors ${
                   selectedDoc?.relative_path === doc.relative_path
-                    ? "bg-gray-700"
+                    ? "bg-[var(--color-surface-active)]"
                     : ""
                 }`}
               >
                 <div className="flex items-center gap-2">
                   <span aria-hidden="true">📄</span>
-                  <span className="font-medium truncate text-xs text-gray-100">
+                  <span className="font-medium truncate text-xs text-[var(--color-text-primary)]">
                     {doc.filename}
                   </span>
                 </div>
-                <div className="text-[10px] text-gray-500 mt-0.5">
+                <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
                   {doc.category} · {(doc.size_bytes / 1024).toFixed(1)} kB
                 </div>
               </button>
@@ -263,14 +263,14 @@ export default function ProjectSpecsPage() {
           editMode ? (
             <div className="flex-1 flex flex-col p-4 overflow-hidden">
               <div className="flex items-center justify-between mb-3">
-                <div className="text-sm text-gray-300 truncate">
-                  Upraviť: <span className="text-gray-100">{selectedDoc.relative_path}</span>
+                <div className="text-sm text-[var(--color-text-secondary)] truncate">
+                  Upraviť: <span className="text-[var(--color-text-primary)]">{selectedDoc.relative_path}</span>
                 </div>
                 <div className="flex gap-2">
                   <button
                     onClick={saveEdit}
                     disabled={saving}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-500 text-sm font-medium disabled:opacity-50"
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600 text-white rounded hover:bg-primary-500 text-sm font-medium disabled:opacity-50"
                   >
                     {saving ? (
                       <Loader2 size={14} className="animate-spin" />
@@ -281,7 +281,7 @@ export default function ProjectSpecsPage() {
                   </button>
                   <button
                     onClick={() => setEditMode(false)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-700 text-gray-300 rounded hover:bg-gray-600 text-sm"
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-surface-active)] text-[var(--color-text-secondary)] rounded hover:bg-[var(--color-surface-hover)] text-sm"
                   >
                     <X size={14} /> Zrušiť
                   </button>
@@ -290,17 +290,17 @@ export default function ProjectSpecsPage() {
               <textarea
                 value={editContent}
                 onChange={(e) => setEditContent(e.target.value)}
-                className="flex-1 p-3 bg-gray-900 border border-gray-700 rounded text-sm text-gray-100 font-mono resize-none focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="flex-1 p-3 bg-[var(--color-canvas)] border border-[var(--color-border-default)] rounded text-sm text-[var(--color-text-primary)] font-mono resize-none focus:outline-none focus:ring-1 focus:ring-primary-500"
               />
             </div>
           ) : (
             <div className="flex-1 flex flex-col overflow-hidden">
-              <div className="flex items-center justify-between p-3 border-b border-gray-700">
-                <div className="text-sm text-gray-300 truncate">
-                  <span className="text-gray-500">
+              <div className="flex items-center justify-between p-3 border-b border-[var(--color-border-default)]">
+                <div className="text-sm text-[var(--color-text-secondary)] truncate">
+                  <span className="text-[var(--color-text-muted)]">
                     {selectedDoc.is_directory ? "📂" : "📄"}
                   </span>{" "}
-                  <span className="text-gray-100">{selectedDoc.relative_path}</span>
+                  <span className="text-[var(--color-text-primary)]">{selectedDoc.relative_path}</span>
                 </div>
                 {/* Edit button — Markdown files only. Non-.md files
                     (CSV, JSON, etc.) are read-only per service contract;
@@ -314,7 +314,7 @@ export default function ProjectSpecsPage() {
                         setEditContent(docContent);
                         setEditMode(true);
                       }}
-                      className="flex items-center gap-1.5 px-2 py-1 bg-gray-700 text-gray-300 rounded hover:bg-gray-600 text-xs"
+                      className="flex items-center gap-1.5 px-2 py-1 bg-[var(--color-surface-active)] text-[var(--color-text-secondary)] rounded hover:bg-[var(--color-surface-hover)] text-xs"
                     >
                       <Pencil size={12} /> Upraviť
                     </button>
@@ -322,13 +322,13 @@ export default function ProjectSpecsPage() {
               </div>
               <div className="flex-1 overflow-y-auto p-6">
                 {loadingContent ? (
-                  <div className="flex items-center gap-2 text-gray-400">
+                  <div className="flex items-center gap-2 text-[var(--color-text-secondary)]">
                     <Loader2 size={16} className="animate-spin" /> Načítavam obsah...
                   </div>
                 ) : selectedDoc.is_directory ? (
                   // Empty directory placeholder — folder exists on disk
                   // but has no contents yet.
-                  <div className="text-sm text-gray-500 italic">
+                  <div className="text-sm text-[var(--color-text-muted)] italic">
                     Prázdny adresár ({selectedDoc.relative_path}). Pridaj
                     sem súbory cez SSH alebo cez agentov; po obnove sa
                     objavia v strome.
@@ -336,18 +336,18 @@ export default function ProjectSpecsPage() {
                 ) : !docIsText ? (
                   // Binary file — backend returned is_text=false. No
                   // content payload to render; the user can SSH to view.
-                  <div className="text-sm text-gray-400">
+                  <div className="text-sm text-[var(--color-text-secondary)]">
                     <p className="mb-2">
-                      <span className="text-gray-500">⚠️</span> Binárny
+                      <span className="text-[var(--color-text-muted)]">⚠️</span> Binárny
                       súbor — obsah sa nedá zobraziť v prehliadači.
                     </p>
-                    <p className="text-xs text-gray-500">
+                    <p className="text-xs text-[var(--color-text-muted)]">
                       Veľkosť: {(selectedDoc.size_bytes / 1024).toFixed(1)} kB.
                       Pre prezeranie použi SSH alebo lokálny prehliadač.
                     </p>
                   </div>
                 ) : selectedDoc.filename.toLowerCase().endsWith(".md") ? (
-                  <div className="prose prose-invert prose-sm max-w-none">
+                  <div className="prose dark:prose-invert prose-sm max-w-none">
                     <ReactMarkdown
                       remarkPlugins={[remarkGfm]}
                       components={{
@@ -373,7 +373,7 @@ export default function ProjectSpecsPage() {
                           }
                           return (
                             <code
-                              className="bg-gray-800 px-1.5 py-0.5 rounded text-sm"
+                              className="bg-[var(--color-surface)] px-1.5 py-0.5 rounded text-sm"
                               {...props}
                             >
                               {children}
@@ -391,7 +391,7 @@ export default function ProjectSpecsPage() {
                 ) : (
                   // Plain text file (CSV / JSON / YAML / source code /
                   // shell etc.) — render verbatim in monospace.
-                  <pre className="text-xs text-gray-200 font-mono whitespace-pre-wrap break-all">
+                  <pre className="text-xs text-[var(--color-text-primary)] font-mono whitespace-pre-wrap break-all">
                     {docContent}
                   </pre>
                 )}
@@ -399,8 +399,8 @@ export default function ProjectSpecsPage() {
             </div>
           )
         ) : (
-          <div className="flex-1 flex flex-col items-center justify-center text-gray-500">
-            <Eye size={48} className="mb-4 text-gray-600" />
+          <div className="flex-1 flex flex-col items-center justify-center text-[var(--color-text-muted)]">
+            <Eye size={48} className="mb-4 text-[var(--color-text-muted)]" />
             <p className="text-sm">Vyber dokument zo stromu</p>
           </div>
         )}

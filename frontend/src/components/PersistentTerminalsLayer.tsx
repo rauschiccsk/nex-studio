@@ -20,7 +20,7 @@
  * :file:`components/layout/AppLayout.tsx`'s ``<main>`` which is set to
  * ``relative``. Each slot is ``absolute inset-0 z-0`` and is overlaid by
  * :file:`pages/AgentTerminalPage.tsx`'s opaque header chrome
- * (``relative z-10`` + ``bg-slate-900``) so the page header stays visible
+ * (``relative z-10`` + ``bg-[var(--color-surface)]``) so the page header stays visible
  * on top of the terminal viewport without any offset math or portals.
  */
 

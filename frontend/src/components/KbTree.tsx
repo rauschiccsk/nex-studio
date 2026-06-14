@@ -135,12 +135,12 @@ function TreeNodeView({
           type="button"
           onClick={() => onToggle(node.path)}
           style={{ paddingLeft: `${indent}px` }}
-          className="flex w-full items-center gap-1.5 py-1 pr-2 text-left text-sm text-gray-200 hover:bg-gray-700"
+          className="flex w-full items-center gap-1.5 py-1 pr-2 text-left text-sm text-[var(--color-text-primary)] hover:bg-[var(--color-surface-hover)]"
         >
           {isOpen ? (
-            <ChevronDown size={14} className="shrink-0 text-gray-400" />
+            <ChevronDown size={14} className="shrink-0 text-[var(--color-text-secondary)]" />
           ) : (
-            <ChevronRight size={14} className="shrink-0 text-gray-400" />
+            <ChevronRight size={14} className="shrink-0 text-[var(--color-text-secondary)]" />
           )}
           <span
             className="shrink-0 text-base leading-none"
@@ -175,8 +175,8 @@ function TreeNodeView({
       className={[
         "flex w-full items-center gap-1.5 py-1 pr-2 text-left text-sm",
         isSelected
-          ? "bg-blue-700 text-white"
-          : "text-gray-300 hover:bg-gray-700",
+          ? "bg-[var(--color-accent-primary)] text-white"
+          : "text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]",
       ].join(" ")}
     >
       {/* chevron-spacer so files align with folder names */}

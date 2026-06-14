@@ -67,7 +67,7 @@ type Composer = { action: PipelineActionName; label: string; field: string } | n
 
 const btn =
   "inline-flex w-fit items-center gap-1.5 rounded px-3 py-1.5 text-xs font-medium disabled:opacity-50";
-const hintCls = "pl-0.5 text-[10px] leading-tight text-slate-500";
+const hintCls = "pl-0.5 text-[10px] leading-tight text-[var(--color-text-muted)]";
 
 // One action = button + its consequence line, stacked.
 function ActionRow({ hint, children }: { hint?: string; children: ReactNode }) {
@@ -164,7 +164,7 @@ export function PipelineActionBar({
           onChange={(e) => setText(e.target.value)}
           placeholder={composer.label}
           rows={3}
-          className="w-full resize-none rounded border border-slate-700 bg-slate-900 px-2 py-1.5 text-xs text-slate-200 focus:border-primary-500 focus:outline-none"
+          className="w-full resize-none rounded border border-[var(--color-border-default)] bg-[var(--color-canvas)] px-2 py-1.5 text-xs text-[var(--color-text-primary)] focus:border-primary-500 focus:outline-none"
         />
         <div className="flex items-center gap-2">
           <button
@@ -178,7 +178,7 @@ export function PipelineActionBar({
           <button
             onClick={() => setComposer(null)}
             disabled={inFlight}
-            className={`${btn} border border-slate-700 text-slate-400 hover:text-slate-200`}
+            className={`${btn} border border-[var(--color-border-default)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]`}
           >
             Zrušiť
           </button>
@@ -189,7 +189,7 @@ export function PipelineActionBar({
 
   return (
     <div className="flex flex-col gap-2.5">
-      {inFlight && <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-500" />}
+      {inFlight && <Loader2 className="h-3.5 w-3.5 animate-spin text-[var(--color-text-muted)]" />}
 
       {/* One-click affirmative for an AGENT question with no ratify gate (CR 2026-06-12): a build
           question-block offers no "Schváliť podľa Návrhára" (approve@build = sign off the WHOLE build,
@@ -244,7 +244,7 @@ export function PipelineActionBar({
               <button
                 onClick={() => openComposer({ action: "return", label: "Vrátiť s komentárom", field: "comment" })}
                 disabled={inFlight}
-                className={`${btn} border border-red-500/40 text-red-300 hover:bg-red-500/10`}
+                className={`${btn} border border-[var(--color-state-error-bg)] text-[var(--color-state-error-fg)] hover:bg-[var(--color-state-error-bg)]`}
               >
                 Vrátiť
               </button>
@@ -281,7 +281,7 @@ export function PipelineActionBar({
             <button
               onClick={() => onAction("leave")}
               disabled={inFlight}
-              className={`${btn} border border-slate-600 text-slate-300 hover:bg-slate-800`}
+              className={`${btn} border border-[var(--color-border-strong)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]`}
             >
               Ponechať
             </button>
@@ -305,7 +305,7 @@ export function PipelineActionBar({
             <button
               onClick={() => openComposer({ action: "return", label: "Vrátiť s komentárom", field: "comment" })}
               disabled={inFlight}
-              className={`${btn} border border-red-500/40 text-red-300 hover:bg-red-500/10`}
+              className={`${btn} border border-[var(--color-state-error-bg)] text-[var(--color-state-error-fg)] hover:bg-[var(--color-state-error-bg)]`}
             >
               Vrátiť
             </button>
@@ -320,7 +320,7 @@ export function PipelineActionBar({
             <button
               onClick={() => onAction("end_gate_e")}
               disabled={inFlight || gateEOpen}
-              className={`${btn} border border-slate-600 text-slate-300 hover:bg-slate-800`}
+              className={`${btn} border border-[var(--color-border-strong)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]`}
             >
               Ukončiť Gate E
             </button>
@@ -349,7 +349,7 @@ export function PipelineActionBar({
             <button
               onClick={() => openComposer({ action: "return", label: "Vrátiť s komentárom", field: "comment" })}
               disabled={inFlight}
-              className={`${btn} border border-red-500/40 text-red-300 hover:bg-red-500/10`}
+              className={`${btn} border border-[var(--color-state-error-bg)] text-[var(--color-state-error-fg)] hover:bg-[var(--color-state-error-bg)]`}
             >
               Vrátiť
             </button>
@@ -384,7 +384,7 @@ export function PipelineActionBar({
               <button
                 onClick={() => setShowRegateChips((s) => !s)}
                 disabled={inFlight}
-                className={`${btn} border border-slate-700 text-slate-300 hover:bg-slate-800`}
+                className={`${btn} border border-[var(--color-border-default)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]`}
               >
                 Iná fáza
               </button>
@@ -395,7 +395,7 @@ export function PipelineActionBar({
                       key={s}
                       onClick={() => onAction("verdict", { verdict: "FAIL", entry_stage: s })}
                       disabled={inFlight}
-                      className={`${btn} border border-slate-700 text-slate-300 hover:bg-slate-800`}
+                      className={`${btn} border border-[var(--color-border-default)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]`}
                     >
                       {STAGE_LABELS[s]}
                     </button>
@@ -487,7 +487,7 @@ export function PipelineActionBar({
               <button
                 onClick={() => openComposer({ action: "return", label: "Vrátiť úlohu s komentárom", field: "comment" })}
                 disabled={inFlight}
-                className={`${btn} border border-red-500/40 text-red-300 hover:bg-red-500/10`}
+                className={`${btn} border border-[var(--color-state-error-bg)] text-[var(--color-state-error-fg)] hover:bg-[var(--color-state-error-bg)]`}
               >
                 Vrátiť úlohu
               </button>
@@ -504,7 +504,7 @@ export function PipelineActionBar({
               <button
                 onClick={() => onAction("end_build")}
                 disabled={inFlight || !buildEndReady}
-                className={`${btn} border border-slate-600 text-slate-300 hover:bg-slate-800`}
+                className={`${btn} border border-[var(--color-border-strong)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]`}
               >
                 Ukončiť build (zvyšok do auditu)
               </button>
@@ -518,7 +518,7 @@ export function PipelineActionBar({
               <button
                 onClick={() => onAction("accept_merged")}
                 disabled={inFlight}
-                className={`${btn} border border-sky-500/40 text-sky-300 hover:bg-sky-500/10`}
+                className={`${btn} border border-[var(--color-state-info-bg)] text-[var(--color-state-info-fg)] hover:bg-[var(--color-state-info-bg)]`}
               >
                 Uznať spoločný commit
               </button>
@@ -554,7 +554,7 @@ export function PipelineActionBar({
               <button
                 onClick={() => onAction("end_build")}
                 disabled={inFlight || !buildEndReady}
-                className={`${btn} border border-slate-600 text-slate-300 hover:bg-slate-800`}
+                className={`${btn} border border-[var(--color-border-strong)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]`}
               >
                 Ukončiť build (zvyšok do auditu)
               </button>
@@ -597,7 +597,7 @@ export function PipelineActionBar({
           <button
             onClick={() => onAction("pause")}
             disabled={inFlight}
-            className={`${btn} border border-slate-700 text-slate-300 hover:bg-slate-800`}
+            className={`${btn} border border-[var(--color-border-default)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]`}
           >
             Pauza
           </button>
@@ -625,7 +625,7 @@ export function PipelineActionBar({
               })
             }
             disabled={inFlight}
-            className={`${btn} border border-slate-700 text-slate-300 hover:bg-slate-800`}
+            className={`${btn} border border-[var(--color-border-default)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]`}
           >
             {gateE ? "Konzultovať s Koordinátorom" : "Otázka"}
           </button>

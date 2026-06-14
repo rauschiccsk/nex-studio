@@ -18,7 +18,7 @@
  *   B. ``selectedProject`` set, no active session for ``(user, role)``
  *      → "Spustiť <role> pre <project>" button → store ``spawn`` action.
  *   C. Active session running → header chrome stays at the top of the
- *      page (``relative z-10`` + opaque ``bg-slate-900`` so it visually
+ *      page (``relative z-10`` + opaque ``bg-[var(--color-surface)]`` so it visually
  *      sits ON TOP of the layer's terminal); the body is an empty
  *      placeholder ``flex-1`` div — the actual xterm viewport bleeds
  *      through from the layer below at ``z-0``.
@@ -81,14 +81,14 @@ export default function AgentTerminalPage({ role }: AgentTerminalPageProps) {
 
   if (!isDirector) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 bg-slate-950 p-6 text-center">
-        <Lock className="h-10 w-10 text-slate-700" />
-        <h2 className="text-sm font-semibold text-slate-300">
+      <div className="flex h-full flex-col items-center justify-center gap-3 bg-[var(--color-canvas)] p-6 text-center">
+        <Lock className="h-10 w-10 text-[var(--color-text-muted)]" />
+        <h2 className="text-sm font-semibold text-[var(--color-text-secondary)]">
           {ROLE_LABEL[role]} terminál
         </h2>
-        <p className="max-w-md text-xs text-slate-500">
+        <p className="max-w-md text-xs text-[var(--color-text-muted)]">
           Embedded agent terminál je v1 dostupný iba pre rolu{" "}
-          <code className="rounded bg-slate-800 px-1 py-0.5">ri</code>{" "}
+          <code className="rounded bg-[var(--color-surface)] px-1 py-0.5">ri</code>{" "}
           (Director). Per-project membership pre <code>ha</code> a{" "}
           <code>shu</code> príde v ďalšej iterácii.
         </p>
@@ -105,26 +105,26 @@ export default function AgentTerminalPage({ role }: AgentTerminalPageProps) {
       : session?.project_slug ?? "";
 
   return (
-    <div className="flex h-full flex-col bg-slate-950">
+    <div className="flex h-full flex-col bg-[var(--color-canvas)]">
       {/* Header chrome — relative z-10 so it sits above the layer terminal
           when the body is the empty State C placeholder. Opaque
-          bg-slate-900 visually masks the top edge of the xterm viewport. */}
-      <div className="relative z-10 flex flex-shrink-0 items-center justify-between gap-3 border-b border-slate-800 bg-slate-900 px-4 py-2.5">
+          bg-[var(--color-surface)] visually masks the top edge of the xterm viewport. */}
+      <div className="relative z-10 flex flex-shrink-0 items-center justify-between gap-3 border-b border-[var(--color-border-default)] bg-[var(--color-surface)] px-4 py-2.5">
         <div className="flex min-w-0 items-center gap-3">
-          <h1 className="text-sm font-semibold text-slate-100">
+          <h1 className="text-sm font-semibold text-[var(--color-text-primary)]">
             {ROLE_LABEL[role]}
           </h1>
           {session ? (
             <>
-              <span className="text-xs text-slate-600">·</span>
-              <span className="truncate font-mono text-xs text-slate-400">
+              <span className="text-xs text-[var(--color-text-muted)]">·</span>
+              <span className="truncate font-mono text-xs text-[var(--color-text-secondary)]">
                 {sessionProjectLabel}
               </span>
             </>
           ) : selectedProject ? (
             <>
-              <span className="text-xs text-slate-600">·</span>
-              <span className="truncate font-mono text-xs text-slate-500">
+              <span className="text-xs text-[var(--color-text-muted)]">·</span>
+              <span className="truncate font-mono text-xs text-[var(--color-text-muted)]">
                 {selectedProject.name}
               </span>
             </>
@@ -133,14 +133,14 @@ export default function AgentTerminalPage({ role }: AgentTerminalPageProps) {
 
         <div className="flex items-center gap-2">
           {session && (
-            <span className="flex items-center gap-1.5 rounded-full bg-green-500/10 px-2 py-0.5 text-[10px] text-green-400">
-              <span className="h-1.5 w-1.5 rounded-full bg-green-400" />
+            <span className="flex items-center gap-1.5 rounded-full bg-[var(--color-state-success-bg)] px-2 py-0.5 text-[10px] text-[var(--color-state-success-fg)]">
+              <span className="h-1.5 w-1.5 rounded-full bg-[var(--color-status-success)]" />
               beží · pid {session.pid}
             </span>
           )}
           <button
             onClick={() => void refresh()}
-            className="text-slate-500 transition-colors hover:text-slate-200"
+            className="text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text-primary)]"
             title="Obnoviť"
           >
             <RefreshCw className="h-3.5 w-3.5" />
@@ -149,7 +149,7 @@ export default function AgentTerminalPage({ role }: AgentTerminalPageProps) {
             <button
               onClick={() => void handleEndSession()}
               disabled={ending}
-              className="flex items-center gap-1 rounded border border-red-500/40 px-2 py-0.5 text-xs text-red-400 transition-colors hover:bg-red-500/10 disabled:opacity-40"
+              className="flex items-center gap-1 rounded border border-[var(--color-state-error-bg)] px-2 py-0.5 text-xs text-[var(--color-state-error-fg)] transition-colors hover:bg-[var(--color-state-error-bg)] disabled:opacity-40"
               title="Ukončí session (SIGTERM)"
             >
               <X className="h-3 w-3" />
@@ -161,7 +161,7 @@ export default function AgentTerminalPage({ role }: AgentTerminalPageProps) {
 
       {/* Error banner — relative z-10 same as header. */}
       {error && (
-        <div className="relative z-10 flex-shrink-0 border-b border-red-500/30 bg-red-500/10 px-4 py-2 text-xs text-red-400">
+        <div className="relative z-10 flex-shrink-0 border-b border-[var(--color-state-error-bg)] bg-[var(--color-state-error-bg)] px-4 py-2 text-xs text-[var(--color-state-error-fg)]">
           {error}
         </div>
       )}
@@ -169,7 +169,7 @@ export default function AgentTerminalPage({ role }: AgentTerminalPageProps) {
       {/* Body */}
       <div className="flex-1 overflow-hidden">
         {loading || spawning ? (
-          <div className="flex h-full items-center justify-center gap-2 text-xs text-slate-500">
+          <div className="flex h-full items-center justify-center gap-2 text-xs text-[var(--color-text-muted)]">
             <Loader2 className="h-4 w-4 animate-spin" />
             {spawning ? "Spúšťam claude CLI…" : "Načítavam stav…"}
           </div>
@@ -182,11 +182,11 @@ export default function AgentTerminalPage({ role }: AgentTerminalPageProps) {
         ) : !selectedProject ? (
           // State A — no project pinned: CTA to /projects.
           <div className="flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
-            <FolderOpen className="h-10 w-10 text-slate-700" />
-            <h2 className="text-sm font-semibold text-slate-300">
+            <FolderOpen className="h-10 w-10 text-[var(--color-text-muted)]" />
+            <h2 className="text-sm font-semibold text-[var(--color-text-secondary)]">
               Nemáš vybraný projekt
             </h2>
-            <p className="max-w-md text-xs text-slate-500">
+            <p className="max-w-md text-xs text-[var(--color-text-muted)]">
               {ROLE_LABEL[role]} sa spúšťa nad konkrétnym projektom. Otvor{" "}
               <span className="font-mono">Projekty</span> a klikni na pin
               ikonu pri projekte, ktorý chceš označiť ako{" "}
@@ -202,7 +202,7 @@ export default function AgentTerminalPage({ role }: AgentTerminalPageProps) {
         ) : (
           // State B — project pinned, no active session: spawn CTA.
           <div className="flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-[var(--color-text-muted)]">
               Žiadna aktívna {ROLE_LABEL[role]} session.
             </p>
             <button

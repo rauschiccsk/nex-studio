@@ -124,7 +124,7 @@ export function ExchangePanel({ board, inFlight, activity, onAction }: Props) {
     <div className="flex h-full flex-col">
       {state && (
         <div className={`flex-shrink-0 border-b px-4 py-2.5 text-xs ${banner}`}>
-          <span className="font-medium text-slate-100">{bannerText(state, isErrorBlock)}</span>
+          <span className="font-medium text-[var(--color-text-primary)]">{bannerText(state, isErrorBlock)}</span>
         </div>
       )}
 
@@ -143,7 +143,7 @@ export function ExchangePanel({ board, inFlight, activity, onAction }: Props) {
 
       <div ref={threadRef} className="flex-1 space-y-2 overflow-y-auto p-4">
         {recent_messages.length === 0 ? (
-          <div className="py-8 text-center text-xs text-slate-500">
+          <div className="py-8 text-center text-xs text-[var(--color-text-muted)]">
             Zatiaľ žiadne správy v pipeline.
           </div>
         ) : (
@@ -165,7 +165,7 @@ export function ExchangePanel({ board, inFlight, activity, onAction }: Props) {
         </div>
       )}
 
-      <div className="flex-shrink-0 border-t border-slate-800 p-3">
+      <div className="flex-shrink-0 border-t border-[var(--color-border-default)] p-3">
         <PipelineActionBar
           state={state}
           availableActions={board.available_actions}

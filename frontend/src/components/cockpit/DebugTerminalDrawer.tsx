@@ -56,22 +56,22 @@ export function DebugTerminalDrawer({ versionId, currentActor }: Props) {
   };
 
   return (
-    <div className="flex flex-col border-t border-slate-800 bg-slate-950">
+    <div className="flex flex-col border-t border-[var(--color-border-default)] bg-[var(--color-canvas)]">
       <button
         onClick={toggle}
-        className="flex items-center justify-between px-4 py-2 text-xs text-slate-400 hover:text-slate-200"
+        className="flex items-center justify-between px-4 py-2 text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
       >
         <span className="flex items-center gap-2">
           {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronUp className="h-3.5 w-3.5" />}
           Terminál (debug)
         </span>
-        <span className="text-[10px] text-slate-600">{expanded ? "zbaliť" : "rozbaliť"}</span>
+        <span className="text-[10px] text-[var(--color-text-muted)]">{expanded ? "zbaliť" : "rozbaliť"}</span>
       </button>
 
       {expanded && (
         <div className="flex h-64 flex-col">
-          <div className="flex flex-shrink-0 items-center gap-2 border-b border-slate-800 px-4 py-1.5">
-            <span className="text-[10px] text-slate-500">Pripojiť na:</span>
+          <div className="flex flex-shrink-0 items-center gap-2 border-b border-[var(--color-border-default)] px-4 py-1.5">
+            <span className="text-[10px] text-[var(--color-text-muted)]">Pripojiť na:</span>
             {TERMINAL_ROLES.map((r) => (
               <button
                 key={r}
@@ -79,18 +79,18 @@ export function DebugTerminalDrawer({ versionId, currentActor }: Props) {
                 disabled={loading}
                 className={`rounded px-1.5 py-0.5 text-[10px] ${
                   r === role
-                    ? "bg-primary-500/20 text-primary-300"
-                    : "text-slate-500 hover:text-slate-300"
+                    ? "bg-[var(--color-accent-primary)] text-white"
+                    : "text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]"
                 }`}
               >
                 {r}
               </button>
             ))}
-            {loading && <Loader2 className="h-3 w-3 animate-spin text-slate-500" />}
+            {loading && <Loader2 className="h-3 w-3 animate-spin text-[var(--color-text-muted)]" />}
           </div>
 
           {error && (
-            <div className="border-b border-red-500/30 bg-red-500/10 px-4 py-1.5 text-[11px] text-red-400">
+            <div className="border-b border-[var(--color-state-error-bg)] bg-[var(--color-state-error-bg)] px-4 py-1.5 text-[11px] text-[var(--color-state-error-fg)]">
               {error}
             </div>
           )}
@@ -100,7 +100,7 @@ export function DebugTerminalDrawer({ versionId, currentActor }: Props) {
               <AgentTerminal sessionId={sessionId} token={token} />
             ) : (
               !error && (
-                <div className="flex h-full items-center justify-center text-[11px] text-slate-600">
+                <div className="flex h-full items-center justify-center text-[11px] text-[var(--color-text-muted)]">
                   {loading ? "Pripájam terminál…" : "Vyber rolu pre pripojenie."}
                 </div>
               )

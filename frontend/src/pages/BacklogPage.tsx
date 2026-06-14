@@ -23,17 +23,17 @@ type View = "backlog" | "history";
 const PRIORITIES: BacklogPriority[] = ["low", "medium", "high", "critical"];
 
 const PRIORITY_CLS: Record<BacklogPriority, string> = {
-  low: "bg-slate-700/40 text-slate-400",
-  medium: "bg-sky-500/15 text-sky-400",
-  high: "bg-amber-500/15 text-amber-400",
-  critical: "bg-red-500/15 text-red-400",
+  low: "bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)]",
+  medium: "bg-[var(--color-state-info-bg)] text-[var(--color-state-info-fg)]",
+  high: "bg-[var(--color-state-warning-bg)] text-[var(--color-state-warning-fg)]",
+  critical: "bg-[var(--color-state-error-bg)] text-[var(--color-state-error-fg)]",
 };
 
 const STATUS_CLS: Record<BacklogStatus, string> = {
-  open: "bg-slate-700/40 text-slate-300",
-  included: "bg-indigo-500/15 text-indigo-400",
-  realized: "bg-green-500/15 text-green-400",
-  rejected: "bg-red-500/10 text-red-500/80",
+  open: "bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)]",
+  included: "bg-[var(--color-accent-primary)]/15 text-[var(--color-accent-primary)]",
+  realized: "bg-[var(--color-state-success-bg)] text-[var(--color-state-success-fg)]",
+  rejected: "bg-[var(--color-state-error-bg)] text-[var(--color-state-error-fg)]",
 };
 
 const STATUS_LABEL: Record<BacklogStatus, string> = {
@@ -227,7 +227,7 @@ export default function BacklogPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-20 text-slate-500 text-sm gap-2">
+      <div className="flex items-center justify-center py-20 text-[var(--color-text-muted)] text-sm gap-2">
         <Loader2 className="w-4 h-4 animate-spin" /> Načítavam…
       </div>
     );
@@ -236,7 +236,7 @@ export default function BacklogPage() {
   if (error || !project) {
     return (
       <div className="p-6 max-w-5xl mx-auto">
-        <div className="rounded-lg bg-red-500/10 border border-red-500/30 p-4 text-sm text-red-400">
+        <div className="rounded-lg bg-[var(--color-state-error-bg)] border border-[var(--color-state-error-bg)] p-4 text-sm text-[var(--color-state-error-fg)]">
           {error || "Projekt nebol nájdený."}
         </div>
       </div>
@@ -247,7 +247,7 @@ export default function BacklogPage() {
     <div className="p-6 max-w-5xl mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between mb-1">
-        <h1 className="text-base font-bold text-slate-100">Zásobník</h1>
+        <h1 className="text-base font-bold text-[var(--color-text-primary)]">Zásobník</h1>
         <button
           onClick={() => setShowNew((v) => !v)}
           className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-primary-600 hover:bg-primary-500 rounded-lg transition-colors"
@@ -255,32 +255,32 @@ export default function BacklogPage() {
           <Plus size={14} /> Nová požiadavka
         </button>
       </div>
-      <p className="text-xs text-slate-600 mb-4">
-        Budúce zákaznícke požiadavky pre <span className="text-slate-400">{project.name}</span> (REQ-N).
+      <p className="text-xs text-[var(--color-text-muted)] mb-4">
+        Budúce zákaznícke požiadavky pre <span className="text-[var(--color-text-secondary)]">{project.name}</span> (REQ-N).
         Priradením k verzii sa stanú jej požiadavkami; po vydaní verzie sa automaticky realizujú.
       </p>
 
       {/* New-requirement form */}
       {showNew && (
-        <div className="rounded-lg border border-slate-700 bg-slate-900 p-4 mb-4 space-y-3">
+        <div className="rounded-lg border border-[var(--color-border-default)] bg-[var(--color-canvas)] p-4 mb-4 space-y-3">
           <input
             value={newTitle}
             onChange={(e) => setNewTitle(e.target.value)}
             placeholder="Názov požiadavky"
-            className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
+            className="w-full bg-[var(--color-surface)] border border-[var(--color-border-default)] rounded px-3 py-1.5 text-sm text-[var(--color-text-primary)] focus:outline-none focus:border-primary-500"
           />
           <textarea
             value={newDesc}
             onChange={(e) => setNewDesc(e.target.value)}
             placeholder="Popis (voliteľný)"
             rows={2}
-            className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-primary-500"
+            className="w-full bg-[var(--color-surface)] border border-[var(--color-border-default)] rounded px-3 py-1.5 text-xs text-[var(--color-text-primary)] focus:outline-none focus:border-primary-500"
           />
           <div className="flex items-center gap-3">
             <select
               value={newPriority}
               onChange={(e) => setNewPriority(e.target.value as BacklogPriority)}
-              className="bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-primary-500"
+              className="bg-[var(--color-surface)] border border-[var(--color-border-default)] rounded px-2 py-1.5 text-xs text-[var(--color-text-primary)] focus:outline-none focus:border-primary-500"
             >
               {PRIORITIES.map((p) => (
                 <option key={p} value={p}>
@@ -295,13 +295,13 @@ export default function BacklogPage() {
             >
               {creating ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Vytvoriť
             </button>
-            {rowError.__new__ && <span className="text-xs text-red-400">{rowError.__new__}</span>}
+            {rowError.__new__ && <span className="text-xs text-[var(--color-status-error)]">{rowError.__new__}</span>}
           </div>
         </div>
       )}
 
       {/* View tabs */}
-      <div className="flex items-center gap-0 border-b border-slate-800 mb-4">
+      <div className="flex items-center gap-0 border-b border-[var(--color-border-default)] mb-4">
         {(["backlog", "history"] as View[]).map((t) => (
           <button
             key={t}
@@ -309,7 +309,7 @@ export default function BacklogPage() {
             className={`px-4 py-2 text-xs font-medium border-b-2 -mb-px transition-colors ${
               view === t
                 ? "border-primary-500 text-primary-400"
-                : "border-transparent text-slate-500 hover:text-slate-300"
+                : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]"
             }`}
           >
             {t === "backlog" ? `Zásobník (${backlogItems.length})` : `História (${realizedItems.length})`}
@@ -320,11 +320,11 @@ export default function BacklogPage() {
       {/* Backlog view */}
       {view === "backlog" &&
         (backlogItems.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-slate-800 p-10 text-center text-sm text-slate-500">
+          <div className="rounded-xl border border-dashed border-[var(--color-border-default)] p-10 text-center text-sm text-[var(--color-text-muted)]">
             Žiadne otvorené požiadavky. Pridaj prvú cez „Nová požiadavka".
           </div>
         ) : (
-          <div className="rounded-lg border border-slate-700 bg-slate-900 divide-y divide-slate-800">
+          <div className="rounded-lg border border-[var(--color-border-default)] bg-[var(--color-canvas)] divide-y divide-[var(--color-border-default)]">
             {backlogItems.map((it) => (
               <div key={it.id} className="p-4">
                 {editingId === it.id ? (
@@ -332,19 +332,19 @@ export default function BacklogPage() {
                     <input
                       value={editTitle}
                       onChange={(e) => setEditTitle(e.target.value)}
-                      className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
+                      className="w-full bg-[var(--color-surface)] border border-[var(--color-border-default)] rounded px-3 py-1.5 text-sm text-[var(--color-text-primary)] focus:outline-none focus:border-primary-500"
                     />
                     <textarea
                       value={editDesc}
                       onChange={(e) => setEditDesc(e.target.value)}
                       rows={2}
-                      className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-primary-500"
+                      className="w-full bg-[var(--color-surface)] border border-[var(--color-border-default)] rounded px-3 py-1.5 text-xs text-[var(--color-text-primary)] focus:outline-none focus:border-primary-500"
                     />
                     <div className="flex items-center gap-2">
                       <select
                         value={editPriority}
                         onChange={(e) => setEditPriority(e.target.value as BacklogPriority)}
-                        className="bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-primary-500"
+                        className="bg-[var(--color-surface)] border border-[var(--color-border-default)] rounded px-2 py-1.5 text-xs text-[var(--color-text-primary)] focus:outline-none focus:border-primary-500"
                       >
                         {PRIORITIES.map((p) => (
                           <option key={p} value={p}>
@@ -361,7 +361,7 @@ export default function BacklogPage() {
                       </button>
                       <button
                         onClick={() => setEditingId(null)}
-                        className="flex items-center gap-1 px-2.5 py-1.5 text-xs text-slate-300 bg-slate-700 hover:bg-slate-600 rounded"
+                        className="flex items-center gap-1 px-2.5 py-1.5 text-xs text-[var(--color-text-secondary)] bg-[var(--color-surface-active)] hover:bg-[var(--color-surface-hover)] rounded"
                       >
                         <X size={13} /> Zrušiť
                       </button>
@@ -372,7 +372,7 @@ export default function BacklogPage() {
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
-                          <span className="text-xs font-mono text-slate-500">REQ-{it.number}</span>
+                          <span className="text-xs font-mono text-[var(--color-text-muted)]">REQ-{it.number}</span>
                           <span className={`text-[10px] px-1.5 py-0.5 rounded ${PRIORITY_CLS[it.priority]}`}>
                             {it.priority}
                           </span>
@@ -383,9 +383,9 @@ export default function BacklogPage() {
                               : ""}
                           </span>
                         </div>
-                        <div className="text-sm text-slate-200 mt-1">{it.title}</div>
+                        <div className="text-sm text-[var(--color-text-primary)] mt-1">{it.title}</div>
                         {it.description && (
-                          <div className="text-xs text-slate-500 mt-0.5">{it.description}</div>
+                          <div className="text-xs text-[var(--color-text-muted)] mt-0.5">{it.description}</div>
                         )}
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
@@ -395,14 +395,14 @@ export default function BacklogPage() {
                             setAssignVersionId(it.version_id ?? "");
                             setEditingId(null);
                           }}
-                          className="px-2 py-1 text-[11px] text-indigo-400 bg-indigo-500/10 hover:bg-indigo-500/20 rounded"
+                          className="px-2 py-1 text-[11px] text-[var(--color-accent-primary)] bg-[var(--color-accent-primary)]/10 hover:bg-[var(--color-accent-primary)]/20 rounded"
                         >
                           Priradiť k verzii
                         </button>
                         <button
                           onClick={() => startEdit(it)}
                           title="Upraviť"
-                          className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded"
+                          className="p-1.5 text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-hover)] rounded"
                         >
                           <Pencil size={13} />
                         </button>
@@ -410,7 +410,7 @@ export default function BacklogPage() {
                           onClick={() => handleReject(it.id)}
                           disabled={busyId === it.id}
                           title="Zamietnuť"
-                          className="px-2 py-1 text-[11px] text-red-400 bg-red-500/10 hover:bg-red-500/20 disabled:opacity-40 rounded"
+                          className="px-2 py-1 text-[11px] text-[var(--color-state-error-fg)] bg-[var(--color-state-error-bg)] hover:bg-[var(--color-state-error-bg)] disabled:opacity-40 rounded"
                         >
                           Zamietnuť
                         </button>
@@ -419,7 +419,7 @@ export default function BacklogPage() {
                             onClick={() => handleDelete(it.id)}
                             disabled={busyId === it.id}
                             title="Zmazať"
-                            className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-slate-800 disabled:opacity-40 rounded"
+                            className="p-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-status-error)] hover:bg-[var(--color-surface-hover)] disabled:opacity-40 rounded"
                           >
                             <Trash2 size={13} />
                           </button>
@@ -431,7 +431,7 @@ export default function BacklogPage() {
                         <select
                           value={assignVersionId}
                           onChange={(e) => setAssignVersionId(e.target.value)}
-                          className="bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-primary-500"
+                          className="bg-[var(--color-surface)] border border-[var(--color-border-default)] rounded px-2 py-1.5 text-xs text-[var(--color-text-primary)] focus:outline-none focus:border-primary-500"
                         >
                           <option value="">— vyber verziu —</option>
                           {assignableVersions.map((v) => (
@@ -449,7 +449,7 @@ export default function BacklogPage() {
                         </button>
                       </div>
                     )}
-                    {rowError[it.id] && <div className="text-xs text-red-400 mt-1">{rowError[it.id]}</div>}
+                    {rowError[it.id] && <div className="text-xs text-[var(--color-status-error)] mt-1">{rowError[it.id]}</div>}
                   </>
                 )}
               </div>
@@ -460,22 +460,22 @@ export default function BacklogPage() {
       {/* História view */}
       {view === "history" &&
         (realizedItems.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-slate-800 p-10 text-center text-sm text-slate-500">
+          <div className="rounded-xl border border-dashed border-[var(--color-border-default)] p-10 text-center text-sm text-[var(--color-text-muted)]">
             Zatiaľ nič realizované. Požiadavky sa realizujú po vydaní verzie, ku ktorej sú priradené.
           </div>
         ) : (
           <div className="space-y-4">
             {historyGroups.map(([versionId, group]) => (
-              <div key={versionId} className="rounded-lg border border-slate-800 bg-slate-900">
-                <div className="px-4 py-2 border-b border-slate-800 text-xs font-semibold text-green-400">
+              <div key={versionId} className="rounded-lg border border-[var(--color-border-default)] bg-[var(--color-canvas)]">
+                <div className="px-4 py-2 border-b border-[var(--color-border-default)] text-xs font-semibold text-[var(--color-status-success)]">
                   {versionNumber[versionId] ?? "Neznáma verzia"}
-                  <span className="text-slate-600 font-normal"> · {group.length} realizovaných</span>
+                  <span className="text-[var(--color-text-muted)] font-normal"> · {group.length} realizovaných</span>
                 </div>
-                <div className="divide-y divide-slate-800">
+                <div className="divide-y divide-[var(--color-border-default)]">
                   {group.map((it) => (
                     <div key={it.id} className="px-4 py-2.5 flex items-center gap-2">
-                      <span className="text-xs font-mono text-slate-500">REQ-{it.number}</span>
-                      <span className="text-sm text-slate-300">{it.title}</span>
+                      <span className="text-xs font-mono text-[var(--color-text-muted)]">REQ-{it.number}</span>
+                      <span className="text-sm text-[var(--color-text-secondary)]">{it.title}</span>
                     </div>
                   ))}
                 </div>

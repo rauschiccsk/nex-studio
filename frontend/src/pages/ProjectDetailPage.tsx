@@ -24,9 +24,9 @@ function PipelineBar({ version }: { version: Version }) {
       {Array.from({ length: STEPS }, (_, i) => {
         const n = i + 1;
         let cls = "h-1.5 flex-1 rounded-full ";
-        if (n < done) cls += "bg-green-500";
+        if (n < done) cls += "bg-[var(--color-status-success)]";
         else if (n === done && done > 0) cls += "bg-primary-500 ring-1 ring-primary-400/40";
-        else cls += "bg-slate-700";
+        else cls += "bg-[var(--color-surface-active)]";
         return <div key={i} className={cls} />;
       })}
     </div>
@@ -36,9 +36,9 @@ function PipelineBar({ version }: { version: Version }) {
 // ─── Version card ─────────────────────────────────────────────────────────────
 
 function versionStatusCls(status: string) {
-  if (status === "active") return "bg-yellow-500/15 border border-yellow-500/30 text-yellow-400";
-  if (status === "released") return "bg-green-500/10 border border-green-500/25 text-green-400";
-  return "bg-slate-700/60 border border-slate-600 text-slate-400";
+  if (status === "active") return "bg-[var(--color-state-warning-bg)] border border-[var(--color-state-warning-bg)] text-[var(--color-state-warning-fg)]";
+  if (status === "released") return "bg-[var(--color-state-success-bg)] border border-[var(--color-state-success-bg)] text-[var(--color-state-success-fg)]";
+  return "bg-[var(--color-surface-hover)] border border-[var(--color-border-strong)] text-[var(--color-text-secondary)]";
 }
 
 function versionStatusLabel(status: string) {
@@ -54,29 +54,29 @@ function VersionCard({ version, onOpen }: { version: Version; onOpen: () => void
 
   return (
     <div
-      className="rounded-xl border border-slate-800 bg-slate-900 overflow-hidden mb-3 cursor-pointer hover:border-slate-700 transition-colors"
+      className="rounded-xl border border-[var(--color-border-default)] bg-[var(--color-canvas)] overflow-hidden mb-3 cursor-pointer hover:border-[var(--color-border-default)] transition-colors"
       onClick={onOpen}
     >
-      <div className="px-5 py-3 border-b border-slate-800 flex items-center justify-between">
+      <div className="px-5 py-3 border-b border-[var(--color-border-default)] flex items-center justify-between">
         <div className="flex items-center gap-3">
           <span className="font-mono font-bold text-primary-400 text-sm">{version.version_number}</span>
           {version.name && (
-            <span className="text-slate-300 text-sm font-medium">{version.name}</span>
+            <span className="text-[var(--color-text-secondary)] text-sm font-medium">{version.name}</span>
           )}
           <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${versionStatusCls(version.status)}`}>
             {versionStatusLabel(version.status)}
           </span>
         </div>
-        <div className="flex items-center gap-3 text-xs text-slate-400">
+        <div className="flex items-center gap-3 text-xs text-[var(--color-text-secondary)]">
           <span>Vytvorené {dateStr}</span>
-          <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg className="w-4 h-4 text-[var(--color-text-muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
           </svg>
         </div>
       </div>
       <div className="px-5 py-4">
         <PipelineBar version={version} />
-        <div className="flex items-center justify-between text-xs text-slate-500">
+        <div className="flex items-center justify-between text-xs text-[var(--color-text-muted)]">
           <span>{version.bug_count} bugov · {version.epics_done}/{version.epic_count} epikov hotových</span>
           <span className="text-primary-400 font-medium">Pokračovať →</span>
         </div>
@@ -134,7 +134,7 @@ export default function ProjectDetailPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-20 text-slate-500 text-sm gap-2">
+      <div className="flex items-center justify-center py-20 text-[var(--color-text-muted)] text-sm gap-2">
         <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
@@ -147,7 +147,7 @@ export default function ProjectDetailPage() {
   if (error || !project) {
     return (
       <div className="p-6 max-w-5xl mx-auto">
-        <div className="rounded-lg bg-red-500/10 border border-red-500/30 p-4 text-sm text-red-400">
+        <div className="rounded-lg bg-[var(--color-state-error-bg)] border border-[var(--color-state-error-bg)] p-4 text-sm text-[var(--color-state-error-fg)]">
           {error || "Projekt nebol nájdený."}
         </div>
       </div>
@@ -160,9 +160,9 @@ export default function ProjectDetailPage() {
     <div className="p-6 max-w-5xl mx-auto">
       {/* "Just created" banner — visible for 8s right after POST /projects. */}
       {justCreated && (
-        <div className="mb-4 rounded-lg border border-green-500/30 bg-green-500/10 px-4 py-3 flex items-start gap-3">
+        <div className="mb-4 rounded-lg border border-[var(--color-state-success-bg)] bg-[var(--color-state-success-bg)] px-4 py-3 flex items-start gap-3">
           <svg
-            className="w-5 h-5 text-green-400 mt-0.5 flex-shrink-0"
+            className="w-5 h-5 text-[var(--color-status-success)] mt-0.5 flex-shrink-0"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -174,9 +174,9 @@ export default function ProjectDetailPage() {
               d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
             />
           </svg>
-          <div className="flex-1 text-sm text-green-100">
+          <div className="flex-1 text-sm text-[var(--color-state-success-fg)]">
             <div className="font-medium">Projekt vytvorený.</div>
-            <div className="text-[12px] text-green-200/80 mt-0.5 flex flex-wrap gap-x-3">
+            <div className="text-[12px] text-[var(--color-state-success-fg)] mt-0.5 flex flex-wrap gap-x-3">
               {justCreated.repoUrl && (
                 <span>
                   GitHub repo:{" "}
@@ -184,7 +184,7 @@ export default function ProjectDetailPage() {
                     href={`https://github.com/${justCreated.repoUrl}`}
                     target="_blank"
                     rel="noreferrer"
-                    className="font-mono underline hover:text-green-50"
+                    className="font-mono underline hover:text-[var(--color-state-success-fg)]"
                   >
                     {justCreated.repoUrl}
                   </a>
@@ -200,7 +200,7 @@ export default function ProjectDetailPage() {
           </div>
           <button
             onClick={() => setJustCreated(null)}
-            className="text-green-300/70 hover:text-green-100 transition-colors"
+            className="text-[var(--color-status-success)] hover:text-[var(--color-state-success-fg)] transition-colors"
             aria-label="Zavrieť"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -214,25 +214,25 @@ export default function ProjectDetailPage() {
       <div className="flex items-center gap-3 mb-6">
         <button
           onClick={() => navigate("/projects")}
-          className="text-slate-500 hover:text-slate-300 transition-colors"
+          className="text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
         </button>
         <div className="flex items-center gap-2">
-          <h1 className="text-lg font-bold text-slate-100">{project.name}</h1>
+          <h1 className="text-lg font-bold text-[var(--color-text-primary)]">{project.name}</h1>
           {isMulti && (
-            <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/20 border border-indigo-500/30 text-indigo-400 font-medium">
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/20 border border-indigo-500/30 text-[var(--color-accent-primary)] font-medium">
               Multi-Module
             </span>
           )}
           <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
             project.status === "active"
-              ? "bg-green-500/15 border border-green-500/25 text-green-400"
+              ? "bg-[var(--color-state-success-bg)] border border-[var(--color-state-success-bg)] text-[var(--color-state-success-fg)]"
               : project.status === "paused"
-              ? "bg-amber-500/15 border border-amber-500/30 text-amber-400"
-              : "bg-slate-700 text-slate-500"
+              ? "bg-[var(--color-state-warning-bg)] border border-[var(--color-state-warning-bg)] text-[var(--color-state-warning-fg)]"
+              : "bg-[var(--color-surface-active)] text-[var(--color-text-muted)]"
           }`}>
             {project.status}
           </span>
@@ -240,40 +240,40 @@ export default function ProjectDetailPage() {
       </div>
 
       {/* Info card */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900 p-5 mb-6">
+      <div className="rounded-xl border border-[var(--color-border-default)] bg-[var(--color-canvas)] p-5 mb-6">
         <div className="grid grid-cols-2 gap-4 text-sm">
           <div>
-            <span className="text-slate-500 text-xs">Slug</span>
-            <div className="font-mono text-slate-200 mt-0.5">{project.slug}</div>
+            <span className="text-[var(--color-text-muted)] text-xs">Slug</span>
+            <div className="font-mono text-[var(--color-text-primary)] mt-0.5">{project.slug}</div>
           </div>
           {project.repo_url && (
             <div>
-              <span className="text-slate-500 text-xs">Úložisko</span>
-              <div className="font-mono text-slate-200 mt-0.5">{project.repo_url}</div>
+              <span className="text-[var(--color-text-muted)] text-xs">Úložisko</span>
+              <div className="font-mono text-[var(--color-text-primary)] mt-0.5">{project.repo_url}</div>
             </div>
           )}
           {project.description && (
             <div className="col-span-2">
-              <span className="text-slate-500 text-xs">Popis</span>
-              <div className="text-slate-300 mt-0.5">{project.description}</div>
+              <span className="text-[var(--color-text-muted)] text-xs">Popis</span>
+              <div className="text-[var(--color-text-secondary)] mt-0.5">{project.description}</div>
             </div>
           )}
           {(project.backend_port || project.frontend_port || project.db_port) && (
             <div className="col-span-2">
-              <span className="text-slate-500 text-xs">Porty</span>
+              <span className="text-[var(--color-text-muted)] text-xs">Porty</span>
               <div className="flex gap-3 mt-1">
                 {project.backend_port && (
-                  <span className="text-[11px] font-mono bg-slate-800 border border-slate-700 text-slate-300 px-2 py-0.5 rounded">
+                  <span className="text-[11px] font-mono bg-[var(--color-surface)] border border-[var(--color-border-default)] text-[var(--color-text-secondary)] px-2 py-0.5 rounded">
                     BE :{project.backend_port}
                   </span>
                 )}
                 {project.frontend_port && (
-                  <span className="text-[11px] font-mono bg-slate-800 border border-slate-700 text-slate-300 px-2 py-0.5 rounded">
+                  <span className="text-[11px] font-mono bg-[var(--color-surface)] border border-[var(--color-border-default)] text-[var(--color-text-secondary)] px-2 py-0.5 rounded">
                     FE :{project.frontend_port}
                   </span>
                 )}
                 {project.db_port && (
-                  <span className="text-[11px] font-mono bg-slate-800 border border-slate-700 text-slate-300 px-2 py-0.5 rounded">
+                  <span className="text-[11px] font-mono bg-[var(--color-surface)] border border-[var(--color-border-default)] text-[var(--color-text-secondary)] px-2 py-0.5 rounded">
                     DB :{project.db_port}
                   </span>
                 )}
@@ -287,8 +287,8 @@ export default function ProjectDetailPage() {
       {isMulti && (
         <div className="rounded-xl border border-indigo-500/30 bg-indigo-500/5 p-4 mb-6 flex items-center justify-between">
           <div>
-            <div className="text-sm font-semibold text-slate-100 mb-0.5">Multi-Module projekt</div>
-            <div className="text-xs text-slate-500">Spravuj moduly, závislosti a pipeline pre každý modul.</div>
+            <div className="text-sm font-semibold text-[var(--color-text-primary)] mb-0.5">Multi-Module projekt</div>
+            <div className="text-xs text-[var(--color-text-muted)]">Spravuj moduly, závislosti a pipeline pre každý modul.</div>
           </div>
           <button
             onClick={() => navigate(`/projects/${slug}/mm`)}
@@ -302,7 +302,7 @@ export default function ProjectDetailPage() {
       {/* Versions */}
       <div>
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-widest">Verzie</h2>
+          <h2 className="text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-widest">Verzie</h2>
           <button
             onClick={() => navigate(`/projects/${slug}/versions/new`)}
             className="flex items-center gap-1.5 bg-primary-600 hover:bg-primary-500 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors"
@@ -316,13 +316,13 @@ export default function ProjectDetailPage() {
 
         {versions.length === 0 ? (
           <>
-            <div className="rounded-xl border border-dashed border-slate-800 p-8 text-center mb-3">
-              <p className="text-sm text-slate-500">Žiadne verzie</p>
-              <p className="text-xs text-slate-700 mt-1">Vytvor prvú verziu a začni 7-krokový pipeline.</p>
+            <div className="rounded-xl border border-dashed border-[var(--color-border-default)] p-8 text-center mb-3">
+              <p className="text-sm text-[var(--color-text-muted)]">Žiadne verzie</p>
+              <p className="text-xs text-[var(--color-text-muted)] mt-1">Vytvor prvú verziu a začni 7-krokový pipeline.</p>
             </div>
             <button
               onClick={() => navigate(`/projects/${slug}/versions/new`)}
-              className="w-full rounded-xl border border-dashed border-slate-700 p-4 flex items-center gap-3 text-slate-500 text-sm cursor-pointer hover:border-slate-600 transition-colors"
+              className="w-full rounded-xl border border-dashed border-[var(--color-border-default)] p-4 flex items-center gap-3 text-[var(--color-text-muted)] text-sm cursor-pointer hover:border-[var(--color-border-strong)] transition-colors"
             >
               <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -349,7 +349,7 @@ export default function ProjectDetailPage() {
               return (
                 <button
                   onClick={() => navigate(`/projects/${slug}/versions/new`)}
-                  className="w-full rounded-xl border border-dashed border-slate-700 p-4 flex items-center gap-3 text-slate-500 text-sm cursor-pointer hover:border-slate-600 transition-colors"
+                  className="w-full rounded-xl border border-dashed border-[var(--color-border-default)] p-4 flex items-center gap-3 text-[var(--color-text-muted)] text-sm cursor-pointer hover:border-[var(--color-border-strong)] transition-colors"
                 >
                   <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />

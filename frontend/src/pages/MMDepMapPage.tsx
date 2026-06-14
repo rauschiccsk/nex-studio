@@ -18,10 +18,10 @@ const MODULE_COLORS = [
 ];
 
 function statusCls(status: string) {
-  if (status === "done") return "text-green-400";
-  if (status === "in_development") return "text-yellow-400";
-  if (status === "in_design") return "text-indigo-400";
-  return "text-slate-500";
+  if (status === "done") return "text-[var(--color-status-success)]";
+  if (status === "in_development") return "text-[var(--color-status-warning)]";
+  if (status === "in_design") return "text-[var(--color-accent-primary)]";
+  return "text-[var(--color-text-muted)]";
 }
 
 // ─── MMDepMapPage ─────────────────────────────────────────────────────────────
@@ -64,7 +64,7 @@ export default function MMDepMapPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-20 text-slate-500 text-sm gap-2">
+      <div className="flex items-center justify-center py-20 text-[var(--color-text-muted)] text-sm gap-2">
         <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
@@ -77,7 +77,7 @@ export default function MMDepMapPage() {
   if (error || !project) {
     return (
       <div className="p-6 max-w-5xl mx-auto">
-        <div className="rounded-lg bg-red-500/10 border border-red-500/30 p-4 text-sm text-red-400">
+        <div className="rounded-lg bg-[var(--color-state-error-bg)] border border-[var(--color-border-default)] p-4 text-sm text-[var(--color-state-error-fg)]">
           {error || "Projekt nebol nájdený."}
         </div>
       </div>
@@ -130,20 +130,20 @@ export default function MMDepMapPage() {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex-shrink-0 bg-slate-900/50 border-b border-slate-800 px-5 py-2.5 flex items-center gap-3">
+      <div className="flex-shrink-0 bg-[var(--color-surface-hover)] border-b border-[var(--color-border-default)] px-5 py-2.5 flex items-center gap-3">
         <button
           onClick={() => navigate(`/projects/${slug}/mm`)}
-          className="text-slate-500 hover:text-slate-300 transition-colors"
+          className="text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
         </button>
-        <span className="text-sm font-semibold text-slate-100">{project.name}</span>
-        <span className="text-slate-600">·</span>
-        <span className="text-sm text-slate-400">Mapa závislostí</span>
+        <span className="text-sm font-semibold text-[var(--color-text-primary)]">{project.name}</span>
+        <span className="text-[var(--color-text-muted)]">·</span>
+        <span className="text-sm text-[var(--color-text-secondary)]">Mapa závislostí</span>
         <div className="flex-1" />
-        <span className="text-xs text-slate-500">{modules.length} modulov · {deps.length} závislostí</span>
+        <span className="text-xs text-[var(--color-text-secondary)]">{modules.length} modulov · {deps.length} závislostí</span>
       </div>
 
       {/* Map content */}
@@ -151,13 +151,13 @@ export default function MMDepMapPage() {
         <div className="max-w-3xl mx-auto">
 
           {modules.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-slate-800 p-10 text-center">
-              <p className="text-sm text-slate-500">Žiadne moduly</p>
+            <div className="rounded-xl border border-dashed border-[var(--color-border-default)] p-10 text-center">
+              <p className="text-sm text-[var(--color-text-muted)]">Žiadne moduly</p>
             </div>
           ) : deps.length === 0 ? (
             <>
               {/* No deps — just show modules in a flat list */}
-              <p className="text-xs text-slate-600 mb-4">Žiadne závislosti medzi modulmi. Moduly sú nezávislé.</p>
+              <p className="text-xs text-[var(--color-text-muted)] mb-4">Žiadne závislosti medzi modulmi. Moduly sú nezávislé.</p>
               <div className="flex flex-wrap gap-3">
                 {sorted.map((mod, i) => (
                   <button
@@ -173,9 +173,9 @@ export default function MMDepMapPage() {
           ) : (
             <div className="space-y-2">
               {/* Legend */}
-              <div className="flex items-center gap-4 text-[10px] text-slate-600 mb-4">
+              <div className="flex items-center gap-4 text-[10px] text-[var(--color-text-muted)] mb-4">
                 <span className="flex items-center gap-1.5">
-                  <span className="w-4 h-px bg-slate-600 inline-block" />
+                  <span className="w-4 h-px bg-[var(--color-border-strong)] inline-block" />
                   závisí od (→ musí byť hotový skôr)
                 </span>
               </div>
@@ -188,7 +188,7 @@ export default function MMDepMapPage() {
                 return (
                   <div
                     key={mod.id}
-                    className="flex items-center gap-4 rounded-xl border border-slate-800 bg-slate-900 px-4 py-3 cursor-pointer hover:border-slate-700 transition-colors"
+                    className="flex items-center gap-4 rounded-xl border border-[var(--color-border-default)] bg-[var(--color-surface)] px-4 py-3 cursor-pointer hover:border-[var(--color-border-strong)] transition-colors"
                     onClick={() => navigate(`/projects/${slug}/mm/${mod.id}`)}
                   >
                     {/* Module badge */}
@@ -198,14 +198,14 @@ export default function MMDepMapPage() {
 
                     {/* Name + status */}
                     <div className="flex-1 min-w-0">
-                      <div className="text-sm text-slate-200 font-medium">{mod.name}</div>
+                      <div className="text-sm text-[var(--color-text-primary)] font-medium">{mod.name}</div>
                       <div className={`text-xs ${statusCls(mod.status)}`}>{mod.category}</div>
                     </div>
 
                     {/* Needs */}
                     {needs.length > 0 && (
-                      <div className="flex items-center gap-1 text-xs text-slate-500">
-                        <span className="text-slate-600">závisí od:</span>
+                      <div className="flex items-center gap-1 text-xs text-[var(--color-text-muted)]">
+                        <span className="text-[var(--color-text-muted)]">závisí od:</span>
                         {needs.map((n) => (
                           <span
                             key={n.id}
@@ -219,8 +219,8 @@ export default function MMDepMapPage() {
 
                     {/* NeededBy */}
                     {neededBy.length > 0 && (
-                      <div className="flex items-center gap-1 text-xs text-slate-500">
-                        <span className="text-slate-600">vyžadujú:</span>
+                      <div className="flex items-center gap-1 text-xs text-[var(--color-text-muted)]">
+                        <span className="text-[var(--color-text-muted)]">vyžadujú:</span>
                         {neededBy.map((n) => (
                           <span
                             key={n.id}
@@ -233,7 +233,7 @@ export default function MMDepMapPage() {
                     )}
 
                     {needs.length === 0 && neededBy.length === 0 && (
-                      <span className="text-[10px] text-slate-700">nezávislý</span>
+                      <span className="text-[10px] text-[var(--color-text-muted)]">nezávislý</span>
                     )}
                   </div>
                 );
