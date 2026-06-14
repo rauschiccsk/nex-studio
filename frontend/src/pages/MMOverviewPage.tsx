@@ -14,12 +14,12 @@ import type { ModuleDependencyRead } from "@/types/moduleDependency";
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const MODULE_COLORS = [
-  "bg-indigo-500/20 border-indigo-500/30 text-indigo-400",
-  "bg-green-500/20 border-green-500/25 text-green-400",
-  "bg-amber-500/20 border-amber-500/30 text-amber-400",
-  "bg-rose-500/20 border-rose-500/30 text-rose-400",
-  "bg-cyan-500/20 border-cyan-500/30 text-cyan-400",
-  "bg-purple-500/20 border-purple-500/30 text-purple-400",
+  "bg-indigo-500/20 border-indigo-500/30 text-indigo-700 dark:text-indigo-400",
+  "bg-green-500/20 border-green-500/25 text-green-700 dark:text-green-400",
+  "bg-amber-500/20 border-amber-500/30 text-amber-700 dark:text-amber-400",
+  "bg-rose-500/20 border-rose-500/30 text-rose-700 dark:text-rose-400",
+  "bg-cyan-500/20 border-cyan-500/30 text-cyan-700 dark:text-cyan-400",
+  "bg-purple-500/20 border-purple-500/30 text-purple-700 dark:text-purple-400",
 ];
 
 function moduleColor(index: number) {
@@ -29,7 +29,7 @@ function moduleColor(index: number) {
 function statusCls(status: string) {
   if (status === "done") return "bg-[var(--color-state-success-bg)] border border-[var(--color-state-success-bg)] text-[var(--color-state-success-fg)]";
   if (status === "in_development") return "bg-[var(--color-state-warning-bg)] border border-[var(--color-state-warning-bg)] text-[var(--color-state-warning-fg)]";
-  if (status === "in_design") return "bg-indigo-500/20 border border-indigo-500/30 text-indigo-400";
+  if (status === "in_design") return "bg-indigo-500/20 border border-indigo-500/30 text-indigo-700 dark:text-indigo-400";
   return "bg-[var(--color-surface-active)] border border-[var(--color-border-strong)] text-[var(--color-text-muted)]";
 }
 
@@ -335,7 +335,7 @@ export default function MMOverviewPage() {
         </button>
         <div className="flex items-center gap-2">
           <span className="text-sm font-semibold text-[var(--color-text-primary)]">{project.name}</span>
-          <span className="text-[10px] bg-indigo-500/20 border border-indigo-500/30 text-indigo-400 px-2 py-0.5 rounded-full font-medium">
+          <span className="text-[10px] bg-indigo-500/20 border border-indigo-500/30 text-indigo-700 dark:text-indigo-400 px-2 py-0.5 rounded-full font-medium">
             Multi-Module
           </span>
         </div>
@@ -352,7 +352,7 @@ export default function MMOverviewPage() {
                 style={{ width: `${pct}%` }}
               />
             </div>
-            <span className="text-primary-400 font-medium">{pct}%</span>
+            <span className="text-primary-700 dark:text-primary-400 font-medium">{pct}%</span>
           </div>
         </div>
       </div>
@@ -427,7 +427,7 @@ export default function MMOverviewPage() {
                   <span className="text-xs font-semibold text-[var(--color-text-secondary)]">Závislosti</span>
                   <button
                     onClick={() => navigate(`/projects/${slug}/mm/depmap`)}
-                    className="text-[10px] text-primary-400 hover:text-primary-300 transition-colors"
+                    className="text-[10px] text-primary-700 dark:text-primary-400 hover:text-primary-300 transition-colors"
                   >
                     Mapa závislostí →
                   </button>

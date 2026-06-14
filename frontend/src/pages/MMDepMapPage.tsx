@@ -9,12 +9,12 @@ import type { ModuleDependencyRead } from "@/types/moduleDependency";
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const MODULE_COLORS = [
-  "bg-indigo-500/20 border-indigo-500/30 text-indigo-400",
-  "bg-green-500/20 border-green-500/25 text-green-400",
-  "bg-amber-500/20 border-amber-500/30 text-amber-400",
-  "bg-rose-500/20 border-rose-500/30 text-rose-400",
-  "bg-cyan-500/20 border-cyan-500/30 text-cyan-400",
-  "bg-purple-500/20 border-purple-500/30 text-purple-400",
+  "bg-indigo-500/20 border-indigo-500/30 text-indigo-700 dark:text-indigo-400",
+  "bg-green-500/20 border-green-500/25 text-green-700 dark:text-green-400",
+  "bg-amber-500/20 border-amber-500/30 text-amber-700 dark:text-amber-400",
+  "bg-rose-500/20 border-rose-500/30 text-rose-700 dark:text-rose-400",
+  "bg-cyan-500/20 border-cyan-500/30 text-cyan-700 dark:text-cyan-400",
+  "bg-purple-500/20 border-purple-500/30 text-purple-700 dark:text-purple-400",
 ];
 
 function statusCls(status: string) {

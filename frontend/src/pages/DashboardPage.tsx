@@ -4,12 +4,12 @@ import { listProjectsApi } from "@/services/api/projects";
 import type { ProjectRead } from "@/types";
 
 const SLUG_COLORS = [
-  "bg-primary-600/20 border-primary-600/30 text-primary-400",
-  "bg-amber-600/20 border-amber-600/30 text-amber-400",
-  "bg-green-600/20 border-green-600/30 text-green-400",
-  "bg-purple-600/20 border-purple-600/30 text-purple-400",
-  "bg-rose-600/20 border-rose-600/30 text-rose-400",
-  "bg-cyan-600/20 border-cyan-600/30 text-cyan-400",
+  "bg-primary-600/20 border-primary-600/30 text-primary-700 dark:text-primary-400",
+  "bg-amber-600/20 border-amber-600/30 text-amber-700 dark:text-amber-400",
+  "bg-green-600/20 border-green-600/30 text-green-700 dark:text-green-400",
+  "bg-purple-600/20 border-purple-600/30 text-purple-700 dark:text-purple-400",
+  "bg-rose-600/20 border-rose-600/30 text-rose-700 dark:text-rose-400",
+  "bg-cyan-600/20 border-cyan-600/30 text-cyan-700 dark:text-cyan-400",
 ];
 
 function slugInitials(slug: string): string {
@@ -39,7 +39,7 @@ function ProjectCard({ project, index, onOpen }: ProjectCardProps) {
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold text-[var(--color-text-primary)]">{project.name}</span>
             {isMulti && (
-              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-500/20 border border-indigo-500/30 text-indigo-400 font-medium">
+              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-500/20 border border-indigo-500/30 text-indigo-700 dark:text-indigo-400 font-medium">
                 MM
               </span>
             )}
@@ -68,7 +68,7 @@ function ProjectCard({ project, index, onOpen }: ProjectCardProps) {
         </div>
         <button
           onClick={onOpen}
-          className="text-[10px] text-primary-400 hover:text-primary-300 transition-colors"
+          className="text-[10px] text-primary-700 dark:text-primary-400 hover:text-primary-300 transition-colors"
         >
           → Otvoriť
         </button>
@@ -101,7 +101,7 @@ export default function DashboardPage() {
           </h2>
           <button
             onClick={() => navigate("/projects/new")}
-            className="flex items-center gap-1.5 text-xs text-primary-400 hover:text-primary-300 font-medium transition-colors"
+            className="flex items-center gap-1.5 text-xs text-primary-700 dark:text-primary-400 hover:text-primary-300 font-medium transition-colors"
           >
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />

@@ -10,12 +10,12 @@ import type { Version } from "@/types/version";
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 const SLUG_COLORS = [
-  "bg-primary-600/20 border-primary-600/30 text-primary-400",
-  "bg-amber-600/20 border-amber-600/30 text-amber-400",
-  "bg-green-600/20 border-green-600/30 text-green-400",
-  "bg-purple-600/20 border-purple-600/30 text-purple-400",
-  "bg-rose-600/20 border-rose-600/30 text-rose-400",
-  "bg-cyan-600/20 border-cyan-600/30 text-cyan-400",
+  "bg-primary-600/20 border-primary-600/30 text-primary-700 dark:text-primary-400",
+  "bg-amber-600/20 border-amber-600/30 text-amber-700 dark:text-amber-400",
+  "bg-green-600/20 border-green-600/30 text-green-700 dark:text-green-400",
+  "bg-purple-600/20 border-purple-600/30 text-purple-700 dark:text-purple-400",
+  "bg-rose-600/20 border-rose-600/30 text-rose-700 dark:text-rose-400",
+  "bg-cyan-600/20 border-cyan-600/30 text-cyan-700 dark:text-cyan-400",
 ];
 
 function slugColor(index: number) {
@@ -63,12 +63,12 @@ function ProjectRow({ project, index, selected, onOpen, onTogglePin }: ProjectRo
         <div className="flex items-center gap-1.5">
           <span className="font-semibold text-[var(--color-text-primary)] text-sm">{project.name}</span>
           {selected && (
-            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-primary-500/20 border border-primary-500/30 text-primary-400 font-medium">
+            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-primary-500/20 border border-primary-500/30 text-primary-700 dark:text-primary-400 font-medium">
               Vybraný
             </span>
           )}
           {isMulti && (
-            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-500/20 border border-indigo-500/30 text-indigo-400 font-medium">
+            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-500/20 border border-indigo-500/30 text-indigo-700 dark:text-indigo-400 font-medium">
               MM
             </span>
           )}
@@ -97,7 +97,7 @@ function ProjectRow({ project, index, selected, onOpen, onTogglePin }: ProjectRo
 
       {/* Active version — placeholder until Phase 3 */}
       <div className="text-center shrink-0 w-14">
-        <div className="text-sm font-semibold text-primary-400">—</div>
+        <div className="text-sm font-semibold text-primary-700 dark:text-primary-400">—</div>
         <div className="text-[10px] text-[var(--color-text-muted)]">verzia</div>
       </div>
 
@@ -108,7 +108,7 @@ function ProjectRow({ project, index, selected, onOpen, onTogglePin }: ProjectRo
           title={selected ? "Zrušiť výber" : "Označiť ako vybraný"}
           className={
             selected
-              ? "text-primary-400 hover:text-primary-300 transition-colors"
+              ? "text-primary-700 dark:text-primary-400 hover:text-primary-300 transition-colors"
               : "text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors"
           }
         >
@@ -116,7 +116,7 @@ function ProjectRow({ project, index, selected, onOpen, onTogglePin }: ProjectRo
         </button>
         <button
           onClick={onOpen}
-          className="text-[11px] text-primary-400 hover:text-primary-300 transition-colors font-medium"
+          className="text-[11px] text-primary-700 dark:text-primary-400 hover:text-primary-300 transition-colors font-medium"
         >
           → Otvoriť
         </button>

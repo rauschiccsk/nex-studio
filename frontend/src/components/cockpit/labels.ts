@@ -106,12 +106,14 @@ export const TONE_DOT: Record<StatusTone, string> = {
   neutral: "bg-slate-500",
 };
 
+// CR-NS-067c: light-readable + dark-identical (`text-X-600 dark:text-X-400`); the -400
+// status colors were too faint on a white surface in light mode.
 export const TONE_TEXT: Record<StatusTone, string> = {
-  green: "text-emerald-400",
-  blue: "text-sky-400",
-  amber: "text-amber-400",
-  red: "text-red-400",
-  neutral: "text-slate-600",
+  green: "text-emerald-600 dark:text-emerald-400",
+  blue: "text-sky-600 dark:text-sky-400",
+  amber: "text-amber-600 dark:text-amber-400",
+  red: "text-red-600 dark:text-red-400",
+  neutral: "text-[var(--color-text-muted)]",
 };
 
 // Coordinator executable-action → Slovak effect phrase (E7, F-008 §5/§9). The build approve button is
@@ -126,12 +128,14 @@ export const COORDINATOR_ACTION_LABELS: Record<string, string> = {
   capture_backlog_item: "Zaevidovať do backlogu",
 };
 
+// CR-NS-067c: light-readable + dark-identical (`text-X-700 dark:text-X-200`); the -200
+// banner text was near-white and unreadable on the pale tint in light mode.
 export const TONE_BANNER: Record<StatusTone, string> = {
-  green: "border-emerald-500/40 bg-emerald-500/10 text-emerald-200",
-  blue: "border-sky-500/40 bg-sky-500/10 text-sky-200",
-  amber: "border-amber-500/40 bg-amber-500/10 text-amber-200",
-  red: "border-red-500/40 bg-red-500/10 text-red-200",
-  neutral: "border-slate-600/40 bg-slate-700/10 text-slate-300",
+  green: "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200",
+  blue: "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-200",
+  amber: "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-200",
+  red: "border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-200",
+  neutral: "border-[var(--color-border-default)] bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)]",
 };
 
 // Canonical stage order — mirrors backend orchestrator.STAGE_ORDER. Shared so the

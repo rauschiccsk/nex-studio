@@ -30,12 +30,14 @@ const PARTICIPANT_ACCENT: Record<PipelineParticipant, string> = {
 };
 
 const KIND_BADGE: Record<string, string> = {
-  question: "bg-amber-500/15 text-amber-300",
-  answer: "bg-sky-500/15 text-sky-300",
-  gate_report: "bg-violet-500/15 text-violet-300",
-  approval: "bg-emerald-500/15 text-emerald-300",
-  return: "bg-red-500/15 text-red-300",
-  verdict: "bg-primary-500/15 text-primary-300",
+  // CR-NS-067c: light-readable + dark-identical via `text-X-700 dark:text-X-300`
+  // (the right-side message-kind labels were unreadable light pastels on white).
+  question: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
+  answer: "bg-sky-500/15 text-sky-700 dark:text-sky-300",
+  gate_report: "bg-violet-500/15 text-violet-700 dark:text-violet-300",
+  approval: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
+  return: "bg-red-500/15 text-red-700 dark:text-red-300",
+  verdict: "bg-primary-500/15 text-primary-700 dark:text-primary-300",
   notification: "bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)]",
   directive: "bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)]",
   kickoff: "bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)]",
@@ -83,11 +85,11 @@ export function PipelineMessageBubble({ message }: Props) {
           <span className="font-mono text-[10px] text-[var(--color-text-muted)]">{ts}</span>
         </div>
         {isAutonomous ? (
-          <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold bg-amber-500/20 text-amber-200">
+          <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold bg-amber-500/20 text-amber-700 dark:text-amber-200">
             {AUTONOMOUS_LABEL}
           </span>
         ) : isSynthesis ? (
-          <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold bg-primary-500/20 text-primary-200">
+          <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold bg-primary-500/20 text-primary-700 dark:text-primary-200">
             {SYNTHESIS_LABEL}
           </span>
         ) : (
