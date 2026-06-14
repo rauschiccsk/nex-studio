@@ -64,6 +64,9 @@ services:
     build:
       context: {{ PROJECT_PATH }}
       dockerfile: {{ BACKEND_DOCKERFILE }}
+      args:
+        # CR-NS-062 — bake the source version into the backend image (settings.APP_VERSION reads it).
+        APP_VERSION: "${APP_VERSION:-0.0.0-dev}"
     depends_on:
       postgres:
         condition: service_healthy
@@ -80,6 +83,9 @@ services:
     build:
       context: {{ PROJECT_PATH }}
       dockerfile: {{ BACKEND_DOCKERFILE }}
+      args:
+        # CR-NS-062 — bake the source version into the backend image (settings.APP_VERSION reads it).
+        APP_VERSION: "${APP_VERSION:-0.0.0-dev}"
     depends_on:
       postgres:
         condition: service_healthy

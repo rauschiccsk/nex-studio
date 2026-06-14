@@ -1041,3 +1041,61 @@ def test_compose_template_omits_extra_hosts_when_empty():
     rendered = _uat_lib.render_template("uat/docker-compose.yml.j2", _compose_context([]))
     data = yaml.safe_load(rendered)
     assert "extra_hosts" not in data["services"]["backend"]
+
+
+# ---------- CR-NS-062: health endpoint detection + git_describe ----------
+
+
+_SAMPLE_DOCKERFILE_HEALTHCHECK = (
+    "FROM python:3.12-slim\n"
+    "WORKDIR /app\n"
+    "HEALTHCHECK --interval=30s --timeout=5s --retries=3 \\\n"
+    "    CMD curl -sf http://127.0.0.1:8000/api/v1/health || exit 1\n"
+    'CMD ["uvicorn", "main:app"]\n'
+)
+
+
+def test_detect_dockerfile_healthcheck_path_parses_url(tmp_path):
+    (tmp_path / "Dockerfile").write_text(_SAMPLE_DOCKERFILE_HEALTHCHECK)
+    assert _uat_lib.detect_dockerfile_healthcheck_path(tmp_path / "Dockerfile") == "/api/v1/health"
+
+
+def test_detect_dockerfile_healthcheck_path_none_without_healthcheck(tmp_path):
+    (tmp_path / "Dockerfile").write_text('FROM python:3.12-slim\nCMD ["x"]\n')
+    assert _uat_lib.detect_dockerfile_healthcheck_path(tmp_path / "Dockerfile") is None
+
+
+def test_detect_dockerfile_healthcheck_path_none_when_missing(tmp_path):
+    assert _uat_lib.detect_dockerfile_healthcheck_path(tmp_path / "nope") is None
+
+
+def test_extract_health_path_from_compose_test_list():
+    assert (
+        _uat_lib.extract_health_path(["CMD", "curl", "-sf", "http://localhost:8000/api/v1/health"]) == "/api/v1/health"
+    )
+    assert _uat_lib.extract_health_path(None) is None
+    # a non-HTTP test (e.g. pg_isready) has no URL path
+    assert _uat_lib.extract_health_path(["CMD-SHELL", "pg_isready -U u"]) is None
+
+
+def test_resolve_health_path_precedence(tmp_path):
+    df = tmp_path / "Dockerfile"
+    df.write_text(_SAMPLE_DOCKERFILE_HEALTHCHECK)
+    compose_test = ["CMD", "curl", "-sf", "http://localhost:8000/compose/health"]
+    # 1. --health-endpoint override wins over everything
+    assert _uat_lib.resolve_health_path(override="/manual", compose_test=compose_test, dockerfile_path=df) == "/manual"
+    # 2. source-compose healthcheck path beats the Dockerfile
+    assert (
+        _uat_lib.resolve_health_path(override=None, compose_test=compose_test, dockerfile_path=df) == "/compose/health"
+    )
+    # 3. Dockerfile HEALTHCHECK path when the compose has none
+    assert _uat_lib.resolve_health_path(override=None, compose_test=None, dockerfile_path=df) == "/api/v1/health"
+    # 4. /health last-resort default when nothing is found
+    assert (
+        _uat_lib.resolve_health_path(override=None, compose_test=None, dockerfile_path=tmp_path / "nope") == "/health"
+    )
+
+
+def test_git_describe_fallback_on_non_repo(tmp_path):
+    # tmp_path is not a git repo → `git describe` fails → "0.0.0-dev" fallback.
+    assert _uat_lib.git_describe(tmp_path) == "0.0.0-dev"

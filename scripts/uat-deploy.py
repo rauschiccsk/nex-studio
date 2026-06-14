@@ -282,11 +282,19 @@ def deploy(
     detected = _uat_lib.detect_backend_config(project_path)
     backend_container_port = backend_port_override if backend_port_override is not None else detected["backend_port"]
     backend_dockerfile = detected["dockerfile"]
+    # CR-NS-062 — resolve the health endpoint PATH with precedence:
+    #   --health-endpoint → source-compose healthcheck → backend Dockerfile HEALTHCHECK → /health.
+    # Used for BOTH the rendered compose healthcheck AND the wait-healthy probe (fixes the incident's
+    # 2nd symptom: a project whose health lives only in its Dockerfile defaulted to a 404 /health).
+    health_path = _uat_lib.resolve_health_path(
+        override=health_endpoint_override,
+        compose_test=detected["healthcheck_test"],
+        dockerfile_path=project_path / backend_dockerfile,
+    )
     if detected["healthcheck_test"] and not health_endpoint_override:
         healthcheck_test = detected["healthcheck_test"]
     else:
-        endpoint = health_endpoint_override or "/health"
-        healthcheck_test = ["CMD", "curl", "-sf", f"http://localhost:{backend_container_port}{endpoint}"]
+        healthcheck_test = ["CMD", "curl", "-sf", f"http://localhost:{backend_container_port}{health_path}"]
 
     # CR-022 Discovery: DB creds, backend env vars, frontend, alembic strategy
     db_creds = _uat_lib.detect_db_credentials(project_path)
@@ -412,13 +420,15 @@ def deploy(
         if _uat_lib.frontend_needs_host_build(project_path, frontend_cfg):
             _uat_lib.host_build_frontend(project_path)
 
-        # Build + start
-        _uat_lib.docker_compose(["build"], cwd=uat_dir)
+        # Build + start. CR-NS-062 — export APP_VERSION so the backend build-arg `${APP_VERSION}`
+        # resolves to the real version (git describe of the source) instead of the 0.0.0-dev fallback;
+        # same value the FE host-build bakes.
+        app_version = _uat_lib.git_describe(project_path)
+        _uat_lib.docker_compose(["build"], cwd=uat_dir, env={"APP_VERSION": app_version})
         _uat_lib.docker_compose(["up", "-d"], cwd=uat_dir)
 
-        # Wait healthy on backend (use CLI-override endpoint if given, else /health)
-        endpoint = health_endpoint_override or "/health"
-        healthy = _uat_lib.wait_healthy(f"http://127.0.0.1:{port + 100}{endpoint}", timeout=120)
+        # Wait healthy on backend — same resolved health PATH as the rendered healthcheck (CR-NS-062).
+        healthy = _uat_lib.wait_healthy(f"http://127.0.0.1:{port + 100}{health_path}", timeout=120)
         if not healthy:
             _uat_lib.error_console.print(
                 "[red]ERROR:[/red] backend not healthy after 120s — check logs:\n"

@@ -208,6 +208,66 @@ def detect_backend_config(source_project_path: Path) -> dict[str, Any]:
     }
 
 
+# Extract the URL path from an `http(s)://host[:port]/PATH` occurrence (CR-NS-062).
+_HEALTH_URL_PATH = re.compile(r"https?://[^/\s\"']+(/[^\s\"']*)")
+
+
+def _extract_url_path(text: str) -> str | None:
+    """Return the path component of the first http(s) URL in ``text`` (``/api/v1/health`` …)."""
+    m = _HEALTH_URL_PATH.search(text)
+    return m.group(1) if m else None
+
+
+def extract_health_path(healthcheck_test: Any) -> str | None:
+    """Extract the URL path from a compose ``healthcheck.test`` (list-of-args or a string). None if no URL."""
+    if not healthcheck_test:
+        return None
+    text = " ".join(str(x) for x in healthcheck_test) if isinstance(healthcheck_test, list) else str(healthcheck_test)
+    return _extract_url_path(text)
+
+
+def detect_dockerfile_healthcheck_path(dockerfile_path: Path) -> str | None:
+    """Parse the backend Dockerfile ``HEALTHCHECK`` instruction for its URL path (CR-NS-062).
+
+    nex-inbox declares its health probe ONLY in the Dockerfile (``HEALTHCHECK … curl …
+    http://127.0.0.1:8000/api/v1/health``), not the compose — so uat-deploy used to default to a
+    404ing ``/health``. Returns the path (``/api/v1/health``) or ``None`` when the file is missing,
+    has no ``HEALTHCHECK``, or the instruction carries no URL (e.g. ``HEALTHCHECK NONE``).
+    """
+    if not dockerfile_path.is_file():
+        return None
+    text = dockerfile_path.read_text(encoding="utf-8")
+    m = re.search(r"\bHEALTHCHECK\b", text, re.IGNORECASE)
+    if m is None:
+        return None
+    # Search from the HEALTHCHECK keyword onward — its CMD URL may sit on a `\` continuation line.
+    return _extract_url_path(text[m.start() :])
+
+
+def resolve_health_path(
+    *,
+    override: str | None,
+    compose_test: Any,
+    dockerfile_path: Path | None,
+) -> str:
+    """Resolve the backend health endpoint PATH by precedence (CR-NS-062).
+
+    ``--health-endpoint`` override → source-compose ``healthcheck.test`` path → backend Dockerfile
+    ``HEALTHCHECK`` path → ``/health`` (last-resort default). Used for BOTH the rendered compose
+    healthcheck and the wait-healthy probe so they always agree.
+    """
+    if override:
+        return override
+    from_compose = extract_health_path(compose_test)
+    if from_compose:
+        return from_compose
+    if dockerfile_path is not None:
+        from_dockerfile = detect_dockerfile_healthcheck_path(dockerfile_path)
+        if from_dockerfile:
+            return from_dockerfile
+    return "/health"
+
+
 # ---------- CR-022: DB credentials, env vars, frontend, alembic ----------
 
 
@@ -715,8 +775,14 @@ def docker_compose(
     *,
     cwd: Path,
     capture: bool = False,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess:
-    """Run `docker compose <args>` in given cwd. Raises CalledProcessError on non-zero."""
+    """Run `docker compose <args>` in given cwd. Raises CalledProcessError on non-zero.
+
+    ``env`` (if given) is overlaid on the inherited environment — used to pass build-time vars like
+    ``APP_VERSION`` to ``docker compose build`` so the compose ``${APP_VERSION}`` substitution
+    resolves (CR-NS-062).
+    """
     cmd = ["docker", "compose", *args]
     return subprocess.run(
         cmd,
@@ -724,7 +790,27 @@ def docker_compose(
         check=True,
         capture_output=capture,
         text=True,
+        env={**os.environ, **env} if env else None,
     )
+
+
+def git_describe(cwd: Path) -> str:
+    """`git describe --tags --always` of the repo at ``cwd``; ``"0.0.0-dev"`` on any failure.
+
+    The single source of the baked version for both the FE host-build (CR-NS-060) and the backend
+    image build-arg (CR-NS-062), so FE + BE report the same version.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "describe", "--tags", "--always"],
+            cwd=cwd,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return "0.0.0-dev"
+    return result.stdout.strip() or "0.0.0-dev"
 
 
 def host_build_frontend(source_project_path: Path) -> None:
@@ -740,19 +826,11 @@ def host_build_frontend(source_project_path: Path) -> None:
     frontend_dir = source_project_path / "frontend"
     console.print("[cyan]Host-building frontend[/cyan] (private git-dep → nginx-only image)…")
     subprocess.run(["npm", "ci"], cwd=frontend_dir, check=True)
-    describe = subprocess.run(
-        ["git", "describe", "--tags", "--always"],
-        cwd=frontend_dir,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    app_version = describe.stdout.strip() or "0.0.0-dev"
     subprocess.run(
         ["npm", "run", "build"],
         cwd=frontend_dir,
         check=True,
-        env={**os.environ, "APP_VERSION": app_version},
+        env={**os.environ, "APP_VERSION": git_describe(frontend_dir)},
     )
 
 

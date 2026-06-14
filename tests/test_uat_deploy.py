@@ -232,6 +232,22 @@ def test_render_compose_backend_no_alembic_dependency_for_self_bootstrap():
     assert "alembic-init" not in backend_block
 
 
+def test_render_compose_backend_build_has_app_version_arg():
+    """CR-NS-062: the backend image build bakes APP_VERSION (settings.APP_VERSION reads it)."""
+    import yaml
+
+    data = yaml.safe_load(_render_compose("self-bootstrap"))
+    assert data["services"]["backend"]["build"]["args"]["APP_VERSION"] == "${APP_VERSION:-0.0.0-dev}"
+
+
+def test_render_compose_alembic_init_build_has_app_version_arg():
+    """CR-NS-062: the external alembic-init build (same image) also carries APP_VERSION."""
+    import yaml
+
+    data = yaml.safe_load(_render_compose("external"))
+    assert data["services"]["alembic-init"]["build"]["args"]["APP_VERSION"] == "${APP_VERSION:-0.0.0-dev}"
+
+
 def test_render_nginx_substitutes_slug_and_port(monkeypatch, tmp_path):
     """Verify nginx template renders s slug + frontend + backend port (CR-022)."""
     import _uat_lib
