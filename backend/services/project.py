@@ -194,6 +194,11 @@ def create(db: Session, data: ProjectCreate) -> Project:
     source_path = data.source_path or source_tmpl.format(slug=data.slug)
     kb_path = data.kb_path or kb_tmpl.format(slug=data.slug)
 
+    # Notification-owner invariant (CR-NS-074): a project ALWAYS gets an owner. The HTTP route
+    # already defaults this to the creator, but defaulting at the service boundary too guarantees
+    # it regardless of caller — so the presence-aware Telegram nudge always has a recipient.
+    owner_id = data.owner_id or data.created_by
+
     project = Project(
         name=data.name,
         slug=data.slug,
@@ -208,7 +213,7 @@ def create(db: Session, data: ProjectCreate) -> Project:
         kb_path=kb_path,
         guardian_enabled=data.guardian_enabled,
         created_by=data.created_by,
-        owner_id=data.owner_id,
+        owner_id=owner_id,
     )
     db.add(project)
     db.flush()

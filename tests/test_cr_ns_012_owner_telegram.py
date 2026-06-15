@@ -127,6 +127,27 @@ def test_project_service_create_persists_owner_id(db_session, monkeypatch):
     assert project.owner_id == owner.id
 
 
+def test_project_service_create_defaults_owner_to_creator(db_session, monkeypatch):
+    """CR-NS-074 — owner_id omitted ⇒ the service defaults it to created_by, so a project NEVER
+    lands ownerless (the Telegram nudge always has a recipient), regardless of the calling path."""
+    creator = _make_user(db_session)
+    monkeypatch.setattr(
+        project_service.system_setting_service,
+        "get_str",
+        lambda db, key: "/opt/projects/{slug}" if "source" in key else "/home/icc/knowledge/projects/{slug}",
+    )
+    data = ProjectCreate(
+        name=f"P {uuid.uuid4().hex[:6]}",
+        slug=f"p-{uuid.uuid4().hex[:6]}",
+        category="singlemodule",
+        description="d",
+        created_by=creator.id,
+        # owner_id intentionally omitted
+    )
+    project = project_service.create(db_session, data)
+    assert project.owner_id == creator.id
+
+
 # ── template_bootstrap --notify-chat-id ─────────────────────────────────────
 
 
