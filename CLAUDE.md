@@ -447,7 +447,7 @@ Mechanika PIV (spec compliance check, field-level verification, dead code detect
 
 - **NEX Studio** = multi-module dev workbench. Aktuálne sa **používa výhradne na založenie projektu** ("Create new project"). Vývojové práce na projektoch realizujú CC agenti **Designer**, **Implementer**, **Auditor** mimo NEX Studio UI.
 - **NEX Command** = active single-module dev environment (predchodca NEX Studio, plne funkčný, aktívne používaný).
-- **NEX Test** = crash test pre NEX Studio. Cieľ NIE je NEX Test, ale maximum NEX Studio quality. NEX Studio bug found → STOP → fix NEX Studio → CONTINUE.
+- **NEX Test** (retired 2026-06-15) = bol dedikovaný crash-test projekt pre NEX Studio; rolu splnil a nahradilo ju crash-testovanie na ostrých projektoch (nex-inbox/MÁGERSTAV, nex-ledger). **Princíp trvá**: keď sa pri builde ktoréhokoľvek projektu nájde NEX Studio bug → STOP → fix NEX Studio → CONTINUE (cieľ je maximum NEX Studio quality, nie daný projekt).
 - **AI providers**: Claude MAX (Opus 4.7), Ollama (local). **NIKDY priamy Anthropic API.**
 - **Platforma**: Ubuntu/ANDROS.
 
