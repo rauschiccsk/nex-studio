@@ -30,6 +30,7 @@ from backend.db.models.tasks import Epic  # noqa: F401
 from backend.db.models.versions import Version  # noqa: F401
 from backend.db.session import _ensure_pg8000_driver, get_db
 from backend.main import app
+from tests._db_guard import assert_test_db_distinct
 
 
 def _get_test_database_url() -> str:
@@ -62,7 +63,20 @@ def _ensure_test_database_exists(test_url: str) -> None:
 @pytest.fixture(scope="session")
 def test_engine():
     """Create a SQLAlchemy engine for the test database (session-scoped)."""
+    from backend.config.settings import settings
+
     url = _get_test_database_url()
+
+    # CR-NS-076: refuse to even connect if the test DB is not a DISTINCT
+    # database from production. This MUST run before ``_ensure_test_database_exists``
+    # / ``create_all`` / ``drop_all`` below — otherwise a mis-set
+    # ``TEST_DATABASE_URL`` pointing at the cockpit DB would have its tables
+    # created and then DROPPED at session teardown. Guarding here (rather than
+    # only in the autouse fixture, which depends on this fixture and therefore
+    # runs after setup) closes that window and also covers ``backend/tests``,
+    # which re-imports this fixture but not the autouse one below.
+    assert_test_db_distinct(settings.database_url, url)
+
     _ensure_test_database_exists(url)
 
     engine = create_engine(url, pool_pre_ping=True)
@@ -75,6 +89,43 @@ def test_engine():
     # Drop all tables after all tests
     Base.metadata.drop_all(bind=engine)
     engine.dispose()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _guard_prod_db_isolation(test_engine):
+    """Guarantee no test can EVER write to the cockpit/PROD database (CR-NS-076).
+
+    1. Hard-abort the run if ``TEST_DATABASE_URL`` is not a distinct database
+       from the production ``settings.database_url``. ``test_engine`` already
+       enforces this before touching any DB; re-asserting here keeps the
+       documented isolation gate co-located with the rebind.
+    2. Rebind the shared ``SessionLocal`` sessionmaker (and the module-level
+       ``engine``) to the test engine for the whole session. ``SessionLocal``
+       is imported BY REFERENCE everywhere, so reconfiguring the single shared
+       object redirects even an un-monkeypatched ``SessionLocal()`` to the test
+       DB — never the cockpit DB — closing the leak that put a full pipeline
+       tree into ``nexstudio`` on 2026-06-08.
+
+    Per-test ``monkeypatch.setattr(<module>, "SessionLocal", ...)`` overrides
+    still work; they just replace an already-test-bound factory. Production
+    ``backend/db/session.py`` behaviour is untouched — only the live, shared
+    object is reconfigured for the duration of the test session and restored
+    on teardown.
+    """
+    from backend.config.settings import settings
+    from backend.db import session as db_session_module
+
+    assert_test_db_distinct(settings.database_url, _get_test_database_url())
+
+    original_engine = db_session_module.engine
+    db_session_module.SessionLocal.configure(bind=test_engine)
+    db_session_module.engine = test_engine
+
+    yield
+
+    # Restore the production bind so process-global state is left as we found it.
+    db_session_module.SessionLocal.configure(bind=original_engine)
+    db_session_module.engine = original_engine
 
 
 @pytest.fixture()
