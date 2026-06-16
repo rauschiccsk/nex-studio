@@ -81,6 +81,18 @@ class PipelineState(Base, UUIDMixin, TimestampMixin):
     #: the metrics page has the lifetime total; a live open wait is added on top at read time. Starts
     #: fresh — versions finished before this column show 0 (no backfill, documented).
     total_director_wait_seconds = Column(Float, nullable=False, server_default="0")
+    #: R1 dispatch resilience (v0.7.0, D1/D2). Repo HEAD captured at the START of a dispatch
+    #: (``_begin_dispatch``), FROZEN across that dispatch's parse-retries (Seam #4) and reset to NULL on
+    #: settle (the ``status`` set listener below + the ``pipeline_runner._run`` backstop). On an agent
+    #: envelope-loss (timeout/crash) the engine audits ``dispatch_baseline_sha..HEAD`` so committed-but-lost
+    #: work is surfaced to the Director, never silently lost. Distinct from the per-task ``Task.baseline_sha``
+    #: (verify anchor) — a turn-start snapshot, not a verify anchor (Seam #7). Nullable; NULL when idle.
+    dispatch_baseline_sha = Column(String(40), nullable=True)
+    #: R1 durable single-flight (D2, CR-NS-027 hardening): True while a dispatch is in flight for this
+    #: version. Enforced at the DB level so it survives a backend restart, complementing — not replacing —
+    #: the in-memory ``pipeline_runner._ACTIVE_DISPATCH`` guard. Set by ``_begin_dispatch``; cleared on every
+    #: settle (the ``status`` listener below) + the ``_run`` backstop + startup orphan recovery.
+    dispatch_in_flight = Column(Boolean, nullable=False, server_default="false")
 
     __table_args__ = (
         UniqueConstraint("version_id", name="uq_pipeline_state_version_id"),
@@ -196,3 +208,21 @@ def _stamp_awaiting_director_since(target, value, oldvalue, initiator):
             elapsed = (datetime.now(timezone.utc) - target.awaiting_director_since).total_seconds()
             target.total_director_wait_seconds = (target.total_director_wait_seconds or 0.0) + elapsed
         target.awaiting_director_since = None
+
+
+@event.listens_for(PipelineState.status, "set")
+def _clear_dispatch_on_settle(target, value, oldvalue, initiator):
+    """Clear the durable single-flight flag + dispatch baseline the moment the pipeline SETTLES (R1, D2).
+
+    A dispatch is in flight only while ``status == 'agent_working'``. Any settle (``awaiting_director`` /
+    ``blocked`` / ``paused`` / ``done``) means the dispatch has ended → drop ``dispatch_in_flight`` and reset
+    ``dispatch_baseline_sha`` to NULL. This is the DRY "settle paths" clear the design calls for: every status
+    write goes through this ORM attribute, so the ~18 transition sites need no individual touch, and a fresh
+    dispatch re-captures the baseline from a clean NULL. ``pipeline_runner._run`` keeps a backstop clear for a
+    settle that never goes through an ORM status set. A re-entry that keeps ``agent_working`` (the fast_fix
+    one-touch chain) is NOT a settle, so the flag + baseline survive the chain (Seam #4). The lost-work audit
+    reads the baseline BEFORE the settling status write, so the value is captured before this clears it."""
+    if value == oldvalue or value == "agent_working":
+        return
+    target.dispatch_in_flight = False
+    target.dispatch_baseline_sha = None

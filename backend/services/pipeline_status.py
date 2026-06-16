@@ -217,6 +217,13 @@ class ParseFailure:
     reason: str
     usage: Optional[dict[str, Any]] = None
     timing: Optional[dict[str, Any]] = None
+    #: R1-c (v0.7.0 dispatch resilience): set when this failure is an agent envelope-loss (a
+    #: ``ClaudeAgentError`` — timeout / crash) for which the engine ran the ``baseline..HEAD`` commit
+    #: audit. Carries ``{dispatch_baseline_sha, post_timeout_head_sha, timeout_seconds,
+    #: detected_commit_count, next_action}`` so ``run_dispatch`` settles to ``awaiting_director`` with a
+    #: "work may have landed — review & continue" next_action instead of a bare ``blocked`` relay. ``None``
+    #: for an ordinary parse failure (no dispatch baseline to audit against).
+    lost_work: Optional[dict[str, Any]] = None
 
 
 ParseResult = Union[PipelineStatusBlock, ParseFailure]

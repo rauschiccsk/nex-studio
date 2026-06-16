@@ -2814,13 +2814,31 @@ async def test_recover_leaves_awaiting_director_build_untouched(db_session, fake
     assert orchestrator.recover_orphaned_builds_on_startup(db_session) == 0
 
 
-async def test_recover_leaves_non_build_agent_working_untouched(db_session, fake_claude):
-    # kickoff/agent_working after start — a non-build stage is NOT recovered (build-only).
+async def test_recover_orphaned_non_build_stage_recovered(db_session, fake_claude):
+    # R1-d (D4): orphan recovery now covers ALL stages, not just build. A kickoff/agent_working stranded
+    # by a restart is flipped to awaiting_director with a generic stage-parametrized message + commit audit,
+    # and the durable single-flight flag is cleared (a killed process left it set — Seam #2).
     version, _ = _make_version(db_session)
     await orchestrator.apply_action(db_session, version_id=version.id, action="start")
-    assert orchestrator._get_state(db_session, version.id).status == "agent_working"
-    assert orchestrator.recover_orphaned_builds_on_startup(db_session) == 0
-    assert orchestrator._get_state(db_session, version.id).status == "agent_working"  # untouched
+    state = orchestrator._get_state(db_session, version.id)
+    assert state.status == "agent_working" and state.dispatch_in_flight is True
+
+    assert orchestrator.recover_orphaned_builds_on_startup(db_session) == 1
+
+    state = orchestrator._get_state(db_session, version.id)
+    assert state.current_stage == "kickoff"
+    assert state.status == "awaiting_director"
+    assert "kickoff" in state.next_action and "prerušená" in state.next_action
+    assert state.dispatch_in_flight is False  # cleared on recovery
+    notif = [
+        m
+        for m in _msgs(db_session, version.id)
+        if m.author == "system"
+        and m.kind == "notification"
+        and m.stage == "kickoff"
+        and (m.payload or {}).get("recovery_audit")
+    ]
+    assert notif and "reštartom" in notif[-1].content
 
 
 async def test_recover_then_continue_build_reclaims_and_continues(db_session, fake_claude, monkeypatch):
@@ -5072,3 +5090,273 @@ async def test_apply_coordinator_recommendation_executes_answer_question(db_sess
     assert task.status == "todo"  # executed (reset for the answered retry), not relayed
     assert state.status == "agent_working"  # re-dispatched
     assert any(m.kind == "approval" and "odpoveď na otázku" in m.content for m in _msgs(db_session, version.id))
+
+
+# ── R1 dispatch resilience (v0.7.0) ─────────────────────────────────────────────
+# Baseline capture + durable single-flight (R1-b), lost-work detection (R1-c), all-stage
+# orphan recovery + session TTL (R1-d). The cockpit's own dispatch path must never silently
+# lose agent work and must serialize dispatch durably.
+
+
+async def test_begin_dispatch_captures_baseline_and_arms_flag(db_session, fake_claude, monkeypatch):
+    # R1-b UNIT: _begin_dispatch captures dispatch_baseline_sha (repo HEAD) + arms dispatch_in_flight.
+    monkeypatch.setattr(orchestrator, "_repo_head", lambda root: "b" * 40)
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")  # → _begin_dispatch
+    state = orchestrator._get_state(db_session, version.id)
+    assert state.dispatch_baseline_sha == "b" * 40
+    assert state.dispatch_in_flight is True
+    assert state.status == "agent_working"
+    # Seam #4: a re-entry (parse-retry) does NOT overwrite the frozen baseline.
+    monkeypatch.setattr(orchestrator, "_repo_head", lambda root: "c" * 40)
+    orchestrator._begin_dispatch(db_session, state)
+    assert state.dispatch_baseline_sha == "b" * 40  # frozen across the dispatch
+
+
+async def test_settle_clears_dispatch_flag_and_baseline(db_session, fake_claude, monkeypatch):
+    # R1-b UNIT: the status set listener clears the flag + baseline on every ORM settle ("settle paths").
+    monkeypatch.setattr(orchestrator, "_repo_head", lambda root: "b" * 40)
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    state = orchestrator._get_state(db_session, version.id)
+    assert state.dispatch_in_flight is True and state.dispatch_baseline_sha == "b" * 40
+    state.status = "awaiting_director"  # settle
+    assert state.dispatch_in_flight is False
+    assert state.dispatch_baseline_sha is None
+
+
+async def test_apply_action_durable_single_flight_guard(db_session, fake_claude):
+    # R1-b UNIT: a dispatching action while dispatch_in_flight=True raises (the durable guard that survives
+    # a restart, beyond the in-memory _ACTIVE_DISPATCH). Set the flag AFTER the settle so the listener
+    # doesn't clear it (simulates a stale in-flight flag a restart left before orphan recovery).
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    state = orchestrator._get_state(db_session, version.id)
+    state.status = "awaiting_director"
+    state.dispatch_in_flight = True
+    db_session.flush()
+    with pytest.raises(orchestrator.OrchestratorError, match="Dispečer už beží"):
+        await orchestrator.apply_action(db_session, version_id=version.id, action="approve")
+    # not mutated past the guard
+    assert orchestrator._get_state(db_session, version.id).current_stage == "kickoff"
+
+
+def _arm_dispatch_state(db_session, version, stage="kickoff", actor="coordinator", baseline="b" * 40):
+    """Seed a PipelineState as a live dispatch (agent_working + a frozen baseline)."""
+    state = PipelineState(
+        version_id=version.id,
+        flow_type="new_version",
+        current_stage=stage,
+        current_actor=actor,
+        status="agent_working",
+        next_action="working",
+    )
+    db_session.add(state)
+    db_session.flush()
+    state.dispatch_baseline_sha = baseline  # set AFTER construction so the listener keeps it
+    state.dispatch_in_flight = True
+    db_session.flush()
+    return state
+
+
+def _lost_work_notifs(db_session, version_id):
+    return [
+        m
+        for m in _msgs(db_session, version_id)
+        if m.author == "system" and m.kind == "notification" and (m.payload or {}).get("lost_work_audit")
+    ]
+
+
+async def test_invoke_agent_timeout_records_lost_work_audit_with_commits(db_session, monkeypatch):
+    # R1-c UNIT: the timeout catch audits baseline..HEAD and records ONE commit-audit notification
+    # (count >= 1 branch) while still returning a ParseFailure (escalation intact).
+    async def _boom(**kwargs):
+        raise orchestrator.ClaudeAgentError("claude invocation timed out after 900s")
+
+    monkeypatch.setattr(orchestrator, "invoke_claude", _boom)
+    monkeypatch.setattr(orchestrator, "_repo_head", lambda root: "h" * 40)
+    monkeypatch.setattr(orchestrator, "_rev_list_count", lambda root, baseline: 3)
+    version, _ = _make_version(db_session)
+    _arm_dispatch_state(db_session, version)
+
+    result = await orchestrator.invoke_agent(
+        db_session, version_id=version.id, role="coordinator", stage="kickoff", prompt="x"
+    )
+
+    assert isinstance(result, ParseFailure)
+    assert result.lost_work is not None and result.lost_work["detected_commit_count"] == 3
+    notifs = _lost_work_notifs(db_session, version.id)
+    assert len(notifs) == 1
+    assert notifs[0].payload["detected_commit_count"] == 3
+    assert notifs[0].payload["dispatch_baseline_sha"] == "b" * 40
+    assert notifs[0].payload["post_timeout_head_sha"] == "h" * 40
+    assert "3 commitov" in notifs[0].content
+
+
+async def test_invoke_agent_timeout_records_lost_work_audit_no_commits(db_session, monkeypatch):
+    # R1-c UNIT: the count == 0 branch reads "žiadna zmena nezistená".
+    async def _boom(**kwargs):
+        raise orchestrator.ClaudeAgentError("claude invocation timed out after 900s")
+
+    monkeypatch.setattr(orchestrator, "invoke_claude", _boom)
+    monkeypatch.setattr(orchestrator, "_repo_head", lambda root: "h" * 40)
+    monkeypatch.setattr(orchestrator, "_rev_list_count", lambda root, baseline: 0)
+    version, _ = _make_version(db_session)
+    _arm_dispatch_state(db_session, version)
+
+    result = await orchestrator.invoke_agent(
+        db_session, version_id=version.id, role="coordinator", stage="kickoff", prompt="x"
+    )
+
+    assert isinstance(result, ParseFailure)
+    assert result.lost_work["detected_commit_count"] == 0
+    notifs = _lost_work_notifs(db_session, version.id)
+    assert len(notifs) == 1 and "žiadna zmena" in notifs[0].content
+
+
+async def test_invoke_agent_timeout_no_baseline_no_audit(db_session, monkeypatch):
+    # R1-c UNIT: no dispatch baseline armed → no audit, plain ParseFailure (unchanged escalation).
+    async def _boom(**kwargs):
+        raise orchestrator.ClaudeAgentError("claude invocation timed out after 900s")
+
+    monkeypatch.setattr(orchestrator, "invoke_claude", _boom)
+    version, _ = _make_version(db_session)
+    state = PipelineState(
+        version_id=version.id,
+        flow_type="new_version",
+        current_stage="kickoff",
+        current_actor="coordinator",
+        status="agent_working",
+        next_action="working",
+    )
+    db_session.add(state)
+    db_session.flush()  # dispatch_baseline_sha stays NULL
+
+    result = await orchestrator.invoke_agent(
+        db_session, version_id=version.id, role="coordinator", stage="kickoff", prompt="x"
+    )
+    assert isinstance(result, ParseFailure)
+    assert result.lost_work is None
+    assert _lost_work_notifs(db_session, version.id) == []
+
+
+async def test_run_dispatch_timeout_with_commits_surfaces_lost_work(db_session, monkeypatch):
+    # R1-c INTEGRATION: a timeout during a Coordinator turn with commits → audit recorded, awaiting_director,
+    # next_action names the commit count; the audit is recorded ONCE despite the parse-retries.
+    async def _boom(**kwargs):
+        raise orchestrator.ClaudeAgentError("claude invocation timed out after 900s")
+
+    monkeypatch.setattr(orchestrator, "_repo_head", lambda root: "h" * 40)
+    monkeypatch.setattr(orchestrator, "_rev_list_count", lambda root, baseline: 2)
+    monkeypatch.setattr(orchestrator, "invoke_claude", _boom)
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")  # arms baseline=h*40
+
+    state = await orchestrator.run_dispatch(db_session, version.id)
+
+    assert state.status == "awaiting_director"  # never a bare blocked, never auto-proceeds
+    assert "2 commitov" in state.next_action
+    assert len(_lost_work_notifs(db_session, version.id)) == 1  # idempotent across parse-retries
+
+
+async def test_run_dispatch_timeout_no_commits_surfaces_no_change(db_session, monkeypatch):
+    # R1-c INTEGRATION: a timeout with no commits → "žiadna zmena", still awaiting_director.
+    async def _boom(**kwargs):
+        raise orchestrator.ClaudeAgentError("claude invocation timed out after 900s")
+
+    monkeypatch.setattr(orchestrator, "_repo_head", lambda root: "h" * 40)
+    monkeypatch.setattr(orchestrator, "_rev_list_count", lambda root, baseline: 0)
+    monkeypatch.setattr(orchestrator, "invoke_claude", _boom)
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+
+    state = await orchestrator.run_dispatch(db_session, version.id)
+
+    assert state.status == "awaiting_director"
+    assert "žiadna zmena" in state.next_action
+
+
+async def test_recover_orphaned_release_with_commits(db_session, monkeypatch):
+    # R1-d INTEGRATION: a restart at release/agent_working → recovery flips to awaiting_director, records the
+    # commit audit (generic stage message), and clears the durable flag.
+    monkeypatch.setattr(orchestrator, "_repo_head", lambda root: "h" * 40)
+    monkeypatch.setattr(orchestrator, "_rev_list_count", lambda root, baseline: 4)
+    version, _ = _make_version(db_session)
+    _arm_dispatch_state(db_session, version, stage="release", actor="coordinator", baseline="h" * 40)
+
+    assert orchestrator.recover_orphaned_builds_on_startup(db_session) == 1
+
+    state = orchestrator._get_state(db_session, version.id)
+    assert state.current_stage == "release"
+    assert state.status == "awaiting_director"
+    assert state.dispatch_in_flight is False
+    assert state.dispatch_baseline_sha is None
+    assert "release" in state.next_action and "4 commitov" in state.next_action
+    notif = [m for m in _msgs(db_session, version.id) if (m.payload or {}).get("recovery_audit")]
+    assert notif and notif[-1].payload["detected_commit_count"] == 4
+
+
+async def test_dispatch_baseline_independent_of_task_baseline(db_session, fake_claude, monkeypatch):
+    # R1 REGRESSION (Seam #7): the dispatch-level baseline (PipelineState) and the per-task Task.baseline_sha
+    # are independent — settling clears the dispatch baseline but never touches the task baseline.
+    monkeypatch.setattr(orchestrator, "_repo_head", lambda root: "d" * 40)
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    state = orchestrator._get_state(db_session, version.id)
+    assert state.dispatch_baseline_sha == "d" * 40
+    _epic, _feat, (task,) = _seed_one_feat(db_session, version, project, ["T"])
+    task.baseline_sha = "t" * 40
+    db_session.flush()
+
+    state.status = "awaiting_director"  # settle → dispatch baseline reset
+    db_session.flush()
+    db_session.refresh(task)
+    assert state.dispatch_baseline_sha is None  # dispatch baseline cleared
+    assert task.baseline_sha == "t" * 40  # per-task verify anchor untouched
+
+
+def test_cleanup_old_orchestrator_sessions_prunes_idle(db_session, monkeypatch):
+    # R1-d UNIT (D3): rows untouched > 7d on last_input_at are pruned; fresh rows survive.
+    from datetime import datetime, timedelta, timezone
+
+    old = OrchestratorSession(project_slug="p-old", role="designer", claude_session_id=uuid.uuid4())
+    fresh = OrchestratorSession(project_slug="p-fresh", role="designer", claude_session_id=uuid.uuid4())
+    db_session.add_all([old, fresh])
+    db_session.flush()
+    db_session.execute(
+        update(OrchestratorSession)
+        .where(OrchestratorSession.project_slug == "p-old")
+        .values(last_input_at=datetime.now(timezone.utc) - timedelta(days=8))
+    )
+    db_session.flush()
+    monkeypatch.setattr(db_session, "commit", db_session.flush)  # SAVEPOINT-safe
+
+    n = orchestrator.cleanup_old_orchestrator_sessions(db_session)
+
+    assert n == 1
+    remaining = db_session.execute(select(OrchestratorSession.project_slug)).scalars().all()
+    assert "p-old" not in remaining and "p-fresh" in remaining
+
+
+async def test_invoke_agent_bumps_last_input_at(db_session, fake_claude):
+    # R1-d UNIT (D3): every invoke_agent stamps the session's last_input_at (drives the TTL).
+    from datetime import datetime, timedelta, timezone
+
+    version, project = _make_version(db_session)
+    orchestrator._resolve_orch_session(db_session, project.slug, "designer")  # create the row
+    stale = datetime.now(timezone.utc) - timedelta(days=10)
+    db_session.execute(
+        update(OrchestratorSession)
+        .where(OrchestratorSession.project_slug == project.slug, OrchestratorSession.role == "designer")
+        .values(last_input_at=stale)
+    )
+    db_session.flush()
+
+    await orchestrator.invoke_agent(db_session, version_id=version.id, role="designer", stage="gate_a", prompt="x")
+
+    row = db_session.execute(
+        select(OrchestratorSession).where(
+            OrchestratorSession.project_slug == project.slug, OrchestratorSession.role == "designer"
+        )
+    ).scalar_one()
+    assert row.last_input_at > stale  # bumped on the turn

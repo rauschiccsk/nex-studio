@@ -11,10 +11,12 @@ Director-owned ``agent_terminal_sessions`` row that ``--resume``s this UUID.
 """
 
 from sqlalchemy import (
+    TIMESTAMP,
     CheckConstraint,
     Column,
     String,
     UniqueConstraint,
+    func,
 )
 from sqlalchemy.dialects.postgresql import UUID
 
@@ -29,6 +31,12 @@ class OrchestratorSession(Base, UUIDMixin, TimestampMixin):
     project_slug = Column(String(100), nullable=False)
     role = Column(String(16), nullable=False)
     claude_session_id = Column(UUID(as_uuid=True), nullable=False)
+    #: R1 session hygiene (v0.7.0, D3): last time a turn was driven on this ``(project, role)`` thread,
+    #: bumped on every ``invoke_agent``. Powers the conservative 7-day TTL retention task
+    #: (``cleanup_old_orchestrator_sessions``) that mirrors ``agent_terminal.idle_cleanup`` — bounds
+    #: unbounded row growth without expiring an actively-used thread. Defaults to ``now()`` (≈ ``created_at``
+    #: at insert; the migration backfills existing rows to ``created_at``).
+    last_input_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
 
     __table_args__ = (
         UniqueConstraint("project_slug", "role", name="uq_orchestrator_session_project_role"),

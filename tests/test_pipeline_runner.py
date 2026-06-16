@@ -608,3 +608,53 @@ async def test_schedule_dispatch_single_flight_per_version(monkeypatch):
     await task
     await asyncio.sleep(0)  # drain the done-callbacks
     assert vid not in pipeline_runner._ACTIVE_DISPATCH  # cleared on completion → a fresh dispatch is allowed
+
+
+# ── R1 dispatch-flag cleanup backstop (v0.7.0) ────────────────────────────────
+
+
+def test_clear_dispatch_flags_clears_when_set(db_session, monkeypatch):
+    """R1-b: _clear_dispatch_flags clears dispatch_in_flight + resets the baseline when armed."""
+    version = _make_version(db_session)
+    state = _seed_working_state(db_session, version.id)
+    state.dispatch_in_flight = True
+    state.dispatch_baseline_sha = "b" * 40
+    db_session.flush()
+    monkeypatch.setattr(db_session, "commit", db_session.flush)  # SAVEPOINT-safe
+
+    pipeline_runner._clear_dispatch_flags(db_session, version.id)
+
+    db_session.refresh(state)
+    assert state.dispatch_in_flight is False
+    assert state.dispatch_baseline_sha is None
+
+
+def test_clear_dispatch_flags_missing_state_is_safe(db_session):
+    """R1-b (Seam #3): a missing PipelineState row (version deleted mid-flight) must not crash."""
+    pipeline_runner._clear_dispatch_flags(db_session, uuid.uuid4())  # no raise
+
+
+async def test_run_clears_durable_flag_on_settle(db_session, monkeypatch):
+    """R1-b: after a dispatch settles, _run leaves dispatch_in_flight cleared + the baseline reset — even
+    when the settle bypassed the ORM status listener (a bulk UPDATE), exercising the runner backstop."""
+    from sqlalchemy import update as _update
+
+    version = _make_version(db_session)
+    state = _seed_working_state(db_session, version.id)
+    state.dispatch_in_flight = True
+    state.dispatch_baseline_sha = "b" * 40
+    db_session.flush()
+    _wire_runner(db_session, monkeypatch)
+
+    async def fake_run_dispatch(db, vid, on_event=None, directive=None, gate_e_dispatch=None, on_message=None):
+        # bulk UPDATE bypasses the ORM 'set' listener → the runner backstop is what must clear the flag.
+        db.execute(_update(PipelineState).where(PipelineState.version_id == vid).values(status="awaiting_director"))
+        return db.execute(select(PipelineState).where(PipelineState.version_id == vid)).scalar_one()
+
+    monkeypatch.setattr(orchestrator, "run_dispatch", fake_run_dispatch)
+
+    await pipeline_runner._run(version.id)
+
+    settled = db_session.execute(select(PipelineState).where(PipelineState.version_id == version.id)).scalar_one()
+    assert settled.dispatch_in_flight is False
+    assert settled.dispatch_baseline_sha is None

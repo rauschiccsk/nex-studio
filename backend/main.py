@@ -112,6 +112,27 @@ async def _agent_terminal_log_retention_loop() -> None:
             logger.exception("agent_terminal log retention loop iteration failed")
 
 
+async def _orchestrator_session_retention_loop() -> None:
+    """Background task: daily, prune orchestrator_session rows idle > 7 days (R1-d / D3).
+
+    Mirrors :func:`_agent_terminal_idle_loop` — own short-lived DB session per pass, lifecycle tied to
+    the FastAPI lifespan. Session hygiene only: a new-version kickoff already deletes a project's
+    sessions, so this just bounds unbounded row growth from long-idle ``(project, role)`` threads.
+    """
+    while True:
+        try:
+            await asyncio.sleep(orchestrator_service.ORCHESTRATOR_SESSION_CLEANUP_INTERVAL_SECONDS)
+            db = SessionLocal()
+            try:
+                orchestrator_service.cleanup_old_orchestrator_sessions(db)
+            finally:
+                db.close()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("orchestrator session retention loop iteration failed")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan: migrations + agent terminal startup hooks.
@@ -153,13 +174,18 @@ async def lifespan(app: FastAPI):
         _agent_terminal_log_retention_loop(),
         name="agent-terminal-log-retention",
     )
+    orch_session_retention_task = asyncio.create_task(
+        _orchestrator_session_retention_loop(),
+        name="orchestrator-session-retention",
+    )
 
     try:
         yield
     finally:
         idle_task.cancel()
         retention_task.cancel()
-        for t in (idle_task, retention_task):
+        orch_session_retention_task.cancel()
+        for t in (idle_task, retention_task, orch_session_retention_task):
             try:
                 await t
             except (asyncio.CancelledError, Exception):

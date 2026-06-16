@@ -185,7 +185,28 @@ async def _run(version_id: uuid.UUID, directive: str | None = None, gate_e_dispa
         await _broadcast_state(version_id, state)
         await _maybe_notify(db, version_id, state)
     finally:
-        db.close()
+        try:
+            _clear_dispatch_flags(db, version_id)
+        except Exception:  # noqa: BLE001 — cleanup must never mask the dispatch outcome
+            logger.exception("dispatch-flag cleanup failed for version %s", version_id)
+        finally:
+            db.close()
+
+
+def _clear_dispatch_flags(db, version_id: uuid.UUID) -> None:
+    """R1-b backstop: clear the durable single-flight flag + reset the dispatch baseline on settle.
+
+    The :class:`PipelineState.status` set listener already clears both on every ORM settle (the DRY path);
+    this runner-level backstop covers a dispatch that ended WITHOUT a clean ORM status transition (e.g. the
+    fast_fix auto-chain exhausting its guard while still ``agent_working``). No-op — and **no commit** — when
+    neither is set, so the commit cadence is unchanged for flows that never armed them. Guarded against a
+    missing :class:`PipelineState` row (version deleted mid-flight — Seam #3)."""
+    state = db.execute(select(PipelineState).where(PipelineState.version_id == version_id)).scalar_one_or_none()
+    if state is None or (not state.dispatch_in_flight and not state.dispatch_baseline_sha):
+        return
+    state.dispatch_in_flight = False
+    state.dispatch_baseline_sha = None
+    db.commit()
 
 
 def _owner_chat_id(db, version_id: uuid.UUID) -> str | None:

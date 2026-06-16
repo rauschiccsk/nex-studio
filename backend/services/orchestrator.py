@@ -25,6 +25,7 @@ import subprocess
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from time import perf_counter
 from typing import Any, Optional
@@ -946,6 +947,13 @@ async def invoke_agent(
     """
     slug = _project_slug_for_version(db, version_id)
     session_id, is_first = _resolve_orch_session(db, slug, role)
+    # R1-d (D3): bump the session's last activity for the TTL retention task. One UPDATE per turn (covers
+    # the just-created row too — a harmless re-stamp to ≈now); the retention loop prunes rows untouched 7d.
+    db.execute(
+        update(OrchestratorSession)
+        .where(OrchestratorSession.project_slug == slug, OrchestratorSession.role == role)
+        .values(last_input_at=datetime.now(timezone.utc))
+    )
     # CR-NS-040 (E3(b/c)): per-dispatch model/effort from the project owner's config. Resolved here (not
     # in the parse-retry wrapper) so EVERY dispatch — including each parse-retry, which re-enters
     # invoke_agent — applies the owner's config; unset → no flags (today's behavior).
@@ -983,7 +991,20 @@ async def invoke_agent(
         # A failed invocation still burned wall-clock (and counts as an attempt) — record it so the
         # turn's timing/parse_attempts reflect retries; no usage (no envelope was returned) (WS-D).
         turn_metrics.record(None, perf_counter() - _started)
-        # Return the failure SILENTLY (CR-NS-022 §2 — no raw system→director dump here). The
+        # R1-c (D1): an envelope-loss (timeout/crash) may have left real commits behind even though the
+        # JSON envelope was lost. Audit ``baseline..HEAD`` and record ONE system→director notification so
+        # the Director can review & continue — never silently re-do or lose the work. The audit dict rides
+        # on the returned ParseFailure so ``run_dispatch`` settles to ``awaiting_director`` (not a bare
+        # ``blocked``). A no-op (returns None) when no dispatch baseline was armed (Seam #1/#3).
+        lost_work = await _audit_lost_work(
+            db,
+            version_id=version_id,
+            slug=slug,
+            stage=stage,
+            timeout_seconds=timeout if timeout is not None else _timeout_for(stage),
+            on_message=on_message,
+        )
+        # Return the failure SILENTLY otherwise (CR-NS-022 §2 — no raw system→director dump here). The
         # caller decides if/how it reaches the Director: invoke_agent_with_parse_retry relays the
         # FINAL unrecovered failure via the Coordinator in plain Slovak; internal direct callers
         # (auditor / coordinator-judge) fold it into their own handling. Suppresses the leak where
@@ -992,6 +1013,7 @@ async def invoke_agent(
             f"claude invocation failed: {exc}",
             usage=turn_metrics.usage_payload(),
             timing=turn_metrics.timing_payload(),
+            lost_work=lost_work,
         )
     turn_metrics.record(usage, perf_counter() - _started)
     stdout = text
@@ -1401,6 +1423,107 @@ def _repo_parent(project_root: Path, commit: str) -> Optional[str]:
         return None
 
 
+def _rev_list_count(project_root: Path, baseline: Optional[str]) -> int:
+    """Number of commits in ``baseline..HEAD`` — work that landed since the dispatch baseline (R1-c).
+
+    0 on any git error, a missing/unparseable count, or a NULL baseline. The audit is advisory (Seam #1:
+    a mid-dispatch history rewrite is out of scope — the Director reviews ``git log``), so it must never
+    raise; a 0 simply reads as "no change detected"."""
+    if not baseline:
+        return 0
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(project_root), "rev-list", "--count", f"{baseline}..HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return 0
+    out = r.stdout.strip()
+    return int(out) if r.returncode == 0 and out.isdigit() else 0
+
+
+def _lost_work_audit_recorded(db: Session, version_id: uuid.UUID, baseline: str) -> bool:
+    """True if a lost-work audit notification for THIS dispatch baseline already exists (R1-c idempotency).
+
+    The timeout catch is re-entered once per parse-retry (the parse-retry machinery is untouched — §5), so
+    without this guard a single timed-out dispatch would record N identical notifications. Keyed on the
+    frozen ``dispatch_baseline_sha`` → exactly one notification per dispatch (Seam #4)."""
+    return (
+        db.execute(
+            select(PipelineMessage.id)
+            .where(
+                PipelineMessage.version_id == version_id,
+                PipelineMessage.author == "system",
+                PipelineMessage.kind == "notification",
+                PipelineMessage.payload["lost_work_audit"].astext == "true",
+                PipelineMessage.payload["dispatch_baseline_sha"].astext == baseline,
+            )
+            .limit(1)
+        ).first()
+        is not None
+    )
+
+
+async def _audit_lost_work(
+    db: Session,
+    *,
+    version_id: uuid.UUID,
+    slug: str,
+    stage: str,
+    timeout_seconds: int,
+    on_message: Optional[MessageCallback] = None,
+) -> Optional[dict[str, Any]]:
+    """R1-c (D1): on an agent envelope-loss (timeout/crash), audit ``baseline..HEAD`` and surface any
+    committed-but-lost work to the Director — *review & continue*, never silently lost, never auto-merged.
+
+    Reads the dispatch's frozen ``dispatch_baseline_sha``, compares it to the current HEAD, and records ONE
+    ``system→director`` ``notification`` carrying ``{dispatch_baseline_sha, post_timeout_head_sha,
+    timeout_seconds, detected_commit_count}`` (idempotent per baseline). Returns the audit dict (with the
+    Slovak ``next_action`` the caller settles on), or ``None`` when there is no dispatch baseline to audit
+    against (e.g. an internal sub-turn before ``_begin_dispatch`` armed one, or an unreadable repo) — in which
+    case the caller keeps its existing escalation. Status is NOT mutated here (the caller owns it)."""
+    state = _get_state(db, version_id)
+    if state is None or not state.dispatch_baseline_sha:
+        return None
+    baseline = state.dispatch_baseline_sha
+    project_root = claude_agent.PROJECTS_ROOT / slug
+    head = _repo_head(project_root)
+    count = _rev_list_count(project_root, baseline)
+    if count >= 1:
+        next_action = f"Vypršal čas agenta — môžu byť zapísané zmeny ({count} commitov). Over 'git log' a pokračuj."
+    else:
+        next_action = "Vypršal čas agenta — žiadna zmena nezistená. Pokračuj."
+    if not _lost_work_audit_recorded(db, version_id, baseline):
+        msg = _record_message(
+            db,
+            version_id=version_id,
+            stage=stage,
+            author="system",
+            recipient="director",
+            kind="notification",
+            content=next_action,
+            payload={
+                "lost_work_audit": True,
+                "dispatch_baseline_sha": baseline,
+                "post_timeout_head_sha": head,
+                "timeout_seconds": timeout_seconds,
+                "detected_commit_count": count,
+            },
+        )
+        if on_message is not None:
+            await on_message(msg)
+    return {
+        "dispatch_baseline_sha": baseline,
+        "post_timeout_head_sha": head,
+        "timeout_seconds": timeout_seconds,
+        "detected_commit_count": count,
+        "next_action": next_action,
+    }
+
+
 def _iteration_boundary_seq(db: Session, version_id: uuid.UUID) -> int:
     """The seq of the latest ``verdict`` message — the current gate_g iteration boundary (a verdict is what
     increments ``state.iteration``); 0 on the first iteration. Lets the scope-escalation cap (§F1.5) + the
@@ -1606,6 +1729,15 @@ def _begin_dispatch(db: Session, state: PipelineState) -> None:
     actor = STAGE_ACTOR.get(stage)
     if actor is None:  # ``done`` or unknown — nothing to dispatch.
         return
+    # R1-b (D1/D2): capture the dispatch baseline ONCE per dispatch and arm the durable single-flight flag.
+    # The ``if not`` guard freezes the baseline across parse-retries (a retry re-enters here without
+    # overwriting it — Seam #4); a fresh dispatch (after the settle listener reset it to NULL) re-captures
+    # from a clean repo HEAD. ``_repo_head`` returns None when the repo is unreadable → no baseline, so the
+    # lost-work audit degrades to a no-op rather than crashing (advisory, Seam #1).
+    if not state.dispatch_baseline_sha:
+        project_root = claude_agent.PROJECTS_ROOT / _project_slug_for_version(db, state.version_id)
+        state.dispatch_baseline_sha = _repo_head(project_root)
+    state.dispatch_in_flight = True
     state.current_actor = actor
     state.status = "agent_working"
     state.next_action = f"Agent '{actor}' pracuje na fáze '{stage}'."
@@ -1851,6 +1983,17 @@ async def run_dispatch(
     )
 
     if isinstance(result, ParseFailure):
+        if result.lost_work is not None:
+            # R1-c (D1): the agent's envelope was lost (timeout/crash) but the commit audit ran. Surface
+            # "work may have landed — review & continue" instead of a bare ``blocked`` relay: the audit
+            # notification is already recorded (by the timeout catch), so settle to ``awaiting_director``
+            # with the audit next_action. Never auto-proceeds (the stage does NOT advance); the Director
+            # reviews ``git log`` and continues. NOT routed through the Coordinator relay — that would
+            # dispatch a SECOND agent turn (which could itself time out); the audit note IS the message.
+            state.status = "awaiting_director"
+            state.next_action = result.lost_work["next_action"]
+            db.flush()
+            return state
         # Parse-retries exhausted (CR-NS-022 §2): the Coordinator relays it to the Director in
         # plain Slovak; the board shows a plain next_action, never the raw parser error.
         await _coordinator_relay_engine_failure(
@@ -2980,46 +3123,86 @@ async def _maybe_autonomous_answer(
 
 
 def recover_orphaned_builds_on_startup(db: Session) -> int:
-    """On BE startup, recover BUILD pipelines stranded at ``agent_working`` by a restart
-    (F-007 §7.3, CR-NS-021). Returns the number recovered.
+    """On BE startup, recover pipelines stranded at ``agent_working`` by a restart (F-007 §7.3,
+    CR-NS-021; **all stages** since R1-d / D4). Returns the number recovered.
 
-    The build loop runs as a background dispatch; a backend restart kills it, leaving the
-    pipeline stuck at ``build`` / ``agent_working`` with no auto-resume. This flips such rows
-    to ``awaiting_director`` (+ a clear ``next_action``) and records a system→director
-    ``notification`` so the Director can resume via "Pokračovať v builde" (``continue_build``)
-    — whose ``_run_build_round`` already reclaims the orphaned ``in_progress`` task and re-runs
-    it on its persisted ``baseline_sha``. Recovery ONLY flips state + notifies (the reclaim
-    stays in the loop, DRY). **BUILD only** — non-build stages are short, Director-attended
-    turns. ``Task.status`` is untouched, so the orphaned ``in_progress`` task stays counted by
-    :func:`_build_open_findings` and ``approve`` stays blocked until ``continue_build`` runs.
+    A dispatch runs as a background task; a backend restart kills it, stranding the pipeline at
+    ``<stage>`` / ``agent_working`` with no auto-resume. For every such row this flips to
+    ``awaiting_director``, records a ``system→director`` ``notification`` carrying a ``baseline..HEAD``
+    commit audit (so committed-but-lost work is surfaced — D1/D4), and clears the durable single-flight
+    flag + resets the dispatch baseline (the killed process left them set — Seam #2: a crash self-heals on
+    startup). ``build`` keeps its existing wording + the in-``_run_build_round`` task-reclaim (additive,
+    not a replacement) so the Director resumes via "Pokračovať v builde" (``continue_build``); other stages
+    get a generic stage-parametrized message. ``Task.status`` is untouched, so a build's orphaned
+    ``in_progress`` task stays counted by :func:`_build_open_findings` and ``approve`` stays blocked until
+    ``continue_build`` runs.
     """
-    rows = (
-        db.execute(
-            select(PipelineState).where(
-                PipelineState.current_stage == "build",
-                PipelineState.status == "agent_working",
-            )
-        )
-        .scalars()
-        .all()
-    )
+    rows = db.execute(select(PipelineState).where(PipelineState.status == "agent_working")).scalars().all()
     for state in rows:
-        state.status = "awaiting_director"
-        state.next_action = "Build prerušený reštartom backendu — pokračuj cez 'Pokračovať v builde'."
+        stage = state.current_stage
+        project_root = claude_agent.PROJECTS_ROOT / _project_slug_for_version(db, state.version_id)
+        # Read the baseline into a local BEFORE the settling status write (the set listener resets it).
+        baseline = state.dispatch_baseline_sha or _repo_head(project_root)
+        head = _repo_head(project_root)
+        count = _rev_list_count(project_root, baseline)
+        audit = (
+            f"môžu byť zapísané zmeny ({count} commitov), over 'git log'" if count >= 1 else "žiadna zmena nezistená"
+        )
+        if stage == "build":
+            # Back-compat: keep the existing BUILD next_action + content verbatim (the "Pokračovať v builde" CTA).
+            state.next_action = "Build prerušený reštartom backendu — pokračuj cez 'Pokračovať v builde'."
+            content = (
+                "Build bol prerušený reštartom backendu — obnovený do stavu 'čaká na Directora'. "
+                "Pokračuj cez 'Pokračovať v builde'."
+            )
+        else:
+            state.next_action = f"Fáza '{stage}' prerušená reštartom — {audit}. Pokračuj."
+            content = (
+                f"Fáza '{stage}' bola prerušená reštartom backendu — {audit}. Obnovené do stavu 'čaká na Directora'."
+            )
         _record_message(
             db,
             version_id=state.version_id,
-            stage="build",
+            stage=stage,
             author="system",
             recipient="director",
             kind="notification",
-            content=(
-                "Build bol prerušený reštartom backendu — obnovený do stavu 'čaká na Directora'. "
-                "Pokračuj cez 'Pokračovať v builde'."
-            ),
+            content=content,
+            payload={
+                "recovery_audit": True,
+                "stage": stage,
+                "dispatch_baseline_sha": baseline,
+                "post_restart_head_sha": head,
+                "detected_commit_count": count,
+            },
         )
+        state.status = "awaiting_director"  # the set listener also clears the flag + baseline …
+        state.dispatch_in_flight = False  # … cleared explicitly too for robustness (Seam #2).
+        state.dispatch_baseline_sha = None
     db.commit()
     return len(rows)
+
+
+# R1-d (D3) session hygiene: OrchestratorSession rows are retained for 7 days since last activity
+# (``last_input_at``), then pruned by the background retention task — conservative, mirrors the proven
+# ``agent_terminal.idle_cleanup``. A stale ``--resume`` thread is cheap; this only bounds row growth.
+ORCHESTRATOR_SESSION_TTL_SECONDS = 7 * 24 * 3600
+ORCHESTRATOR_SESSION_CLEANUP_INTERVAL_SECONDS = 24 * 3600
+
+
+def cleanup_old_orchestrator_sessions(db: Session) -> int:
+    """Delete OrchestratorSession rows untouched for > 7 days (TTL on ``last_input_at``); returns the count.
+
+    D3 session hygiene — mirrors ``agent_terminal.idle_cleanup``, wired as a daily background loop in
+    ``main.py``'s lifespan. Hygiene, not a crash-preventer: a new-version kickoff already deletes a
+    project's sessions, so this just prunes long-idle threads to bound unbounded growth."""
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=ORCHESTRATOR_SESSION_TTL_SECONDS)
+    result = db.execute(delete(OrchestratorSession).where(OrchestratorSession.last_input_at < cutoff))
+    db.commit()
+    count = result.rowcount or 0
+    if count:
+        logger.info("cleanup_old_orchestrator_sessions pruned %d idle session(s)", count)
+    return count
 
 
 def _fetch_cross_cutting_rules(db: Session, version_id: uuid.UUID) -> Optional[str]:
@@ -3760,6 +3943,14 @@ async def apply_action(
         raise OrchestratorError(
             "Build je pozastavený — pokračuj cez 'Pokračovať v builde' alebo ho ukonči (Ukončiť build)"
         )
+    # Durable single-flight (R1-b / D2, CR-NS-027 hardening): refuse to start a SECOND agent turn while a
+    # dispatch is already in flight for this version. The DB flag survives a backend restart (unlike the
+    # in-memory ``_ACTIVE_DISPATCH``), and the settle listener clears it the moment the dispatch ends — so in
+    # the normal flow this only fires for a genuine in-flight overlap (e.g. a stale flag a restart left set
+    # before orphan recovery, or a double-submit). ``pause`` is the one exception: it stops the running build
+    # loop, it never dispatches.
+    if state.dispatch_in_flight and action != "pause":
+        raise OrchestratorError("Dispečer už beží pre túto verziu")
 
     if action == "approve":
         _record_message(
