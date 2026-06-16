@@ -23,6 +23,16 @@ through the full pipeline costs ~10–20 min here.
 - **D3 — Recording:** a **traceable PATCH version** (`vX.Y.Z → vX.Y.Z+1`) with the full trail (directive →
   Implementer report+self-verify → Coordinator verify → UAT/PROD); shown as a distinct fast-lane item on the board.
 - **D4 — UX:** a **"Rýchla oprava"** entry on the project page; one prompt → board shows live status + "kto je na rade".
+- **D5 — Autonomy (CR-NS-103):** the Coordinator OPERATES the lane (it does not relay it). It **decides routine
+  Programmer questions itself** (honest high confidence) instead of escalating, and the UAT auto-deploy is
+  **engine-owned** — it fires automatically on the release-verify PASS and the Coordinator **never defers it**
+  ("nesmiem ho spustiť" is wrong for fast_fix). The Director's ONLY mid-flight touch is the final `uat_accept`.
+  Escalation is reserved for a **genuine** scope/ambiguity (multi-module, schema/dep, spec'd-behaviour change
+  needing Designer thought, real requirement ambiguity, OR a 3rd routine question on one task) → propose
+  converting to a full version. Bounds (safety): **fast_fix only**, confidence **≥ 0.85** (above the 0.80
+  recovery floor — an answer is less reversible than a task reset), **≤ 2** autonomous answers per task, every
+  decision recorded **Director-visible** (`is_autonomous=true`). Root fix after CR-NS-097..102 patched symptoms:
+  the build-stage routine question (`orchestrator.py:3291`) had no autonomous answer path → always escalated.
 
 ## 3. Mechanism (grounded)
 **Key grounding finding:** today `flow_type ∈ ('new_version','cr','bug')` all traverse the SAME global `STAGE_ORDER`
@@ -48,9 +58,41 @@ dispatch + per-task build-loop + verify infra is reused wholesale.
   brief marks the directive **AUTHORITATIVE** — execute it directly, do NOT debate/second-guess it (CR-NS-097); STOP
   only if technically impossible or genuinely unclear WHAT to change. Self-verify (build/lint/test) per charter. A
   **clean build AUTO-advances to release** (no approve) — release settles for the single `uat_accept`. NO Designer task-plan decomposition.
+- **Autonomous answer to a routine Programmer question (CR-NS-103)** — when the Programmer STOPs with a routine
+  `question`/`blocked` (e.g. "the word is already X — proceed?", "use helper A or B?"), the build loop routes it
+  through the Coordinator (`_coordinator_relay`, `orchestrator.py:3295`). Today only a **bounded recovery**
+  (`reset_task`/`move_baseline`/`clear_session`) can auto-execute (`_maybe_autonomous_recovery`,
+  `orchestrator.py:2784`); a question always escalated (`status=blocked`, `orchestrator.py:3300`) — the "third
+  approval". Extend Pillar B (CR-NS-055): a sibling `_maybe_autonomous_answer` for **fast_fix only**. The
+  Coordinator emits `proposed_action="coordinator_answer_question"` + `triage_class="programmer_routine_question"`
+  with honest confidence; if `flow_type=="fast_fix"` ∧ `triage≠director_decision` ∧ `confidence≥0.85` ∧ within the
+  **≤2-answers-per-task** cap, the engine records the answer **Director-visibly** (`is_autonomous=true`, reuse
+  `_record_autonomous_decision`) and **re-dispatches the SAME task** with the answer as its prompt (mirrors the
+  Director's framed-return path, `orchestrator.py:3274`) — **NO Director gate**. Both predicates `False` → the
+  EXISTING escalate path (unchanged). A genuine-scope question, or the **3rd** routine question on one task, →
+  escalate (signals not-trivial → convert-to-full-version). **Guard:** the answer path is `fast_fix`-gated —
+  `new_version`/`cr`/`bug` keep escalating worker questions to the Director **byte-for-byte unchanged**.
 - **Coordinator verify** — on build-task settle, the Coordinator independently verifies (reuse the `verify_done` /
   coordinator-review path) — NOT a full Auditor, **NO Dual-Build**.
-- **Release & auto-deploy (CR-NS-098; mechanism revised CR-NS-101)** — after the Coordinator-verify passes, IF
+- **Release-stage Coordinator-question carve-out (CR-NS-103 — the PRIMARY live fix)** — the generic worker
+  `question`/`blocked` escalate (`orchestrator.py:1862-1874`) runs BEFORE the fast_fix release block
+  (`orchestrator.py:1888`). When the Coordinator's release turn is a `question` (`actor=="coordinator"`, e.g. "mám
+  spustiť automatické nasadenie?"), `:1869` does NOT relay it (no double-review) and `:1871` sets
+  `status=blocked` + `next_action="Agent 'coordinator' sa pýta: …"` → the engine-owned deploy at
+  `orchestrator.py:1903` is **never reached**. THIS is the live "third approval" (stuck `v0.1.2` nex-ledger:
+  `release/coordinator/blocked`). **Fix (hard engine guard, not soft charter guidance):** at `:1862`, when
+  `flow_type=="fast_fix"` ∧ `actor=="coordinator"` ∧ `stage=="release"`, a routine question does **NOT** escalate —
+  control falls through to the release block (`:1888`), where a non-`gate_report` kind goes straight to
+  `_fast_fix_auto_deploy`. Escalate ONLY if the turn carries a genuine `coordinator_directive.triage_class ==
+  "director_decision"` (real scope → convert-to-full-version). Kickoff coordinator question (`:1876`, the
+  convert-to-full proposal) and all non-fast_fix flows are **unchanged**.
+- **Release & auto-deploy (CR-NS-098; mechanism revised CR-NS-101; engine-owned CR-NS-103)** — the auto-deploy is
+  **engine-owned**, NOT a Coordinator judgment: at the fast_fix release turn the engine calls `_fast_fix_auto_deploy`
+  **unconditionally** after the verify (`orchestrator.py:1903`) — including a **no-op** (empty diff: the word was
+  already correct) since `--build --force-recreate` is idempotent, so the Director always SEES the current build on
+  UAT. The Coordinator **never defers** the deploy. (This holds ONLY once control reaches the release block — the
+  carve-out above stops a Coordinator release question short-circuiting it at `:1862`; without that, `:1903` is
+  unreachable, which is exactly why `v0.1.2` stuck.) After the Coordinator-verify passes, IF
   `project.uat_slug` is set the lane **auto-redeploys the project's UAT** with a plain
   `docker compose -f /opt/uat/<uat_slug>/docker-compose.yml up -d --build --force-recreate` (async; `VITE_APP_VERSION`
   stamped from the repo's commit count). It runs against the UAT's OWN existing compose — **NOT `uat-deploy.py`**, which
@@ -69,6 +111,33 @@ dispatch + per-task build-loop + verify infra is reused wholesale.
 - **CR-B (FE):** "Rýchla oprava" entry on `ProjectDetailPage` + the cockpit board renders the fast_fix flow (short
   stage path, status, "kto je na rade") + `determine_available_actions` extended for fast_fix stages. + FE tests.
 - **CR-C (wiring + tests):** UAT → acceptance → PROD wiring for the patch + deploy-layer touch + integration tests + KB/docs.
+- **CR-NS-097..102 (live-debug fixes):** one-touch kickoff (097), auto-deploy to UAT (098), PipelineRail terminal-tick
+  (099), jinja2/rich/pyyaml runtime deps (100), plain-compose redeploy not provisioner (101), docker-compose-plugin in
+  the backend image (102). Symptom patches — they did not cure the relay-vs-operator design flaw.
+- **CR-NS-103 (autonomy — root fix):** make the Coordinator an AUTONOMOUS fast_fix operator (D5).
+  **(1) Release-stage Coordinator-question carve-out — the PRIMARY live fix** (stuck `v0.1.2`): at the generic
+  worker-question escalate (`orchestrator.py:1862`), when `flow_type=="fast_fix"` ∧ `actor=="coordinator"` ∧
+  `stage=="release"`, a routine `question`/`blocked` does NOT escalate — fall through to the release block
+  (`:1888`) → `_fast_fix_auto_deploy` (`:1903`). Escalate ONLY if `result.coordinator_directive.triage_class ==
+  "director_decision"` (genuine scope → convert-to-full). Kickoff coordinator question (`:1876`) + non-fast_fix
+  flows unchanged.
+  **(2) Autonomous answer to build-stage routine Programmer questions:** new `coordinator_answer_question` in
+  `_EXECUTABLE_COORDINATOR_ACTIONS` (`:2330`) + `programmer_routine_question` triage; new constants
+  `_FAST_FIX_ANSWER_CONFIDENCE_FLOOR=0.85` + `_MAX_AUTONOMOUS_ANSWERS_PER_TASK=2`; new `_maybe_autonomous_answer`
+  (sibling of `_maybe_autonomous_recovery`, `:2784`) gated on `flow_type=="fast_fix"`; wired into the build-loop
+  question branch (`:3291-3303`) AFTER `_maybe_autonomous_recovery` — on an answer, re-dispatch the SAME task with the
+  answer (generalize the `pending_directive` prompt-injection, `:3274`), else fall through to the unchanged escalate.
+  **(3) Engine-owned deploy locked with tests:** `_fast_fix_auto_deploy` fires unconditionally once control reaches
+  the release block (`:1903`) — add tests that a no-op build still does build→release→deploy and a non-`gate_report`
+  release turn (incl. a carve-out coordinator question) still deploys. **(4) Charter §4.6 + relay brief:**
+  `templates/coordinator-charter.md` §4.6 fast-fix carve-out (decide routine questions; deploy is automatic/engine-owned
+  — never "nesmiem"; Director's single touch = `uat_accept`; only genuine scope escalates); `_coordinator_relay` prompt
+  (`:1552`) appends the fast_fix instruction (routine build question → emit `coordinator_answer_question` with honest
+  high confidence; at release NEVER ask about the deploy — emit a `gate_report` PASS or a `director_decision` scope).
+  **BE tests:** the release carve-out lets a coordinator question proceed to deploy (no Director gate) while a
+  `director_decision` still escalates; the autonomous build answer re-dispatches the same task; the answer cap →
+  escalate at the 3rd question; `new_version`/`cr`/`bug` worker questions still escalate (no autonomy leak); no-op
+  build → release → deploy.
 
 ## 5. Seams to preserve
 PipelineState 1:1 per version; `apply_action` the sole state mutator; `_build_open_findings` the deterministic gate;
