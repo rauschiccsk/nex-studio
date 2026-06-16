@@ -48,7 +48,7 @@ FE — proven live: `capture_backlog_item` is in the BE executable set but **mis
   (the `/openapi.json` default, or the namespaced route if D1's `openapi_url` is set) → writes
   `frontend/src/services/api/pipeline.generated.ts`. Re-point `pipeline.ts` to
   re-export the generated enums (keep `pipeline.ts` as the stable import surface so consumers don't churn).
-- **CI drift-gate:** a CI step runs `npm run codegen` and `git diff --exit-status` on the generated file — drift
+- **CI drift-gate:** a CI step runs `npm run codegen` and `git diff --exit-code` on the generated file — drift
   (someone changed BE without regenerating) **fails the build**.
 - **Contract-test (the executable-actions parity)** — a Python test extracts `_EXECUTABLE_COORDINATOR_ACTIONS`
   (`orchestrator.py:2356-2369`) and parses the FE Set from `ExchangePanel.tsx:21-30`, asserting equality. (Or:
@@ -79,7 +79,7 @@ FE — proven live: `capture_backlog_item` is in the BE executable set but **mis
 - UNIT (BE): `PipelineStateRead`/`PipelineMessageRead` accept every DB-valid value and reject an out-of-enum value.
 - UNIT (contract): `_EXECUTABLE_COORDINATOR_ACTIONS` == the FE `EXECUTABLE_COORDINATOR_ACTIONS` Set (catches
   `capture_backlog_item`); fails if either drifts.
-- CI: `npm run codegen` + `git diff --exit-status` on `pipeline.generated.ts` → drift fails the build.
+- CI: `npm run codegen` + `git diff --exit-code` on `pipeline.generated.ts` → drift fails the build.
 - INTEGRATION: a real pipeline's serialized response validates against the generated FE types (round-trip).
 - REGRESSION (FE): `tsc -b` green after codegen; `ExchangePanel.tsx:90` consumer compiles + the proposal-display
   recognizes the full action set.

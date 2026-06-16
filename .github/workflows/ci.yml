@@ -154,7 +154,7 @@ jobs:
 
       - name: Fail on contract drift
         run: |
-          git diff --exit-status frontend/src/services/api/pipeline.generated.ts \
+          git diff --exit-code frontend/src/services/api/pipeline.generated.ts \
             || { echo "::error::pipeline.generated.ts is stale — run 'npm run codegen' in frontend/ and commit the result."; exit 1; }
 
   build:
