@@ -19,6 +19,7 @@ from backend.db.models.projects import Project
 from backend.db.models.tasks import Epic, Feat, Task
 from backend.db.models.versions import Version
 from backend.services import claude_agent, orchestrator
+from backend.services import task as task_service
 from backend.services.pipeline_status import ParseFailure, PipelineStatusBlock, parse_status_block
 
 
@@ -4190,3 +4191,190 @@ async def test_gate_a_regate_build_excludes_stale_gate_g_findings(db_session):
     )
     db_session.flush()
     assert orchestrator._latest_gate_g_findings(db_session, version.id) is None
+
+
+# ── Fast-Fix Lane (F-009, CR-NS-094) ────────────────────────────────────────────
+
+
+def _fast_fix_kickoff_ok() -> str:
+    """A trivial fast-fix kickoff triage → fast-lane-suitable, settles awaiting_director."""
+    return _block(stage="kickoff", kind="kickoff", summary="malá oprava, vhodné pre rýchlu opravu", awaiting="director")
+
+
+def _fast_fix_build_fake():
+    """Role/prompt-aware fake for the fast-fix build loop (CR-NS-094): the Coordinator — NOT the Auditor —
+    verifies the single task. The verify prompt starts 'Koordinátor, nezávisle over'; the Programmer brief
+    starts 'Programátor'; the settle synthesis ('Fáza/udalosť…') gets a plain report it can summarize."""
+
+    def _resp(prompt: str) -> str:
+        if prompt.startswith("Koordinátor, nezávisle over"):
+            return _block(
+                stage="build", kind="gate_report", summary="overené", awaiting="director", task_pass=True, findings=[]
+            )
+        return _build_report()
+
+    return _resp
+
+
+def test_next_stage_flow_aware():
+    # Fast-Fix takes the short path; new_version (default) is unchanged.
+    assert orchestrator._next_stage("kickoff", "fast_fix") == "build"
+    assert orchestrator._next_stage("build", "fast_fix") == "release"
+    assert orchestrator._next_stage("release", "fast_fix") == "done"
+    assert orchestrator._next_stage("done", "fast_fix") == "done"  # clamps at terminal
+    assert orchestrator._next_stage("kickoff") == "gate_a"
+    assert orchestrator._next_stage("build", "new_version") == "gate_g"
+    assert orchestrator._next_stage("gate_e", "new_version") == "task_plan"
+
+
+async def test_fast_fix_start_records_directive_in_kickoff(db_session, fake_claude):
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(
+        db_session,
+        version_id=version.id,
+        action="start",
+        payload={"flow_type": "fast_fix", "directive": "Oprav preklep v hlavičke faktúry"},
+    )
+    state = orchestrator._get_state(db_session, version.id)
+    assert state.flow_type == "fast_fix" and state.current_stage == "kickoff"
+    kickoff = [m for m in _msgs(db_session, version.id) if m.kind == "kickoff" and m.author == "director"][-1]
+    assert kickoff.payload["flow_type"] == "fast_fix"
+    assert kickoff.payload["directive"] == "Oprav preklep v hlavičke faktúry"
+
+
+async def test_fast_fix_kickoff_approve_advances_to_build_and_materializes_task(db_session, fake_claude):
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(
+        db_session,
+        version_id=version.id,
+        action="start",
+        payload={"flow_type": "fast_fix", "directive": "Oprav preklep v hlavičke faktúry"},
+    )
+    fake_claude.response = _fast_fix_kickoff_ok()
+    await orchestrator.run_dispatch(db_session, version.id)
+    state = orchestrator._get_state(db_session, version.id)
+    assert state.status == "awaiting_director" and state.current_stage == "kickoff"
+
+    # approve → build (NOT gate_a) — the ONE minimal Task is materialized from the directive.
+    state = await orchestrator.apply_action(db_session, version_id=version.id, action="approve")
+    assert state.current_stage == "build"
+    task = task_service.get_next_todo_task(db_session, version.id)
+    assert task is not None
+    assert "preklep" in task.description and task.task_type == "backend"
+    # exactly one task (no Designer task_plan decomposition)
+    assert task_service.count_tasks(db_session, feat_id=task.feat_id) == 1
+
+
+async def test_fast_fix_skips_gates_kickoff_to_build_to_release(db_session, fake_claude, monkeypatch):
+    monkeypatch.setattr(orchestrator, "_repo_head", lambda root: "a" * 40)
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(
+        db_session,
+        version_id=version.id,
+        action="start",
+        payload={"flow_type": "fast_fix", "directive": "Oprav zaokrúhľovanie DPH"},
+    )
+    fake_claude.response = _fast_fix_kickoff_ok()
+    await orchestrator.run_dispatch(db_session, version.id)
+    state = await orchestrator.apply_action(db_session, version_id=version.id, action="approve")
+    assert state.current_stage == "build"  # skipped gate_a-e + task_plan
+
+    # build the single task (coordinator verify), settle, then approve → release (skips gate_g).
+    fake_claude.response = _fast_fix_build_fake()
+    state = await orchestrator.run_dispatch(db_session, version.id)
+    assert state.status == "awaiting_director" and state.current_stage == "build"
+    assert task_service.get_next_todo_task(db_session, version.id) is None  # the task is done
+
+    state = await orchestrator.apply_action(db_session, version_id=version.id, action="approve")
+    assert state.current_stage == "release"  # NOT gate_g
+
+    # release → (coordinator settles) → uat_accept → done (the patch version is released).
+    _settle(db_session, version.id)  # the release dispatch would settle awaiting_director
+    state = await orchestrator.apply_action(db_session, version_id=version.id, action="uat_accept")
+    assert state.current_stage == "done" and state.status == "done"
+
+
+async def test_fast_fix_build_verify_uses_coordinator_not_auditor(db_session, fake_claude, monkeypatch):
+    monkeypatch.setattr(orchestrator, "_repo_head", lambda root: "a" * 40)
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(
+        db_session,
+        version_id=version.id,
+        action="start",
+        payload={"flow_type": "fast_fix", "directive": "Oprav VS sanitizáciu"},
+    )
+    fake_claude.response = _fast_fix_kickoff_ok()
+    await orchestrator.run_dispatch(db_session, version.id)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="approve")  # → build + task
+    task = task_service.get_next_todo_task(db_session, version.id)
+
+    fake_claude.response = _fast_fix_build_fake()
+    await orchestrator.run_dispatch(db_session, version.id)
+
+    db_session.refresh(task)
+    assert task.status == "done"
+    msgs = _msgs(db_session, version.id)
+    # NO Auditor anywhere on a fast-fix; the verify is a Coordinator turn carrying task_pass for the task.
+    assert not any(m.author == "auditor" for m in msgs)
+    verify = [
+        m
+        for m in msgs
+        if m.author == "coordinator"
+        and m.stage == "build"
+        and m.payload
+        and m.payload.get("task_id") == str(task.id)
+        and m.payload.get("task_pass") is True
+    ]
+    assert verify, "expected a Coordinator per-task verify message with task_pass for the fast-fix task"
+
+
+async def test_fast_fix_escalation_blocks_and_proposes_convert(db_session, fake_claude):
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(
+        db_session,
+        version_id=version.id,
+        action="start",
+        payload={"flow_type": "fast_fix", "directive": "Prerob celý modul exportu na nový formát"},
+    )
+    # Non-trivial → the Coordinator STOPs and proposes converting to a full version (escalation guard §3).
+    fake_claude.response = _block(
+        stage="kickoff",
+        kind="blocked",
+        summary="netriviálne — multi-modul, treba návrh",
+        awaiting="director",
+        question="Toto je netriviálne; navrhujem konverziu na plnú verziu.",
+        coordinator_directive={
+            "triage_class": "director_decision",
+            "proposed_action": "convert_to_full_version",
+            "rationale": "multi-modul + zmena špecifikovaného správania — treba Návrhára",
+            "confidence": 0.9,
+        },
+    )
+    state = await orchestrator.run_dispatch(db_session, version.id)
+
+    # STOP: settled blocked, never advanced past kickoff — no Designer / task_plan / gate dispatch.
+    assert state.status == "blocked" and state.current_stage == "kickoff"
+    assert state.current_stage not in ("gate_a", "gate_b", "gate_c", "gate_d", "gate_e", "task_plan", "gate_g")
+    # the convert-to-full-version proposal is recorded on the Coordinator's message.
+    coord = [m for m in _msgs(db_session, version.id) if m.author == "coordinator" and m.stage == "kickoff"][-1]
+    assert coord.payload["coordinator_directive"]["proposed_action"] == "convert_to_full_version"
+    # no build task was materialized (the escalation never reached build).
+    assert task_service.get_next_todo_task(db_session, version.id) is None
+
+
+async def test_new_version_build_still_uses_auditor_regression(db_session, fake_claude, monkeypatch):
+    # Regression: new_version per-task verify is UNCHANGED — the Auditor (not the Coordinator) verifies.
+    monkeypatch.setattr(orchestrator, "_repo_head", lambda root: "a" * 40)
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _seed_cross_cutting(db_session, version, "## Invarianty")
+    _seed_one_feat(db_session, version, project, ["T"])
+    _to_build(db_session, version)
+    fake_claude.response = _build_fake()
+    state = await orchestrator.run_dispatch(db_session, version.id)
+    assert state.status == "awaiting_director"
+    msgs = _msgs(db_session, version.id)
+    assert any(m.author == "auditor" and m.stage == "build" for m in msgs)  # auditor still verifies
+    # new_version build → gate_g (NOT release) on final approve.
+    state = await orchestrator.apply_action(db_session, version_id=version.id, action="approve")
+    assert state.current_stage == "gate_g"

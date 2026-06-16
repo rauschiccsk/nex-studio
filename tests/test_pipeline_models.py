@@ -100,6 +100,12 @@ class TestPipelineState:
         with pytest.raises((IntegrityError, ProgrammingError)):
             db_session.flush()
 
+    def test_accepts_fast_fix_flow_type(self, db_session):
+        # F-009 (CR-NS-094): the widened ck_pipeline_state_flow_type accepts 'fast_fix'.
+        version = _make_version(db_session)
+        db_session.add(_state(version, flow_type="fast_fix"))
+        db_session.flush()
+
     def test_accepts_task_plan_stage(self, db_session):
         # CR-NS-020 CR-1: 'task_plan' is a permissive value (foundation) — the
         # widened ck_pipeline_state_current_stage must accept it even though the

@@ -43,7 +43,7 @@ from backend.schemas.epic import EpicCreate
 from backend.schemas.feat import FeatCreate
 from backend.schemas.task import TaskCreate
 from backend.services import backlog as backlog_service
-from backend.services import claude_agent
+from backend.services import claude_agent, fast_fix
 from backend.services import epic as epic_service
 from backend.services import feat as feat_service
 from backend.services import task as task_service
@@ -162,6 +162,16 @@ STAGE_ORDER: tuple[str, ...] = (
     "task_plan",
     "build",
     "gate_g",
+    "release",
+    "done",
+)
+# Fast-Fix Lane stage path (F-009, CR-NS-094): the lightweight lane skips the full waterfall
+# (gate_a-e / task_plan / gate_g). ``kickoff`` advances straight to ``build`` (after the Coordinator's
+# escalation-guard triage), and a settled ``build`` advances to ``release`` — never to a gate. A subset
+# of :data:`STAGE_ORDER`, so every member reuses the same :data:`STAGE_ACTOR` mapping below.
+FAST_FIX_STAGE_ORDER: tuple[str, ...] = (
+    "kickoff",
+    "build",
     "release",
     "done",
 )
@@ -414,8 +424,27 @@ def _record_message(
     return msg
 
 
-def _directive_for(stage: str) -> str:
+def _directive_for(stage: str, flow_type: str = "new_version") -> str:
     """Minimal orchestrator directive for a stage. The agent reads its charter."""
+    # Fast-Fix Lane kickoff (F-009 §3, CR-NS-094): the Coordinator's escalation guard. The Director's
+    # directive rides in the kickoff message payload; the Coordinator triages it FIRST — small & obvious
+    # (single concern, no multi-module / schema / new-dep, no requirement ambiguity) → confirm it's
+    # fast-lane-suitable and await the Director's go to build (NO Designer, NO task_plan). Non-trivial →
+    # STOP (kind=blocked) + a structured `coordinator_directive` proposing convert-to-full-version, never
+    # proceeding on its own (reuse the flag-the-gap-and-STOP pattern).
+    if stage == "kickoff" and flow_type == "fast_fix":
+        return (
+            "RÝCHLA OPRAVA (fast-fix lane, F-009): pokyn Directora (smernica) je v kickoff správe — je to "
+            "TVOJ celý zadanie. Najprv ho zatrieď (escalation guard §3): je malý a jednoznačný (jeden "
+            "koncept, žiadna multi-modul / schéma / nová závislosť zmena, žiadna nejasnosť požiadavky)?\n"
+            "- ÁNO → potvrď, že je vhodný pre rýchlu opravu, a čakaj na schválenie Directora na štart "
+            "buildu. NEDISPATCHUJ Návrhára ani task_plan.\n"
+            "- NIE (netriviálny: nejednoznačný, multi-modul, mení špecifikované správanie vyžadujúce návrh, "
+            "schéma/dependency zmena) → ZASTAV: nepokračuj, nastav kind=blocked a pripoj štruktúrovaný "
+            "`coordinator_directive` (triage_class=director_decision, proposed_action="
+            "convert_to_full_version, rationale=prečo) navrhujúci konverziu na plnú verziu/pipeline.\n"
+            "Ukonči odpoveď strojovým <<<PIPELINE_STATUS>>> blokom (F-007 §7.2)."
+        )
     base = (
         f"Pokračuj fázou '{stage}' podľa autoritatívneho spec balíka a svojho charteru. "
         "Ukonči odpoveď strojovým <<<PIPELINE_STATUS>>> blokom (F-007 §7.2)."
@@ -1628,7 +1657,7 @@ async def run_dispatch(
     if directive is not None:
         prompt = directive
     else:
-        prompt = _augment_brief_with_backlog(db, state.version_id, stage, _directive_for(stage))
+        prompt = _augment_brief_with_backlog(db, state.version_id, stage, _directive_for(stage, state.flow_type))
     result = await invoke_agent_with_parse_retry(
         db,
         version_id=state.version_id,
@@ -2672,6 +2701,31 @@ def _audit_prompt_for_task(task: Task, block: PipelineStatusBlock, cross_cutting
     return "\n\n".join(parts)
 
 
+def _coordinator_verify_prompt_for_task(
+    task: Task, block: PipelineStatusBlock, cross_cutting_rules: Optional[str]
+) -> str:
+    """Fast-Fix per-task verify brief for the COORDINATOR (F-009 §3, CR-NS-094): the independent
+    verify of the single fast-fix Task — NO Auditor, NO Dual-Build. The Coordinator checks the
+    Implementer's deliverables against the Director directive (the task brief) + P-2 (no claim without
+    an authoritative source), scoped to the task diff, and emits the same ``task_pass`` + ``findings``
+    contract the build loop's auto-fix already consumes (so the ≤5 bound / done-failed / HALT seam is
+    untouched — only the verifying agent differs)."""
+    parts = [f"Koordinátor, nezávisle over JEDNU rýchlu opravu (TASK #{task.number}): {task.title}."]
+    if task.description:
+        parts.append(f"Smernica Directora (zadanie úlohy): {task.description}")
+    parts.append(f"Deliverables Implementéra: {', '.join(block.deliverables) if block.deliverables else '(žiadne)'}.")
+    if task.baseline_sha:
+        parts.append(f"Over IBA túto opravu — preskúmaj diff `{task.baseline_sha}..HEAD` (git), nie celý projekt.")
+    parts.append(
+        "Over: rieši zmena smernicu Directora, je konzistentná a bez claimu bez authoritative source "
+        "(P-2)? Toto je rýchla oprava — žiadny plný Auditor, žiadny Dual-Build."
+    )
+    if cross_cutting_rules:
+        parts.append(f"Prierezové pravidlá (musia byť dodržané):\n{cross_cutting_rules}")
+    parts.append("Ukonči <<<PIPELINE_STATUS>>> blokom: task_pass (true/false) + findings[] (čo treba opraviť). (§7.2)")
+    return "\n\n".join(parts)
+
+
 async def _verify_task(
     db: Session,
     state: PipelineState,
@@ -2686,25 +2740,38 @@ async def _verify_task(
     audit-vs-spec turn** after a mechanical pass — scoped to this ONE task, emitting
     ``task_pass`` + per-task ``findings``. The findings-summary returned here is what the
     CR-3 auto-fix loop escalates into the next brief + the HALT path relays; the loop, the
-    ≤5 bound, the done/failed transitions and the HALT stay untouched (the seam)."""
+    ≤5 bound, the done/failed transitions and the HALT stay untouched (the seam).
+
+    **Fast-Fix Lane (F-009, CR-NS-094):** the verifying agent is the **Coordinator** (independent
+    verify, reuse the verify_done path — NO Auditor, NO Dual-Build), not the Auditor. Only the
+    verify *agent* + prompt differ; the mechanical check, the ``task_pass`` contract, the auto-fix
+    loop and every transition stay identical — so ``new_version`` / ``cr`` / ``bug`` are unchanged."""
     slug = _project_slug_for_version(db, state.version_id)
     mech = verify_mechanical(slug, block, task.baseline_sha)
     if mech is not None:
         return mech  # mechanical fail short-circuits — no point auditing a missing commit (saves a turn)
     cross_cutting = _fetch_cross_cutting_rules(db, state.version_id)
-    # Parse-retry on the AUDITOR (not the Programmer): an unparseable audit block is the
-    # Auditor's own formatting bug (e.g. an unescaped quote in a Slovak summary), so the fix
-    # is to re-ask the Auditor to re-emit valid JSON — NOT to bounce a failure into the
-    # auto-fix loop, which would re-run the Programmer's (correct) work on the wrong target
-    # (Dedo 2026-06-10: per-task audit JSON-robustness hardening).
+    # Fast-Fix routes the per-task verify to the Coordinator (NO Auditor); every other flow keeps the
+    # Auditor audit-vs-spec turn. Both emit the identical task_pass + findings contract below.
+    fast_fix_flow = state.flow_type == "fast_fix"
+    verify_role = "coordinator" if fast_fix_flow else "auditor"
+    verify_prompt = (
+        _coordinator_verify_prompt_for_task(task, block, cross_cutting)
+        if fast_fix_flow
+        else _audit_prompt_for_task(task, block, cross_cutting)
+    )
+    # Parse-retry on the VERIFIER (not the Programmer): an unparseable verify block is the verifier's
+    # own formatting bug (e.g. an unescaped quote in a Slovak summary), so the fix is to re-ask it to
+    # re-emit valid JSON — NOT to bounce a failure into the auto-fix loop, which would re-run the
+    # Programmer's (correct) work on the wrong target (Dedo 2026-06-10: per-task verify JSON-robustness).
     audit = await invoke_agent_with_parse_retry(
         db,
         version_id=state.version_id,
-        role="auditor",
+        role=verify_role,
         stage="build",
-        prompt=_audit_prompt_for_task(task, block, cross_cutting),
+        prompt=verify_prompt,
         on_message=on_message,
-        # Tag the audit message so the FE per-task audit panel can match it to its task
+        # Tag the verify message so the FE per-task audit panel can match it to its task
         # (CR-NS-020 CR-5 — mirrors the Programmer turn's tag; payload merges it at invoke_agent).
         extra_payload={"task_id": str(task.id), "task_number": task.number},
     )
@@ -2741,25 +2808,37 @@ def _pokusy(n: int) -> str:
 
 
 def _task_audit_verdict(db: Session, version_id: uuid.UUID, task_id: uuid.UUID) -> Optional[dict[str, Any]]:
-    """Surface the EXISTING per-task Auditor verdict (``task_pass`` + ``findings``) from its tagged build
-    message (CR-NS-054 — only the Auditor emits ``task_pass``). Returns the latest such verdict for the task,
-    or ``None`` when no audit message exists (a mechanical-only fail, or an Auditor ParseFailure that produced
-    no parsed block — both handled by the caller's degraded note)."""
-    rows = (
-        db.execute(
-            select(PipelineMessage.payload)
-            .where(
-                PipelineMessage.version_id == version_id,
-                PipelineMessage.author == "auditor",
-                PipelineMessage.stage == "build",
-            )
-            .order_by(PipelineMessage.seq.asc())
+    """Surface the EXISTING per-task verify verdict (``task_pass`` + ``findings``) from its tagged build
+    message (CR-NS-054). Returns the latest such verdict for the task, or ``None`` when no verify message
+    exists (a mechanical-only fail, or a verifier ParseFailure that produced no parsed block — both handled
+    by the caller's degraded note).
+
+    The verifying agent is the **Auditor** for full flows (preferred — byte-identical to CR-NS-054) and the
+    **Coordinator** for the Fast-Fix Lane (F-009, CR-NS-094 — NO Auditor). The Coordinator authors many
+    build messages (relays, synthesis), so its fallback requires a non-NULL ``task_pass`` to pick out the
+    verify turn — a relay carries ``task_pass=None`` and is correctly skipped."""
+    rows = db.execute(
+        select(PipelineMessage.author, PipelineMessage.payload)
+        .where(
+            PipelineMessage.version_id == version_id,
+            PipelineMessage.author.in_(("auditor", "coordinator")),
+            PipelineMessage.stage == "build",
         )
-        .scalars()
-        .all()
-    )
-    for payload in reversed(rows):
-        if payload and payload.get("task_id") == str(task_id):
+        .order_by(PipelineMessage.seq.asc())
+    ).all()
+    # Prefer the Auditor verdict (full flows) — keeps CR-NS-054 behavior exact, including an Auditor
+    # block that omitted task_pass (None). Only when no Auditor verdict exists for the task does the
+    # Coordinator (fast_fix) verdict apply — and only a real verdict (task_pass not None), never a relay.
+    for author, payload in reversed(rows):
+        if author == "auditor" and payload and payload.get("task_id") == str(task_id):
+            return {"task_pass": payload.get("task_pass"), "findings": payload.get("findings") or []}
+    for author, payload in reversed(rows):
+        if (
+            author == "coordinator"
+            and payload
+            and payload.get("task_id") == str(task_id)
+            and payload.get("task_pass") is not None
+        ):
             return {"task_pass": payload.get("task_pass"), "findings": payload.get("findings") or []}
     return None
 
@@ -3167,9 +3246,17 @@ async def _run_designer_spec_fix(
     return await _run_build_round(db, state, on_event=on_event, on_message=on_message)
 
 
-def _next_stage(stage: str) -> str:
-    idx = STAGE_ORDER.index(stage)
-    return STAGE_ORDER[min(idx + 1, len(STAGE_ORDER) - 1)]
+def _stage_order_for(flow_type: str) -> tuple[str, ...]:
+    """The ordered stage path for a flow. Fast-Fix (F-009, CR-NS-094) takes the shorter
+    ``kickoff → build → release → done`` path (skips gate_a-e / task_plan / gate_g); every other
+    flow (``new_version`` / ``cr`` / ``bug``) keeps the full :data:`STAGE_ORDER` unchanged."""
+    return FAST_FIX_STAGE_ORDER if flow_type == "fast_fix" else STAGE_ORDER
+
+
+def _next_stage(stage: str, flow_type: str = "new_version") -> str:
+    order = _stage_order_for(flow_type)
+    idx = order.index(stage)
+    return order[min(idx + 1, len(order) - 1)]
 
 
 async def apply_action(
@@ -3189,8 +3276,12 @@ async def apply_action(
         if state is not None:
             raise OrchestratorError("Pipeline already started for this version")
         flow_type = payload.get("flow_type", "new_version")
-        if flow_type not in ("new_version", "cr", "bug"):
+        if flow_type not in ("new_version", "cr", "bug", "fast_fix"):
             raise OrchestratorError(f"Invalid flow_type: {flow_type!r}")
+        # Fast-Fix Lane (F-009, CR-NS-094): the Director's directive is the whole task brief — carry it
+        # in the kickoff payload so the Coordinator triages it and the build-reuse step can materialize
+        # the single minimal Task from it. ``None`` for every other flow → kickoff payload unchanged.
+        directive = payload.get("directive") if flow_type == "fast_fix" else None
         state = PipelineState(
             version_id=version_id,
             flow_type=flow_type,
@@ -3209,7 +3300,7 @@ async def apply_action(
             recipient="coordinator",
             kind="kickoff",
             content="Spustenie pipeline.",
-            payload={"flow_type": flow_type},
+            payload={"flow_type": flow_type, **({"directive": directive} if directive else {})},
         )
         # WS-B1 (CR-NS-029): a new-version kickoff starts every agent fresh — drop all of the project's
         # OrchestratorSession rows so no stale cross-version --resume context leaks in. Per Director
@@ -3274,7 +3365,7 @@ async def apply_action(
                 if _gate_e_open_findings(db, version_id) > 0:
                     raise OrchestratorError("Otvorené nálezy blokujú uzavretie Gate E — najprv ich vyrieš")
                 _write_gate_e_audit(db, version_id)  # §4 audit record before closing
-                state.current_stage = _next_stage("gate_e")  # → task_plan
+                state.current_stage = _next_stage("gate_e", state.flow_type)  # → task_plan
                 db.flush()
                 _begin_dispatch(db, state)
             else:
@@ -3294,8 +3385,14 @@ async def apply_action(
                 raise OrchestratorError(
                     "Otvorené úlohy (failed/neoverené) blokujú uzavretie buildu — najprv ich vyrieš"
                 )
-        state.current_stage = _next_stage(state.current_stage)
+        prev_stage = state.current_stage
+        state.current_stage = _next_stage(state.current_stage, state.flow_type)
         db.flush()
+        # Fast-Fix Lane (F-009, CR-NS-094): entering build (kickoff→build) materializes the ONE minimal
+        # Task from the Director directive so the existing per-task build loop runs unchanged. Idempotent
+        # (no-op if the Task already exists). Other flows decompose tasks via the Designer's task_plan.
+        if state.flow_type == "fast_fix" and prev_stage == "kickoff" and state.current_stage == "build":
+            fast_fix.ensure_build_task(db, version_id)
         if state.current_stage == "done":
             state.current_actor = "director"
             state.status = "done"
@@ -3498,7 +3595,7 @@ async def apply_action(
             content="Gate E ukončené Directorom (pokrytie stačí).",
         )
         _write_gate_e_audit(db, version_id)  # §4 audit record before closing
-        state.current_stage = _next_stage("gate_e")  # → task_plan
+        state.current_stage = _next_stage("gate_e", state.flow_type)  # → task_plan
         db.flush()
         _begin_dispatch(db, state)
         return state
@@ -3520,7 +3617,8 @@ async def apply_action(
             kind="approval",
             content="Build ukončený Directorom (zvyšok do auditu).",
         )
-        state.current_stage = _next_stage("build")  # → gate_g
+        # Fast-Fix Lane (F-009, CR-NS-094): build → release (skips gate_g); full flows → gate_g.
+        state.current_stage = _next_stage("build", state.flow_type)
         db.flush()
         _begin_dispatch(db, state)
         return state

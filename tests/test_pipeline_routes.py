@@ -145,6 +145,63 @@ def test_start_then_board_populated(client, db_session):
     assert g["current_task"] is None  # WS-C2 (CR-NS-035): no current task outside build
 
 
+def _make_project_with_semver(db_session, user, version_number="0.3.0") -> Project:
+    project = Project(
+        name=f"P {uuid.uuid4().hex[:8]}",
+        slug=f"p-{uuid.uuid4().hex[:8]}",
+        category="singlemodule",
+        description="d",
+        created_by=user.id,
+    )
+    db_session.add(project)
+    db_session.flush()
+    db_session.add(Version(project_id=project.id, version_number=version_number))
+    db_session.flush()
+    return project
+
+
+def test_fast_fix_route_creates_patch_version_and_starts(client, db_session):
+    # F-009 (CR-NS-094): POST /pipeline/fast-fix auto-creates the next PATCH version + starts a fast_fix
+    # pipeline at kickoff, and schedules the (background) kickoff dispatch.
+    project = _make_project_with_semver(db_session, client._ri, "0.3.0")
+    r = client.post(
+        "/api/v1/pipeline/fast-fix",
+        json={"project_id": str(project.id), "directive": "Oprav preklep v hlavičke faktúry"},
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    new_version_id = uuid.UUID(body["version_id"])
+    assert body["board"]["state"]["flow_type"] == "fast_fix"
+    assert body["board"]["state"]["current_stage"] == "kickoff"
+    # the bumped PATCH version was created
+    v = db_session.execute(select(Version).where(Version.id == new_version_id)).scalar_one()
+    assert v.version_number == "0.3.1"
+    # the kickoff carries the directive; the dispatch was scheduled
+    kickoff = db_session.execute(
+        select(PipelineMessage).where(PipelineMessage.version_id == new_version_id, PipelineMessage.kind == "kickoff")
+    ).scalar_one()
+    assert kickoff.payload["directive"] == "Oprav preklep v hlavičke faktúry"
+    assert new_version_id in client._scheduled
+
+
+def test_fast_fix_route_unknown_project_404(client):
+    r = client.post(
+        "/api/v1/pipeline/fast-fix",
+        json={"project_id": str(uuid.uuid4()), "directive": "x"},
+    )
+    assert r.status_code == 404
+
+
+def test_fast_fix_route_no_semver_base_400(client, db_session):
+    # A project with no semver-parseable version cannot be patched → 400 (precondition), not 500.
+    project = _make_project_with_semver(db_session, client._ri, "pilot-x")
+    r = client.post(
+        "/api/v1/pipeline/fast-fix",
+        json={"project_id": str(project.id), "directive": "x"},
+    )
+    assert r.status_code == 400
+
+
 def test_board_current_task_at_build(client, db_session):
     # WS-C2 (CR-NS-035): the board exposes the in-focus build task (#N + title) for the "kto je na rade" board.
     from backend.db.models.tasks import Epic, Feat, Task

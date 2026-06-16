@@ -23,12 +23,15 @@ from backend.core.security import require_ri_role, verify_ws_token
 from backend.db.models.foundation import User
 from backend.db.models.orchestrator import OrchestratorSession
 from backend.db.models.pipeline import PipelineMessage, PipelineState
+from backend.db.models.projects import Project
 from backend.db.models.versions import Version
 from backend.db.session import SessionLocal, get_db
 from backend.schemas.agent_terminal import AgentTerminalSessionRead
 from backend.schemas.pagination import PaginatedResponse
 from backend.schemas.pipeline import (
     BoardTask,
+    FastFixStartRequest,
+    FastFixStartResponse,
     PipelineActionRequest,
     PipelineBoardRead,
     PipelineMessageRead,
@@ -36,6 +39,7 @@ from backend.schemas.pipeline import (
     RegateProposal,
 )
 from backend.services import agent_terminal as agent_terminal_service
+from backend.services import fast_fix as fast_fix_service
 from backend.services import orchestrator, pipeline_runner
 from backend.services.agent_terminal import AgentTerminalError, SessionConflictError
 from backend.services.orchestrator import OrchestratorError
@@ -106,6 +110,57 @@ def _map_orch_error(exc: OrchestratorError) -> HTTPException:
     if "already started" in lowered:
         return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=msg)
     return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=msg)
+
+
+@router.post("/fast-fix", response_model=FastFixStartResponse, status_code=status.HTTP_201_CREATED)
+async def start_fast_fix(
+    payload: FastFixStartRequest,
+    _current_user: User = Depends(require_ri_role),
+    db: Session = Depends(get_db),
+) -> FastFixStartResponse:
+    """Fast-Fix Lane entry (F-009, CR-NS-094) — the "Rýchla oprava" one-prompt action.
+
+    Auto-creates the next PATCH version (``vX.Y.Z+1`` from the project's semver max) and starts a
+    ``fast_fix`` pipeline carrying the Director directive; the kickoff Coordinator triages it
+    (escalation guard) and the board then shows the short fast-lane path. Declared before the
+    ``/{version_id}`` routes so ``fast-fix`` is never parsed as a version id.
+    """
+    if db.execute(select(Project.id).where(Project.id == payload.project_id)).scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+
+    pre_count = db.execute(
+        select(func.count()).select_from(Version).where(Version.project_id == payload.project_id)
+    ).scalar_one()
+    try:
+        version = fast_fix_service.create_patch_version(db, project_id=payload.project_id, user_id=_current_user.id)
+        state = await orchestrator.apply_action(
+            db,
+            version_id=version.id,
+            action="start",
+            payload={"flow_type": "fast_fix", "directive": payload.directive},
+        )
+    except OrchestratorError as exc:
+        db.rollback()
+        raise _map_orch_error(exc) from exc
+    except ValueError as exc:
+        db.rollback()
+        # No semver base version / bumped collision — a client/data precondition, not a server fault.
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    version_id = version.id
+    db.commit()
+    db.refresh(state)
+
+    # Stream the fresh board to any already-open sockets (none yet for a brand-new version, but
+    # symmetric with post_action and harmless). The kickoff Coordinator runs in the background.
+    await registry.broadcast(
+        version_id,
+        {"type": "state_changed", "state": PipelineStateRead.model_validate(state).model_dump(mode="json")},
+    )
+    if state.status == "agent_working":
+        pipeline_runner.schedule_dispatch(version_id, None)
+
+    logger.info("Fast-Fix started: version %s (project had %d versions before)", version_id, pre_count)
+    return FastFixStartResponse(version_id=version_id, board=_board(db, version_id))
 
 
 @router.get("/{version_id}", response_model=PipelineBoardRead)

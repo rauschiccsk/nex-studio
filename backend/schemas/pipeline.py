@@ -102,3 +102,21 @@ class PipelineActionRequest(BaseModel):
 
     action: str
     payload: Optional[dict[str, Any]] = None
+
+
+class FastFixStartRequest(BaseModel):
+    """Body for ``POST /pipeline/fast-fix`` (F-009, CR-NS-094) — the "Rýchla oprava" entry.
+
+    One prompt: ``project_id`` + the Director ``directive`` (the whole fix brief). The backend
+    auto-creates the next PATCH version and starts a ``fast_fix`` pipeline carrying the directive.
+    """
+
+    project_id: UUID
+    directive: str = Field(..., min_length=1, description="The Director's fast-fix directive (the task brief).")
+
+
+class FastFixStartResponse(BaseModel):
+    """Result of starting a Fast-Fix: the new PATCH ``version_id`` + the initial board snapshot."""
+
+    version_id: UUID
+    board: PipelineBoardRead

@@ -85,7 +85,10 @@ class PipelineState(Base, UUIDMixin, TimestampMixin):
     __table_args__ = (
         UniqueConstraint("version_id", name="uq_pipeline_state_version_id"),
         CheckConstraint(
-            "flow_type IN ('new_version', 'cr', 'bug')",
+            # 'fast_fix' (F-009, CR-NS-094): the lightweight fast-fix lane — a distinct flow_type
+            # (NOT reusing cr/bug, which are full-pipeline labels today) that traverses the shorter
+            # kickoff→build→release→done path. Additive; the existing three are unchanged.
+            "flow_type IN ('new_version', 'cr', 'bug', 'fast_fix')",
             name="ck_pipeline_state_flow_type",
         ),
         CheckConstraint(
