@@ -20,6 +20,8 @@ def seed_user(
     password="Nex123",
     role="ri",
     is_active=True,
+    first_name=None,
+    last_name=None,
 ):
     """Insert a user + session into the test DB and return the user."""
     user = User(
@@ -28,6 +30,8 @@ def seed_user(
         password_hash=hash_password(password),
         role=role,
         is_active=is_active,
+        first_name=first_name,
+        last_name=last_name,
     )
     db_session.add(user)
     db_session.flush()

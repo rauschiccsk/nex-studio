@@ -44,6 +44,11 @@ class AuthUser(BaseModel):
     email: str
     role: UserRole
     is_active: bool
+    # Given/family name — nullable (legacy users may lack them). Carried in the
+    # auth payload so clients can show a full display name (CR-NS-089); populated
+    # from the ORM columns via ``from_attributes``.
+    first_name: str | None = None
+    last_name: str | None = None
     created_at: datetime
     updated_at: datetime
 

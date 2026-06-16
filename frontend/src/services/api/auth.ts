@@ -17,6 +17,10 @@ export interface AuthUser {
   email: string;
   role: "ri" | "ha" | "shu";
   is_active: boolean;
+  /** Given name — nullable (legacy users may lack it). CR-NS-089. */
+  first_name?: string | null;
+  /** Family name — nullable (legacy users may lack it). CR-NS-089. */
+  last_name?: string | null;
   created_at: string;
   updated_at: string;
 }

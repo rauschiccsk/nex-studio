@@ -64,6 +64,35 @@ class TestLoginSuccess:
         assert "password_hash" not in user_data
         assert "id" in user_data
 
+    def test_response_contains_first_last_name(self, client, db_session):
+        """CR-NS-089: the auth payload carries first_name/last_name so clients
+        can render a full display name."""
+        seed_user(db_session, first_name="Zoltán", last_name="Rausch")
+
+        resp = client.post(
+            "/api/v1/auth/login",
+            json={"username": "admin", "password": "Nex123"},
+        )
+
+        assert resp.status_code == 200
+        user_data = resp.json()["user"]
+        assert user_data["first_name"] == "Zoltán"
+        assert user_data["last_name"] == "Rausch"
+
+    def test_name_fields_null_for_legacy_user(self, client, db_session):
+        """Legacy users without names still serialize the keys as null."""
+        seed_user(db_session)
+
+        resp = client.post(
+            "/api/v1/auth/login",
+            json={"username": "admin", "password": "Nex123"},
+        )
+
+        assert resp.status_code == 200
+        user_data = resp.json()["user"]
+        assert user_data["first_name"] is None
+        assert user_data["last_name"] is None
+
     def test_token_version_incremented(self, client, db_session):
         user = seed_user(db_session)
 

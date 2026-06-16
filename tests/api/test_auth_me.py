@@ -50,6 +50,21 @@ class TestMeSuccess:
         assert resp.status_code == 200
         assert "password_hash" not in resp.json()
 
+    def test_returns_first_last_name(self, client, db_session):
+        """CR-NS-089: /me carries first_name/last_name for full-name display."""
+        seed_user(db_session, first_name="Zoltán", last_name="Rausch")
+        token = login_user(client)
+
+        resp = client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["first_name"] == "Zoltán"
+        assert body["last_name"] == "Rausch"
+
 
 class TestMeExpiredToken:
     """GET /api/v1/auth/me — expired token → 401."""

@@ -63,7 +63,15 @@ export default function Sidebar() {
     navigate("/login");
   };
 
-  const initials = user?.username ? user.username.slice(0, 1).toUpperCase() : "?";
+  // CR-NS-089: show the logged-in user's full name (first + last), falling back
+  // to username → email. Initials derive from the same resolved source.
+  const displaySource =
+    [user?.first_name, user?.last_name].filter(Boolean).join(" ") ||
+    user?.username ||
+    user?.email ||
+    "";
+  const displayName = displaySource || "—";
+  const initials = displaySource ? displaySource.slice(0, 1).toUpperCase() : "?";
 
   const hasProject = Boolean(selectedProject);
   const projectsFallback = "/projects";
@@ -98,7 +106,7 @@ export default function Sidebar() {
       )}
       <UserCard
         initials={initials}
-        name={user?.username ?? "—"}
+        name={displayName}
         subtitle="Director · Ri"
         onLogout={handleLogout}
       />
