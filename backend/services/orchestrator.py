@@ -2812,8 +2812,12 @@ def _execute_coordinator_directive(db: Session, state: PipelineState, directive:
 
 
 def _autonomous_count(db: Session, version_id: uuid.UUID, task_id: uuid.UUID) -> int:
-    """How many autonomous Coordinator recoveries already happened for this task (Pillar B §B.4 cap) —
-    counted from the recorded ``is_autonomous`` Coordinator→Director notes tagged with the task."""
+    """How many autonomous Coordinator RECOVERIES already happened for this task (Pillar B §B.4 cap) —
+    counted from the recorded ``is_autonomous`` Coordinator→Director notes tagged with the task. Filters to
+    recovery actions ONLY (``action in _AUTONOMOUS_RECOVERY_ACTIONS``), mirroring
+    :func:`_autonomous_answer_count`'s ``action`` filter, so the recovery cap and the fast_fix answer cap
+    (CR-NS-103) are truly orthogonal in BOTH directions — an autonomous answer never consumes the recovery
+    budget, and a recovery never consumes the answer budget."""
     rows = (
         db.execute(
             select(PipelineMessage.payload).where(
@@ -2824,7 +2828,14 @@ def _autonomous_count(db: Session, version_id: uuid.UUID, task_id: uuid.UUID) ->
         .scalars()
         .all()
     )
-    return sum(1 for p in rows if p and p.get("is_autonomous") and p.get("task_id") == str(task_id))
+    return sum(
+        1
+        for p in rows
+        if p
+        and p.get("is_autonomous")
+        and p.get("task_id") == str(task_id)
+        and p.get("action") in _AUTONOMOUS_RECOVERY_ACTIONS
+    )
 
 
 def _autonomous_answer_count(db: Session, version_id: uuid.UUID, task_id: uuid.UUID) -> int:

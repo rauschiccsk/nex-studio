@@ -125,7 +125,15 @@ export type PipelineActionName =
 // payload.coordinator_directive. The Director approves it via apply_coordinator_recommendation and the
 // orchestrator executes the matching action (F-008 §9).
 export interface CoordinatorDirective {
-  triage_class: "spec_problem" | "programmer_guidance" | "nex_studio_bug" | "director_decision";
+  // Mirrors the BE CoordinatorDirective.triage_class Literal (backend/services/pipeline_status.py).
+  // "programmer_routine_question" (CR-NS-103, F-009 §4.6): a routine fast_fix build question the
+  // Coordinator answers itself (proposed_action="coordinator_answer_question").
+  triage_class:
+    | "spec_problem"
+    | "programmer_guidance"
+    | "nex_studio_bug"
+    | "director_decision"
+    | "programmer_routine_question";
   proposed_action: string;
   target?: { task_id?: string; role?: string; commit?: string };
   params?: Record<string, unknown>;

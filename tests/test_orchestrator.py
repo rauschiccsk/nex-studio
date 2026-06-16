@@ -4774,6 +4774,54 @@ async def test_maybe_autonomous_answer_per_task_cap(db_session, fake_claude):
     assert len(notes) == 2
 
 
+# ── CR-NS-103 follow-up FIX A: the recovery cap and the answer cap are orthogonal ──
+
+
+async def test_answer_does_not_consume_recovery_cap(db_session, fake_claude):
+    """FIX A: an autonomous ANSWER does NOT fill the Pillar B recovery cap — after one auto-answer the SAME
+    task can STILL be auto-recovered (reset_task), instead of being escalated to the Director."""
+    _v, _p, state, task = await _fast_fix_at_build_with_task(db_session, fake_claude)
+    assert await orchestrator._maybe_autonomous_answer(db_session, state, task, _answer_directive()) is not None
+    db_session.refresh(task)
+    recovery = _coord_directive(
+        triage_class="nex_studio_bug",
+        proposed_action="coordinator_reset_task",
+        confidence=0.9,
+        target={"task_id": str(task.id)},
+    )
+    assert await orchestrator._maybe_autonomous_recovery(db_session, state, task, recovery) is True
+    notes = [m for m in _msgs(db_session, _v.id) if (m.payload or {}).get("is_autonomous")]
+    actions = sorted(n.payload["action"] for n in notes)
+    assert actions == ["coordinator_answer_question", "coordinator_reset_task"]  # both fired, neither capped
+
+
+async def test_recovery_does_not_consume_answer_cap(db_session, fake_claude):
+    """FIX A (vice-versa): an autonomous RECOVERY does NOT fill the fast_fix answer cap — after one auto-reset
+    the SAME task can STILL be auto-answered twice (the answer budget is untouched)."""
+    _v, _p, state, task = await _fast_fix_at_build_with_task(db_session, fake_claude)
+    recovery = _coord_directive(
+        triage_class="nex_studio_bug",
+        proposed_action="coordinator_reset_task",
+        confidence=0.9,
+        target={"task_id": str(task.id)},
+    )
+    assert await orchestrator._maybe_autonomous_recovery(db_session, state, task, recovery) is True
+    db_session.refresh(task)
+    # the answer cap (≤2) is still full-budget after the recovery: two answers both fire.
+    assert await orchestrator._maybe_autonomous_answer(db_session, state, task, _answer_directive()) is not None
+    db_session.refresh(task)
+    assert await orchestrator._maybe_autonomous_answer(db_session, state, task, _answer_directive()) is not None
+    db_session.refresh(task)
+    assert await orchestrator._maybe_autonomous_answer(db_session, state, task, _answer_directive()) is None  # cap
+    notes = [m for m in _msgs(db_session, _v.id) if (m.payload or {}).get("is_autonomous")]
+    actions = sorted(n.payload["action"] for n in notes)
+    assert actions == [
+        "coordinator_answer_question",
+        "coordinator_answer_question",
+        "coordinator_reset_task",
+    ]
+
+
 # ── Part 2: build-loop integration (autonomous answer re-dispatches the SAME task) ──
 
 

@@ -445,14 +445,15 @@ Pri bežnej žiadosti len pridám do Inboxu, čaká na ďalší Direktor inbox c
 
 ### 7.1 Triage framework (E7 — operátorská rola, F-008 §3)
 
-Som **aktívny build operátor**, nielen sudca/relay. Keď vo verify/relay narazím na problém, **klasifikujem ho** a popri obyčajnom slovenskom relayi **pripojím štruktúrovaný `coordinator_directive`** (F-008 §2). Director ho schváli, engine ho vykoná. Konzervatívne: **navrhujem konkrétne rozhodnutie → Director schvaľuje → ja vykonám** (nie autonómne).
+Som **aktívny build operátor**, nielen sudca/relay. Keď vo verify/relay narazím na problém, **klasifikujem ho** a popri obyčajnom slovenskom relayi **pripojím štruktúrovaný `coordinator_directive`** (F-008 §2). Default je konzervatívny: **navrhujem konkrétne rozhodnutie → Director schvaľuje → engine vykoná**. Dve výnimky vykoná engine AUTOMATICKY (bez Directora), pri úprimnej VYSOKEJ istote a vždy zaznamenané Director-visible (`is_autonomous=true`): **(a)** rutinné zotavenie vo fáze build (`coordinator_reset_task` / `coordinator_move_baseline` / `coordinator_clear_session`, CR-NS-055, ≤1× na úlohu); **(b)** rutinná odpoveď Programátorovi pri rýchlej oprave (`coordinator_answer_question`, CR-NS-103, len `fast_fix`, ≤2× na úlohu — viď **§4.6**). Tieto dve cesty sú nezávislé (každá má vlastný cap).
 
-**4 triedy → navrhovaná akcia:**
+**5 tried → navrhovaná akcia:**
 
 | triage_class | význam | proposed_action |
 |---|---|---|
 | `spec_problem` | spec/dizajn je zlý alebo nejednoznačný (inak padne Dual-Build/Tibor test) | `coordinator_route_to_designer` (+ `params.section`) |
 | `programmer_guidance` | Programátor potrebuje smer alebo opraviť build-mechaniku | `coordinator_reset_task` / `coordinator_move_baseline` / pokyn v `params` |
+| `programmer_routine_question` | rutinná otázka Programátora pri **rýchlej oprave** (jednoznačná z dizajnu+kódu) — len `fast_fix` | `coordinator_answer_question` (auto-vykoná engine, odpoveď v `rationale`; viď **§4.6**) |
 | `nex_studio_bug` | obmedzenie cockpitu, nie problém projektu | `coordinator_escalate_dedo` (paralelne, neblokuje) |
 | `director_decision` | scope/úsudkové rozhodnutie | `relay` (rozhodne Director) |
 
@@ -467,7 +468,7 @@ Som **aktívny build operátor**, nielen sudca/relay. Keď vo verify/relay naraz
 
 ```
 coordinator_directive: {
-  triage_class:    "spec_problem" | "programmer_guidance" | "nex_studio_bug" | "director_decision",
+  triage_class:    "spec_problem" | "programmer_guidance" | "programmer_routine_question" | "nex_studio_bug" | "director_decision",
   proposed_action: "<vykonateľná akcia vyššie, alebo 'relay' pre director_decision>",
   target:          { task_id?, role?, commit? },   # na čom akcia operuje
   params:          { ... },                         # špecifické pre akciu (pokyn, §ref…)

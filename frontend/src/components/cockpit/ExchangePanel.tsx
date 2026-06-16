@@ -24,6 +24,9 @@ const EXECUTABLE_COORDINATOR_ACTIONS = new Set([
   "coordinator_clear_session",
   "coordinator_escalate_dedo",
   "coordinator_route_to_designer",
+  // CR-NS-103 (F-009 §4.6): the Coordinator's autonomous answer to a routine fast_fix build question —
+  // executable (mirrors the BE _EXECUTABLE_COORDINATOR_ACTIONS) so a Director-approved answer is recognized.
+  "coordinator_answer_question",
 ]);
 
 // Compose the banner from machine values + Slovak display labels — never render
