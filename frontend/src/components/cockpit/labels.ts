@@ -154,16 +154,39 @@ export const STAGE_ORDER: PipelineStage[] = [
   "done",
 ];
 
+// Fast-Fix Lane stage path (F-009, CR-NS-094/095) — mirrors backend orchestrator.FAST_FIX_STAGE_ORDER.
+// The lightweight lane skips the full waterfall (gate_a-e / task_plan / gate_g): kickoff advances straight
+// to build, a settled build to release. A subset of STAGE_ORDER, so STAGE_LABELS / STAGE_CODES already
+// cover every member.
+export const FAST_FIX_STAGE_ORDER: PipelineStage[] = ["kickoff", "build", "release", "done"];
+
+// The stage order for a given pipeline flow_type. fast_fix runs the short lane; every other flow
+// (new_version / cr / bug) traverses the full STAGE_ORDER (F-009 §3). Default new_version.
+export function stageOrderForFlow(flowType?: string): PipelineStage[] {
+  return flowType === "fast_fix" ? FAST_FIX_STAGE_ORDER : STAGE_ORDER;
+}
+
+// Slovak display label per pipeline flow_type (F-009). The fast-fix lane is badged on the board so it
+// reads distinctly from a full-waterfall version; the map covers all flows for reuse/consistency.
+export const FLOW_LABELS: Record<string, string> = {
+  new_version: "Nová verzia",
+  cr: "Zmena (CR)",
+  bug: "Oprava chyby",
+  fast_fix: "Rýchla oprava",
+};
+
 // CR-NS-057 §F2.4: the stages a gate_g FAIL can re-gate to (override chips). Excludes kickoff / release /
 // done / gate_g — only the design + build stages (gate_a..build) are valid re-gate targets.
 export const REGATE_TARGETS: PipelineStage[] = STAGE_ORDER.filter(
   (s) => s !== "kickoff" && s !== "release" && s !== "done" && s !== "gate_g",
 );
 
-// Human label of the stage that follows `stage` (clamped at the last). Drives the
-// "Schváliť → spustí sa ďalšia fáza (…)" consequence line.
-export function nextStageLabel(stage: PipelineStage): string {
-  const idx = STAGE_ORDER.indexOf(stage);
-  const next = idx >= 0 ? STAGE_ORDER[Math.min(idx + 1, STAGE_ORDER.length - 1)] : undefined;
+// Human label of the stage that follows `stage` in the given flow (clamped at the last). Drives the
+// "Schváliť → spustí sa ďalšia fáza (…)" consequence line. Flow-aware so a fast_fix kickoff correctly
+// reads "Programovanie" (build), not "Rozsah" (gate_a) — that gate is skipped in the short lane.
+export function nextStageLabel(stage: PipelineStage, flowType?: string): string {
+  const order = stageOrderForFlow(flowType);
+  const idx = order.indexOf(stage);
+  const next = idx >= 0 ? order[Math.min(idx + 1, order.length - 1)] : undefined;
   return next ? STAGE_LABELS[next] : STAGE_LABELS[stage];
 }

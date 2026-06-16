@@ -1,0 +1,158 @@
+/**
+ * ProjectDetailPage — Fast-Fix Lane entry (F-009 §4 CR-B, CR-NS-095).
+ *
+ * The "Rýchla oprava" button opens a modal; submitting the directive POSTs to
+ * /pipeline/fast-fix, pins the auto-created PATCH version into the active context
+ * (project FIRST, then version), and navigates to the cockpit board.
+ */
+
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import "@testing-library/jest-dom/vitest";
+
+import type { ProjectRead } from "@/types";
+import type { Version } from "@/types/version";
+
+// ── Hoisted mocks ─────────────────────────────────────────────────────────────
+
+const {
+  navigateMock,
+  listProjectsApiMock,
+  listVersionsMock,
+  getVersionMock,
+  startFastFixApiMock,
+  setSelectedProjectMock,
+  setSelectedVersionMock,
+} = vi.hoisted(() => ({
+  navigateMock: vi.fn(),
+  listProjectsApiMock: vi.fn(),
+  listVersionsMock: vi.fn(),
+  getVersionMock: vi.fn(),
+  startFastFixApiMock: vi.fn(),
+  setSelectedProjectMock: vi.fn(),
+  setSelectedVersionMock: vi.fn(),
+}));
+
+vi.mock("react-router-dom", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react-router-dom")>();
+  return {
+    ...actual,
+    useNavigate: () => navigateMock,
+    useParams: () => ({ slug: "demo" }),
+    useLocation: () => ({ pathname: "/projects/demo", search: "", hash: "", key: "t", state: null }),
+  };
+});
+
+vi.mock("@/services/api/projects", () => ({ listProjectsApi: listProjectsApiMock }));
+vi.mock("@/services/api/versions", () => ({ listVersions: listVersionsMock, getVersion: getVersionMock }));
+vi.mock("@/services/api/pipeline", () => ({ startFastFixApi: startFastFixApiMock }));
+vi.mock("@/store/activeContextStore", () => ({
+  useActiveContextStore: (selector: (s: Record<string, unknown>) => unknown) =>
+    selector({ setSelectedProject: setSelectedProjectMock, setSelectedVersion: setSelectedVersionMock }),
+}));
+
+// ── Fixtures ───────────────────────────────────────────────────────────────────
+
+const project: ProjectRead = {
+  id: "p1",
+  name: "Demo",
+  slug: "demo",
+  category: "singlemodule",
+  description: "",
+  status: "active",
+  backend_port: null,
+  frontend_port: null,
+  db_port: null,
+  repo_url: null,
+  source_path: null,
+  kb_path: null,
+  guardian_enabled: false,
+  created_by: "u1",
+  owner_id: null,
+  created_at: "2026-06-01T00:00:00Z",
+  updated_at: "2026-06-01T00:00:00Z",
+};
+
+const baseVersion: Version = {
+  id: "v1",
+  project_id: "p1",
+  version_number: "v0.6.0",
+  name: "Initial",
+  status: "released",
+  description: null,
+  target_date: null,
+  release_date: "2026-06-01",
+  created_at: "2026-06-01T00:00:00Z",
+  updated_at: "2026-06-01T00:00:00Z",
+  epic_count: 0,
+  epics_done: 0,
+  bug_count: 0,
+};
+
+const patchVersion: Version = { ...baseVersion, id: "v2", version_number: "v0.6.1", name: "Rýchla oprava", status: "planned" };
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  listProjectsApiMock.mockResolvedValue({ items: [project], total: 1, skip: 0, limit: 100 });
+  listVersionsMock.mockResolvedValue([baseVersion]);
+  getVersionMock.mockResolvedValue(patchVersion);
+  startFastFixApiMock.mockResolvedValue({ version_id: "v2", board: { state: null, recent_messages: [] } });
+});
+
+async function importPage() {
+  return (await import("@/pages/ProjectDetailPage")).default;
+}
+
+describe("ProjectDetailPage — Fast-Fix Lane (CR-NS-095)", () => {
+  it("posts the directive, pins the patch version (project first), and opens the cockpit", async () => {
+    const ProjectDetailPage = await importPage();
+    render(<ProjectDetailPage />);
+
+    // Entry button appears once the project + its (>0) versions load.
+    const entry = await screen.findByRole("button", { name: /^rýchla oprava$/i });
+    await userEvent.click(entry);
+
+    await userEvent.type(screen.getByLabelText(/popis opravy/i), "Oprav preklep v sidebare.");
+    await userEvent.click(screen.getByRole("button", { name: /spustiť rýchlu opravu/i }));
+
+    await waitFor(() =>
+      expect(startFastFixApiMock).toHaveBeenCalledWith("p1", "Oprav preklep v sidebare."),
+    );
+    await waitFor(() => expect(navigateMock).toHaveBeenCalledWith("/cockpit"));
+
+    expect(getVersionMock).toHaveBeenCalledWith("v2");
+    expect(setSelectedProjectMock).toHaveBeenCalledWith({ slug: "demo", name: "Demo" });
+    expect(setSelectedVersionMock).toHaveBeenCalledWith({ versionId: "v2", versionNumber: "v0.6.1" });
+
+    // Context must be pinned project-FIRST (setSelectedProject clears the version slot).
+    const projOrder = setSelectedProjectMock.mock.invocationCallOrder[0] ?? 0;
+    const verOrder = setSelectedVersionMock.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER;
+    expect(projOrder).toBeLessThan(verOrder);
+  });
+
+  it("submit is disabled on an empty directive and the modal can be cancelled", async () => {
+    const ProjectDetailPage = await importPage();
+    render(<ProjectDetailPage />);
+
+    await userEvent.click(await screen.findByRole("button", { name: /^rýchla oprava$/i }));
+    expect(screen.getByRole("button", { name: /spustiť rýchlu opravu/i })).toBeDisabled();
+
+    await userEvent.click(screen.getByRole("button", { name: /zrušiť/i }));
+    expect(screen.queryByLabelText(/popis opravy/i)).not.toBeInTheDocument();
+    expect(startFastFixApiMock).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a backend error without navigating away", async () => {
+    startFastFixApiMock.mockRejectedValue(new Error("Project has no semver version to patch from"));
+    const ProjectDetailPage = await importPage();
+    render(<ProjectDetailPage />);
+
+    await userEvent.click(await screen.findByRole("button", { name: /^rýchla oprava$/i }));
+    await userEvent.type(screen.getByLabelText(/popis opravy/i), "x");
+    await userEvent.click(screen.getByRole("button", { name: /spustiť rýchlu opravu/i }));
+
+    expect(await screen.findByText(/no semver version to patch/i)).toBeInTheDocument();
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
+});

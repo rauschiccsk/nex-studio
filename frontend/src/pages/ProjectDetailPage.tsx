@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { Loader2, Zap } from "lucide-react";
 import { listProjectsApi } from "@/services/api/projects";
-import { listVersions } from "@/services/api/versions";
+import { getVersion, listVersions } from "@/services/api/versions";
+import { startFastFixApi } from "@/services/api/pipeline";
+import { useActiveContextStore } from "@/store/activeContextStore";
 import type { ProjectRead } from "@/types";
 import type { Version } from "@/types/version";
 
@@ -104,6 +107,36 @@ export default function ProjectDetailPage() {
   const [versions, setVersions] = useState<Version[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  // Fast-Fix Lane entry (F-009 §4 CR-B, CR-NS-095): one prompt → POST /pipeline/fast-fix → the backend
+  // auto-creates the next PATCH version + starts the short `fast_fix` pipeline → open its cockpit board.
+  const setSelectedProject = useActiveContextStore((s) => s.setSelectedProject);
+  const setSelectedVersion = useActiveContextStore((s) => s.setSelectedVersion);
+  const [fastFixOpen, setFastFixOpen] = useState(false);
+  const [fastFixDirective, setFastFixDirective] = useState("");
+  const [fastFixSubmitting, setFastFixSubmitting] = useState(false);
+  const [fastFixError, setFastFixError] = useState("");
+
+  const submitFastFix = async () => {
+    const directive = fastFixDirective.trim();
+    if (!project || !directive || fastFixSubmitting) return;
+    setFastFixSubmitting(true);
+    setFastFixError("");
+    try {
+      const res = await startFastFixApi(project.id, directive);
+      // The response carries only the new version_id — fetch the version to learn its (auto-bumped)
+      // number for the pinned context the cockpit board reads.
+      const version = await getVersion(res.version_id);
+      // Pin project FIRST (setSelectedProject clears the version slot), then the new patch version, so
+      // the cockpit opens with full context on it.
+      setSelectedProject({ slug: project.slug, name: project.name });
+      setSelectedVersion({ versionId: version.id, versionNumber: version.version_number });
+      navigate("/cockpit");
+    } catch (e: unknown) {
+      setFastFixError(e instanceof Error ? e.message : "Rýchlu opravu sa nepodarilo spustiť.");
+      setFastFixSubmitting(false);
+    }
+  };
 
   // "Project just created" banner — shown only immediately after a
   // successful POST /projects navigate. The state is cleared (via
@@ -312,15 +345,32 @@ export default function ProjectDetailPage() {
       <div>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-widest">Verzie</h2>
-          <button
-            onClick={() => navigate(`/projects/${slug}/versions/new`)}
-            className="flex items-center gap-1.5 bg-primary-600 hover:bg-primary-500 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors"
-          >
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-            Nová verzia
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Fast-Fix Lane (F-009): a lightweight lane for a small, obvious fix — only meaningful once
+                there is a base version to patch (vX.Y.Z+1). */}
+            {versions.length > 0 && (
+              <button
+                onClick={() => {
+                  setFastFixError("");
+                  setFastFixDirective("");
+                  setFastFixOpen(true);
+                }}
+                className="flex items-center gap-1.5 border border-indigo-500/40 text-[var(--color-accent-primary)] hover:bg-indigo-500/10 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors"
+              >
+                <Zap className="w-3.5 h-3.5" />
+                Rýchla oprava
+              </button>
+            )}
+            <button
+              onClick={() => navigate(`/projects/${slug}/versions/new`)}
+              className="flex items-center gap-1.5 bg-primary-600 hover:bg-primary-500 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              Nová verzia
+            </button>
+          </div>
         </div>
 
         {versions.length === 0 ? (
@@ -370,6 +420,63 @@ export default function ProjectDetailPage() {
           </>
         )}
       </div>
+
+      {/* Fast-Fix Lane modal (F-009 §4 CR-B): the Director types the fix directive (the whole brief);
+          submit auto-creates a PATCH version + starts the short `fast_fix` pipeline, then opens its board. */}
+      {fastFixOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="fastfix-title"
+        >
+          <div className="w-full max-w-lg rounded-xl border border-[var(--color-border-default)] bg-[var(--color-canvas)] p-5 shadow-xl">
+            <div className="flex items-center gap-2 mb-1">
+              <Zap className="w-4 h-4 text-[var(--color-accent-primary)]" />
+              <h3 id="fastfix-title" className="text-sm font-bold text-[var(--color-text-primary)]">Rýchla oprava</h3>
+            </div>
+            <p className="text-xs text-[var(--color-text-muted)] mb-3">
+              Pre malú, jednoznačnú opravu. Vytvorí sa nová patch verzia a spustí sa odľahčená linka
+              (Príprava → Programovanie → Vydanie) — bez plného waterfall postupu. Koordinátor zadanie
+              najprv posúdi; ak nie je triviálne, navrhne prevod na plnú verziu.
+            </p>
+            <label htmlFor="fastfix-directive" className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1">
+              Popis opravy
+            </label>
+            <textarea
+              id="fastfix-directive"
+              autoFocus
+              value={fastFixDirective}
+              onChange={(e) => setFastFixDirective(e.target.value)}
+              rows={5}
+              placeholder="Napríklad: V sidebare oprav preklep „Nastvenia“ na „Nastavenia“."
+              className="w-full resize-none rounded-lg border border-[var(--color-border-default)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text-primary)] focus:border-primary-500 focus:outline-none"
+            />
+            {fastFixError && (
+              <div className="mt-2 rounded-lg bg-[var(--color-state-error-bg)] border border-[var(--color-state-error-bg)] px-3 py-2 text-xs text-[var(--color-state-error-fg)]">
+                {fastFixError}
+              </div>
+            )}
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                onClick={() => setFastFixOpen(false)}
+                disabled={fastFixSubmitting}
+                className="text-xs font-medium px-3 py-1.5 rounded-lg border border-[var(--color-border-default)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors disabled:opacity-50"
+              >
+                Zrušiť
+              </button>
+              <button
+                onClick={submitFastFix}
+                disabled={!fastFixDirective.trim() || fastFixSubmitting}
+                className="flex items-center gap-1.5 bg-primary-600 hover:bg-primary-500 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+              >
+                {fastFixSubmitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
+                Spustiť rýchlu opravu
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

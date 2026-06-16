@@ -146,10 +146,27 @@ export interface DebugTerminalSession {
   pid: number;
 }
 
+// Fast-Fix Lane (F-009, CR-NS-094/095): the result of the "Rýchla oprava" one-prompt entry — the
+// auto-created PATCH version's id + its initial board snapshot. Mirrors backend FastFixStartResponse.
+export interface FastFixStartResponse {
+  version_id: string;
+  board: PipelineBoard;
+}
+
 // ── REST ─────────────────────────────────────────────────────────────────────
 
 export function getPipelineBoardApi(versionId: string, limit = 50): Promise<PipelineBoard> {
   return api.get<PipelineBoard>(`/pipeline/${versionId}?limit=${limit}`);
+}
+
+// Fast-Fix Lane entry (F-009 §3, CR-NS-095): one prompt → the backend auto-creates the next PATCH
+// version (vX.Y.Z+1) and starts a `fast_fix` pipeline carrying the Director directive. Returns the new
+// version_id (navigate the cockpit to it) + the initial board.
+export function startFastFixApi(projectId: string, directive: string): Promise<FastFixStartResponse> {
+  return api.post<FastFixStartResponse>("/pipeline/fast-fix", {
+    project_id: projectId,
+    directive,
+  });
 }
 
 export function listPipelineMessagesApi(

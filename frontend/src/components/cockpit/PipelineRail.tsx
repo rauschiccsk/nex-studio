@@ -7,7 +7,7 @@ import type {
   PipelineState,
 } from "../../services/api/pipeline";
 import type { StatusTone } from "./labels";
-import { ROLE_LABELS, STAGE_CODES, STAGE_LABELS, STAGE_ORDER, TONE_TEXT } from "./labels";
+import { FLOW_LABELS, ROLE_LABELS, STAGE_CODES, STAGE_LABELS, stageOrderForFlow, TONE_TEXT } from "./labels";
 
 // The agent actually active (CR-NS-018): while working = the real streaming role
 // (latest activity frame, fallback the stage actor); at rest = who just acted
@@ -83,16 +83,25 @@ interface Props {
 }
 
 export function PipelineRail({ state, activeAgent = null }: Props) {
-  const currentIdx = state ? STAGE_ORDER.indexOf(state.current_stage) : -1;
+  // Flow-aware stage path (F-009): a fast_fix pipeline shows only the short lane
+  // (kickoff → build → release → done), never the full 11-stage waterfall rail.
+  const stageOrder = stageOrderForFlow(state?.flow_type);
+  const currentIdx = state ? stageOrder.indexOf(state.current_stage) : -1;
+  const flowBadge = state?.flow_type === "fast_fix" ? FLOW_LABELS.fast_fix : null;
 
   return (
     <div className="flex h-full flex-col gap-5 overflow-y-auto p-4">
       <section>
-        <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+        <h3 className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
           Pipeline
+          {flowBadge && (
+            <span className="rounded-full border border-indigo-500/30 bg-indigo-500/20 px-1.5 py-0.5 text-[9px] font-medium normal-case text-[var(--color-accent-primary)]">
+              {flowBadge}
+            </span>
+          )}
         </h3>
         <ul className="space-y-1">
-          {STAGE_ORDER.map((stage, idx) => {
+          {stageOrder.map((stage, idx) => {
             const done = currentIdx >= 0 && idx < currentIdx;
             const current = idx === currentIdx;
             const marker = done ? "✓" : current ? ">" : "·";
