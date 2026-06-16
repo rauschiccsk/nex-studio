@@ -76,7 +76,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
         > /etc/apt/sources.list.d/github-cli.list \
     && apt-get update \
-    && apt-get install -y --no-install-recommends docker-ce-cli gh \
+    && apt-get install -y --no-install-recommends docker-ce-cli docker-compose-plugin gh \
     && rm -rf /var/lib/apt/lists/*
 
 # Verify binárky existujú (per §9.1 build pattern lesson z NEX Inbox v0.1.0 —
@@ -85,7 +85,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # /usr/local/bin per Debian convention.
 RUN docker_bin="$(command -v docker)" && test -x "$docker_bin" \
     && gh_bin="$(command -v gh)" && test -x "$gh_bin" \
-    && echo "Docker CLI at $docker_bin, GitHub CLI at $gh_bin"
+    && docker compose version \
+    && echo "Docker CLI at $docker_bin (+ compose plugin), GitHub CLI at $gh_bin"
 
 # Set system-wide git identity used by template_bootstrap when init.sh
 # does the first commit on a freshly-created project. The identity is
