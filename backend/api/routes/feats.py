@@ -66,11 +66,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from backend.api.dependencies import get_knowledge_base_writer
+from backend.api.dependencies import get_knowledge_base_writer, get_rag_indexer
 from backend.core.security import require_ha_or_above
 from backend.db.models.projects import Project
 from backend.db.models.tasks import Epic, Feat, Task
 from backend.db.session import get_db
+from backend.rag.indexer import RAGIndexer
 from backend.schemas.feat import (
     FeatCreate,
     FeatRead,
@@ -253,6 +254,7 @@ def update_feat(
     payload: FeatUpdate,
     db: Session = Depends(get_db),
     kb_writer: KnowledgeBaseWriter = Depends(get_knowledge_base_writer),
+    indexer: RAGIndexer = Depends(get_rag_indexer),
 ) -> FeatRead:
     """Partially update a feat's mutable fields.
 
@@ -281,7 +283,7 @@ def update_feat(
         if ctx is not None and previous_status != "done" and feat.status == "done":
             _, project = ctx
             data = _build_feat_completion_data(db, feat)
-            svc = LiveDocumentService(project.slug, writer=kb_writer)
+            svc = LiveDocumentService(project.slug, writer=kb_writer, indexer=indexer)
             svc.append_phase_summary(data)
             svc.regenerate_status(db, project.id)
 

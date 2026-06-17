@@ -66,11 +66,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.api.dependencies import get_knowledge_base_writer
+from backend.api.dependencies import get_knowledge_base_writer, get_rag_indexer
 from backend.core.security import require_ha_or_above
 from backend.db.models.projects import Project
 from backend.db.models.tasks import Epic, Feat, Task
 from backend.db.session import get_db
+from backend.rag.indexer import RAGIndexer
 from backend.schemas.live_documents import TaskCompletionData
 from backend.schemas.pagination import PaginatedResponse
 from backend.schemas.task import (
@@ -253,6 +254,7 @@ def update_task(
     payload: TaskUpdate,
     db: Session = Depends(get_db),
     kb_writer: KnowledgeBaseWriter = Depends(get_knowledge_base_writer),
+    indexer: RAGIndexer = Depends(get_rag_indexer),
 ) -> TaskRead:
     """Partially update a task's mutable fields.
 
@@ -283,7 +285,7 @@ def update_task(
         if ctx is not None and previous_status != "done" and task.status == "done":
             _, feat, project = ctx
             data = _build_task_completion_data(task, feat)
-            svc = LiveDocumentService(project.slug, writer=kb_writer)
+            svc = LiveDocumentService(project.slug, writer=kb_writer, indexer=indexer)
             svc.append_history(data)
             svc.regenerate_status(db, project.id)
 

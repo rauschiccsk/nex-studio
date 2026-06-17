@@ -13,6 +13,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from backend.api.dependencies import get_rag_indexer
 from backend.api.routes.epics import router as epics_router
 from backend.api.routes.versions import router as versions_router
 from backend.core.security import get_current_user, require_ri_role
@@ -145,6 +146,9 @@ def integration_client(db_session, _seed_admin):
         yield db_session
 
     main_app.dependency_overrides[get_db] = _override_get_db
+    # Live-doc writes (e.g. project create) reindex into RAG; integration tests
+    # must not hit the real Qdrant/Ollama (reachable in this env) — no indexer.
+    main_app.dependency_overrides[get_rag_indexer] = lambda: None
 
     with TestClient(main_app, raise_server_exceptions=False) as c:
         yield c

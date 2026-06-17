@@ -31,10 +31,11 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
-from backend.api.dependencies import get_knowledge_base_writer
+from backend.api.dependencies import get_knowledge_base_writer, get_rag_indexer
 from backend.core.security import require_ha_or_above
 from backend.db.models.foundation import User
 from backend.db.session import get_db
+from backend.rag.indexer import RAGIndexer
 from backend.schemas.pagination import PaginatedResponse
 from backend.schemas.project import (
     GitHubRepoNotFoundError,
@@ -405,6 +406,7 @@ def create_project(
     payload: ProjectCreate,
     db: Session = Depends(get_db),
     kb_writer: KnowledgeBaseWriter = Depends(get_knowledge_base_writer),
+    indexer: RAGIndexer = Depends(get_rag_indexer),
 ) -> ProjectRead:
     """Create a new project.
 
@@ -478,7 +480,7 @@ def create_project(
 
     try:
         project = project_service.create(db, payload)
-        LiveDocumentService(project.slug, writer=kb_writer).init_live_documents(db, project.id)
+        LiveDocumentService(project.slug, writer=kb_writer, indexer=indexer).init_live_documents(db, project.id)
         # Auto-create initial version v0.1.0 (planned) per three-agent architecture.
         # Main CLAUDE.md §2: žiadna zmena dokumentu v docs/specs/ bez priradenia
         # ku konkrétnej verzii. Designer's Step 0 VERSION binding finds this

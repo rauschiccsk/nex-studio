@@ -13,6 +13,7 @@ Knowledge Base writer.
 from __future__ import annotations
 
 from backend.config.settings import settings
+from backend.rag.indexer import RAGIndexer
 from backend.services.knowledge_base_writer import KnowledgeBaseWriter
 
 
@@ -25,3 +26,15 @@ def get_knowledge_base_writer() -> KnowledgeBaseWriter:
     cross-test leakage).
     """
     return KnowledgeBaseWriter(settings.knowledge_base_path)
+
+
+def get_rag_indexer() -> RAGIndexer:
+    """Return a :class:`RAGIndexer` for live-document reindexing.
+
+    Mirrors :func:`get_knowledge_base_writer` — a fresh, un-cached instance per
+    request so tests can substitute a mock (or disable indexing entirely) via
+    ``app.dependency_overrides``. Wired into the live-document write endpoints
+    (project create, task / feat completion, module events) so a write to
+    ``STATUS.md`` / ``HISTORY.md`` keeps the RAG store in sync (CLAUDE.md §13).
+    """
+    return RAGIndexer()

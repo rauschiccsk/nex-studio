@@ -15,6 +15,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
+from backend.api.dependencies import get_rag_indexer
+
 # ``backend.db.base`` imports every ORM model — importing it here populates
 # ``Base.metadata`` with every table before ``create_all`` runs.
 from backend.db.base import Base
@@ -175,6 +177,10 @@ def client(db_session):
         yield db_session
 
     app.dependency_overrides[get_db] = _override_get_db
+    # Live-doc writes (project create / task / feat / module) reindex into RAG.
+    # Tests must never touch the real Qdrant/Ollama (reachable in this env) —
+    # disable indexing by returning no indexer.
+    app.dependency_overrides[get_rag_indexer] = lambda: None
 
     with TestClient(app) as test_client:
         yield test_client

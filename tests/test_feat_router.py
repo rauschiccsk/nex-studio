@@ -32,7 +32,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from backend.api.dependencies import get_knowledge_base_writer
+from backend.api.dependencies import get_knowledge_base_writer, get_rag_indexer
 from backend.api.routes.feats import router as feats_router
 from backend.db.models.foundation import User
 from backend.db.models.projects import Project
@@ -103,6 +103,9 @@ def router_client(db_session, tmp_path):
     app.dependency_overrides[_rshu_m2] = _override_user_m2
 
     app.dependency_overrides[get_knowledge_base_writer] = _override_kb_writer
+    # Live-doc writes reindex into RAG; tests must not hit the real Qdrant/Ollama
+    # (reachable in this env) — disable indexing by returning no indexer.
+    app.dependency_overrides[get_rag_indexer] = lambda: None
 
     with TestClient(app) as client:
         yield client

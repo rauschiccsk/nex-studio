@@ -855,3 +855,137 @@ def test_init_live_documents_overwrites_existing_files(db_session: Any, tmp_path
 
     assert "stale content" not in writer.read("redo", "STATUS.md")
     assert writer.read("redo", "HISTORY.md") == "# redo — History\n\n"
+
+
+# ── RAG reindex on live-document writes (v0.7.1 P2) ──────────────────
+
+
+class _RecordingIndexer:
+    """Stand-in for :class:`backend.rag.indexer.RAGIndexer`.
+
+    Records every ``index_document`` call so tests can assert a reindex fired
+    after each live-document write. The method is ``async`` because
+    ``LiveDocumentService._reindex`` drives it via ``asyncio.run``.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def index_document(self, *, file_path: str, tenant: str, content: str) -> dict:
+        self.calls.append({"file_path": file_path, "tenant": tenant, "content": content})
+        return {"source_file": file_path, "chunks": 1, "tenant": tenant}
+
+
+class _FailingIndexer:
+    """Indexer whose ``index_document`` always raises (Qdrant/Ollama down)."""
+
+    def __init__(self) -> None:
+        self.called = False
+
+    async def index_document(self, *, file_path: str, tenant: str, content: str) -> dict:
+        self.called = True
+        raise RuntimeError("qdrant unreachable")
+
+
+def test_regenerate_status_reindexes(db_session: Any, tmp_path: Path) -> None:
+    project = _make_project(db_session, name="App", slug="app")
+    writer = KnowledgeBaseWriter(tmp_path)
+    indexer = _RecordingIndexer()
+    svc = LiveDocumentService("app", writer=writer, indexer=indexer)
+
+    svc.regenerate_status(db_session, project.id)
+
+    assert len(indexer.calls) == 1
+    call = indexer.calls[0]
+    assert call["file_path"] == "projects/app/STATUS.md"
+    assert call["tenant"] == "icc"
+    # Content is the freshly-written STATUS.md (read back from disk).
+    assert "# App — Status" in call["content"]
+
+
+def test_append_history_reindexes(tmp_path: Path) -> None:
+    writer = KnowledgeBaseWriter(tmp_path)
+    indexer = _RecordingIndexer()
+    svc = LiveDocumentService("app", writer=writer, indexer=indexer)
+
+    svc.append_history(_task())
+
+    assert len(indexer.calls) == 1
+    call = indexer.calls[0]
+    assert call["file_path"] == "projects/app/HISTORY.md"
+    assert call["tenant"] == "icc"
+    # Whole file is reindexed, not just the appended entry.
+    assert "# app — History" in call["content"]
+    assert "Task 1.2" in call["content"]
+
+
+def test_init_live_documents_reindexes_both_files(db_session: Any, tmp_path: Path) -> None:
+    """Project create seeds STATUS.md + HISTORY.md — each must reindex."""
+    project = _make_project(db_session, slug="seeded")
+    writer = KnowledgeBaseWriter(tmp_path)
+    indexer = _RecordingIndexer()
+    svc = LiveDocumentService("seeded", writer=writer, indexer=indexer)
+
+    svc.init_live_documents(db_session, project.id)
+
+    reindexed = {c["file_path"] for c in indexer.calls}
+    assert reindexed == {"projects/seeded/STATUS.md", "projects/seeded/HISTORY.md"}
+    assert all(c["tenant"] == "icc" for c in indexer.calls)
+
+
+def test_append_module_event_reindexes(tmp_path: Path) -> None:
+    writer = KnowledgeBaseWriter(tmp_path)
+    indexer = _RecordingIndexer()
+    svc = LiveDocumentService("app", writer=writer, indexer=indexer)
+
+    svc.append_module_event(_module_event())
+
+    assert [c["file_path"] for c in indexer.calls] == ["projects/app/HISTORY.md"]
+
+
+def test_append_phase_summary_reindexes(tmp_path: Path) -> None:
+    writer = KnowledgeBaseWriter(tmp_path)
+    indexer = _RecordingIndexer()
+    svc = LiveDocumentService("app", writer=writer, indexer=indexer)
+
+    svc.append_phase_summary(_feat())
+
+    assert [c["file_path"] for c in indexer.calls] == ["projects/app/HISTORY.md"]
+
+
+def test_no_indexer_means_no_reindex(db_session: Any, tmp_path: Path) -> None:
+    """Without an indexer the write persists with zero reindex attempts."""
+    project = _make_project(db_session, slug="noidx")
+    writer = KnowledgeBaseWriter(tmp_path)
+    svc = LiveDocumentService("noidx", writer=writer)  # indexer=None
+
+    # Must not raise and must still write the file.
+    svc.regenerate_status(db_session, project.id)
+    assert writer.exists("noidx", "STATUS.md")
+
+
+def test_reindex_failure_is_logged_and_does_not_fail_write(db_session: Any, tmp_path: Path, caplog: Any) -> None:
+    """A RAG error logs a warning and does NOT propagate (mirrors /knowledge)."""
+    import logging
+
+    project = _make_project(db_session, slug="ragdown")
+    writer = KnowledgeBaseWriter(tmp_path)
+    indexer = _FailingIndexer()
+    svc = LiveDocumentService("ragdown", writer=writer, indexer=indexer)
+
+    # ``backend`` logger has propagate=False (set in backend/main.py) — re-enable
+    # so caplog's root handler sees the warning emitted under backend.services.*.
+    backend_logger = logging.getLogger("backend")
+    prev_propagate = backend_logger.propagate
+    backend_logger.propagate = True
+    try:
+        with caplog.at_level(logging.WARNING, logger="backend.services.live_documents"):
+            # Must NOT raise even though the indexer blows up.
+            svc.regenerate_status(db_session, project.id)
+    finally:
+        backend_logger.propagate = prev_propagate
+
+    # Reindex was attempted, the write still landed, and the failure was logged.
+    assert indexer.called is True
+    assert writer.exists("ragdown", "STATUS.md")
+    assert any("RAG reindex failed" in r.getMessage() for r in caplog.records)

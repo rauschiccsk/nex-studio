@@ -27,7 +27,10 @@ artefacts but receive no new writes from this service.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy import select
@@ -43,6 +46,16 @@ from backend.schemas.live_documents import (
 )
 from backend.services.knowledge_base_writer import KnowledgeBaseWriter
 
+if TYPE_CHECKING:
+    from backend.rag.indexer import RAGIndexer
+
+logger = logging.getLogger(__name__)
+
+#: Qdrant tenant collection the per-project KB lives in. The live documents are
+#: written under ``{knowledge_base_path}/projects/{slug}/`` (the ``/home/icc/knowledge``
+#: tree) → the ``icc`` collection, matching the ``/knowledge`` routes' default tenant.
+_KB_TENANT = "icc"
+
 
 class LiveDocumentService:
     """Per-project façade over the markdown generators and the KB writer.
@@ -53,15 +66,25 @@ class LiveDocumentService:
     testing generators in isolation. With a writer, the
     ``append_history`` / ``append_phase_summary`` methods persist
     the generated entry under ``projects/{slug}/{FILE}.md``.
+
+    An optional :class:`RAGIndexer` (``indexer``) keeps the RAG vector store in
+    sync: every persisted ``STATUS.md`` / ``HISTORY.md`` write triggers a
+    reindex of that file (CLAUDE.md §13 — "žiadna KB zmena bez následného
+    reindexu"). Like ``writer`` it is optional — without it, writes persist to
+    disk only (the pre-existing behaviour, used by pure-generation tests and any
+    call site that does not wire RAG). A reindex failure is logged and swallowed
+    so it never fails the write path (mirrors the ``/knowledge`` routes).
     """
 
     def __init__(
         self,
         project_slug: str,
         writer: KnowledgeBaseWriter | None = None,
+        indexer: "RAGIndexer | None" = None,
     ) -> None:
         self._slug = project_slug
         self._writer = writer
+        self._indexer = indexer
 
     # ── generators ────────────────────────────────────────────────────
 
@@ -283,6 +306,7 @@ class LiveDocumentService:
             entry,
             header_if_new=self._history_header(),
         )
+        self._reindex("HISTORY.md")
 
     def regenerate_status(self, db: Session, project_id: UUID) -> None:
         """Rebuild ``STATUS.md`` from the DB and overwrite it in the KB.
@@ -295,6 +319,7 @@ class LiveDocumentService:
             return
         content = self.generate_status_md(db, project_id)
         self._writer.save(self._slug, "STATUS.md", content)
+        self._reindex("STATUS.md")
 
     def init_live_documents(self, db: Session, project_id: UUID) -> None:
         """Seed the two live documents for a freshly created project.
@@ -320,7 +345,9 @@ class LiveDocumentService:
             )
         status_md = self.generate_status_md(db, project_id)
         self._writer.save(self._slug, "STATUS.md", status_md)
+        self._reindex("STATUS.md")
         self._writer.save(self._slug, "HISTORY.md", self._history_header())
+        self._reindex("HISTORY.md")
 
     def append_module_event(self, data: ModuleEventData) -> None:
         """Persist a module-lifecycle entry to ``HISTORY.md``.
@@ -336,6 +363,7 @@ class LiveDocumentService:
             entry,
             header_if_new=self._history_header(),
         )
+        self._reindex("HISTORY.md")
 
     def append_phase_summary(self, data: FeatCompletionData) -> None:
         """Append the feat-completion summary entry to ``HISTORY.md``.
@@ -351,6 +379,47 @@ class LiveDocumentService:
             entry,
             header_if_new=self._history_header(),
         )
+        self._reindex("HISTORY.md")
+
+    # ── RAG reindex ───────────────────────────────────────────────────
+
+    def _reindex(self, filename: str) -> None:
+        """Reindex a just-written live document into the RAG store.
+
+        DRY hook called after every ``STATUS.md`` / ``HISTORY.md`` persist so
+        Qdrant tracks the live KB files the same way the ``/knowledge`` routes
+        do. Re-reads the current file content (an ``append`` writes only the new
+        entry, but the whole document must be reindexed) and upserts it under the
+        KB-relative ``projects/{slug}/{filename}`` source id in the ``icc``
+        tenant — identical addressing to a ``/knowledge`` write of the same file.
+
+        No-op without an ``indexer`` (or ``writer``). **Graceful on failure**:
+        any error (re-read or Qdrant/Ollama) is logged and swallowed so the
+        reindex never fails the live-document write (mirrors ``knowledge.py``).
+
+        The enclosing persistence methods run in synchronous request handlers
+        (FastAPI runs ``def`` endpoints in a worker thread with no running event
+        loop), so ``asyncio.run`` safely drives the async indexer to completion.
+        """
+        if self._indexer is None or self._writer is None:
+            return
+        source_file = f"projects/{self._slug}/{filename}"
+        try:
+            content = self._writer.read(self._slug, filename)
+            asyncio.run(
+                self._indexer.index_document(
+                    file_path=source_file,
+                    tenant=_KB_TENANT,
+                    content=content,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 — reindex must never fail the write path
+            logger.warning(
+                "RAG reindex failed for %s (tenant=%s): %s — live document saved, index may be stale",
+                source_file,
+                _KB_TENANT,
+                exc,
+            )
 
     # ── headers ───────────────────────────────────────────────────────
 

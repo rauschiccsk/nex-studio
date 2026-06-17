@@ -51,10 +51,11 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
-from backend.api.dependencies import get_knowledge_base_writer
+from backend.api.dependencies import get_knowledge_base_writer, get_rag_indexer
 from backend.core.security import require_ha_or_above
 from backend.db.models.projects import Project
 from backend.db.session import get_db
+from backend.rag.indexer import RAGIndexer
 from backend.schemas.live_documents import ModuleEventData
 from backend.schemas.pagination import PaginatedResponse
 from backend.schemas.project_module import (
@@ -164,6 +165,7 @@ def create_project_module(
     payload: ProjectModuleCreate,
     db: Session = Depends(get_db),
     kb_writer: KnowledgeBaseWriter = Depends(get_knowledge_base_writer),
+    indexer: RAGIndexer = Depends(get_rag_indexer),
 ) -> ProjectModuleRead:
     """Create a new project module.
 
@@ -181,7 +183,7 @@ def create_project_module(
         module = project_module_service.create(db, payload)
         slug = _project_slug(db, module.project_id)
         if slug is not None:
-            svc = LiveDocumentService(slug, writer=kb_writer)
+            svc = LiveDocumentService(slug, writer=kb_writer, indexer=indexer)
             svc.append_module_event(
                 ModuleEventData(
                     event_type="created",
@@ -211,6 +213,7 @@ def update_project_module(
     payload: ProjectModuleUpdate,
     db: Session = Depends(get_db),
     kb_writer: KnowledgeBaseWriter = Depends(get_knowledge_base_writer),
+    indexer: RAGIndexer = Depends(get_rag_indexer),
 ) -> ProjectModuleRead:
     """Partially update a project module's mutable fields.
 
@@ -238,7 +241,7 @@ def update_project_module(
 
         slug = _project_slug(db, module.project_id)
         if slug is not None:
-            svc = LiveDocumentService(slug, writer=kb_writer)
+            svc = LiveDocumentService(slug, writer=kb_writer, indexer=indexer)
             if module.status != previous_status:
                 svc.append_module_event(
                     ModuleEventData(
@@ -275,6 +278,7 @@ def delete_project_module(
     module_id: UUID,
     db: Session = Depends(get_db),
     kb_writer: KnowledgeBaseWriter = Depends(get_knowledge_base_writer),
+    indexer: RAGIndexer = Depends(get_rag_indexer),
 ) -> Response:
     """Hard-delete a project module by primary key.
 
@@ -306,7 +310,7 @@ def delete_project_module(
 
         slug = _project_slug(db, project_id)
         if slug is not None:
-            svc = LiveDocumentService(slug, writer=kb_writer)
+            svc = LiveDocumentService(slug, writer=kb_writer, indexer=indexer)
             svc.append_module_event(
                 ModuleEventData(
                     event_type="deleted",
