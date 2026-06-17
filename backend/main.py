@@ -13,7 +13,6 @@ from backend.api.routes.auth import router as auth_router
 from backend.api.routes.backlog import router as backlog_router
 from backend.api.routes.bugs import router as bugs_router
 from backend.api.routes.credentials import router as credentials_router
-from backend.api.routes.dialogue import router as dialogue_router
 from backend.api.routes.epics import router as epics_router
 from backend.api.routes.feats import router as feats_router
 from backend.api.routes.health import health_check as _health_check_handler
@@ -36,7 +35,6 @@ from backend.api.routes.versions import router as versions_router
 from backend.config.settings import settings
 from backend.db.session import SessionLocal
 from backend.services import agent_terminal as agent_terminal_service
-from backend.services import dialogue as dialogue_service
 from backend.services import orchestrator as orchestrator_service
 
 # Route application loggers at INFO to stderr so ``docker logs`` surfaces
@@ -156,7 +154,6 @@ async def lifespan(app: FastAPI):
     db = SessionLocal()
     try:
         agent_terminal_service.mark_orphaned_on_startup(db)
-        dialogue_service.mark_orphaned_on_startup(db)
         # F-007 §7.3 / CR-NS-021: a backend restart kills the build loop's background dispatch,
         # stranding the pipeline at build/agent_working. Flip such builds to awaiting_director so
         # the Director can resume via "Pokračovať v builde" (the loop then reclaims the in_progress task).
@@ -235,7 +232,6 @@ app.include_router(uploads_router, prefix="/api/v1")
 app.include_router(system_settings_router, prefix="/api/v1/system-settings")
 app.include_router(user_agent_settings_router, prefix="/api/v1/user-agent-settings")
 app.include_router(agent_terminal_router, prefix="/api/v1/agent-terminal")
-app.include_router(dialogue_router, prefix="/api/v1/dialogue")
 app.include_router(pipeline_router, prefix="/api/v1/pipeline")
 
 
