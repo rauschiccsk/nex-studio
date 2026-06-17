@@ -53,10 +53,12 @@ from backend.services import feat as feat_service
 from backend.services import task as task_service
 from backend.services.claude_agent import ClaudeAgentError, invoke_claude
 from backend.services.pipeline_status import (
+    PIPELINE_STATUS_JSON_SCHEMA,
     CoordinatorDirective,
     ParseFailure,
     PipelineStatusBlock,
     parse_status_block,
+    parse_structured_output,
 )
 
 logger = logging.getLogger(__name__)
@@ -109,16 +111,22 @@ class _DispatchMetrics:
 
 
 def _split_claude_result(
-    result: "tuple[str, Optional[claude_agent.UsageMetadata]] | str",
-) -> "tuple[str, Optional[claude_agent.UsageMetadata]]":
-    """Normalise :func:`invoke_claude`'s return to ``(text, usage)``.
+    result: "tuple | str",
+) -> "tuple[str, Optional[claude_agent.UsageMetadata], Optional[dict]]":
+    """Normalise :func:`invoke_claude`'s return to ``(text, usage, structured_output)``.
 
-    Since WS-D (CR-NS-036) ``invoke_claude`` returns ``(text, usage)``, but unit-test doubles that
-    monkeypatch ``orchestrator.invoke_claude`` still return a bare ``str`` — tolerate both so the
-    engine works under test without forcing every fake to mint usage."""
+    Since R3 (v0.7.0) ``invoke_claude`` returns the 3-tuple ``(text, usage, structured_output)``
+    (was ``(text, usage)`` at WS-D, CR-NS-036). Unit-test doubles that monkeypatch
+    ``orchestrator.invoke_claude`` may still return a bare ``str`` or a 2-tuple — tolerate every
+    arity (missing elements default to ``None``) so the engine works under test without forcing every
+    fake to mint usage / structured output. ``structured_output`` is ``None`` for a test double that
+    doesn't model it; the fence fallback then parses the result text exactly as today."""
     if isinstance(result, tuple):
-        return result[0], result[1]
-    return result, None
+        text = result[0]
+        usage = result[1] if len(result) > 1 else None
+        structured = result[2] if len(result) > 2 else None
+        return text, usage, structured
+    return result, None, None
 
 
 def _failure_metrics_payload(result: object) -> dict[str, Any]:
@@ -453,11 +461,11 @@ def _directive_for(stage: str, flow_type: str = "new_version") -> str:
             "schéma/dependency zmena) → ZASTAV: nepokračuj, nastav kind=blocked a pripoj štruktúrovaný "
             "`coordinator_directive` (triage_class=director_decision, proposed_action="
             "convert_to_full_version, rationale=prečo) navrhujúci konverziu na plnú verziu/pipeline.\n"
-            "Ukonči odpoveď strojovým <<<PIPELINE_STATUS>>> blokom (F-007 §7.2)."
+            "Ukonči odpoveď štruktúrovaným stavovým výstupom (F-007 §7.2)."
         )
     base = (
         f"Pokračuj fázou '{stage}' podľa autoritatívneho spec balíka a svojho charteru. "
-        "Ukonči odpoveď strojovým <<<PIPELINE_STATUS>>> blokom (F-007 §7.2)."
+        "Ukonči odpoveď štruktúrovaným stavovým výstupom (F-007 §7.2)."
     )
     if stage == "task_plan":
         # E5 (CR-NS-045): the per-task human-effort estimate is the metrics page's human-baseline source.
@@ -975,7 +983,7 @@ async def invoke_agent(
     turn_metrics = metrics if metrics is not None else _DispatchMetrics()
     _started = perf_counter()
     try:
-        text, usage = _split_claude_result(
+        text, usage, structured_output = _split_claude_result(
             await invoke_claude(
                 project_slug=slug,
                 claude_session_id=session_id,
@@ -985,6 +993,9 @@ async def invoke_agent(
                 on_event=tagged_on_event,
                 model=model_override,
                 effort=effort_override,
+                # R3 (v0.7.0): grammar-constrain the agent's status block to the schema so a malformed
+                # block is impossible at the source; the validated object lands in structured_output.
+                json_schema=PIPELINE_STATUS_JSON_SCHEMA,
             )
         )
     except ClaudeAgentError as exc:
@@ -1018,7 +1029,17 @@ async def invoke_agent(
     turn_metrics.record(usage, perf_counter() - _started)
     stdout = text
 
-    parsed = parse_status_block(stdout)
+    # R3 (v0.7.0): the grammar-constrained structured_output is PRIMARY. When the agent produced one,
+    # validate it through the same content contract; on its ParseFailure (a schema the model couldn't
+    # satisfy) OR when none was produced (no schema / older CLI), fall back to the fence parse of the
+    # result text (D2 defense-in-depth). The fence path stays byte-for-byte as the rollout-safe net.
+    parsed: ParseFailure | PipelineStatusBlock
+    if structured_output is not None:
+        parsed = parse_structured_output(structured_output)
+        if isinstance(parsed, ParseFailure):
+            parsed = parse_status_block(stdout)
+    else:
+        parsed = parse_status_block(stdout)
     if isinstance(parsed, ParseFailure):
         # WS-D (CR-NS-036): carry this turn's accumulated metrics on the ParseFailure so a terminal
         # escalation (which records the only message for this no-message turn) can fold them in.
@@ -1139,12 +1160,12 @@ async def invoke_agent_with_parse_retry(
             version_id=version_id,
             role=role,
             stage=stage,
+            # R3 (v0.7.0): transport-agnostic — the status block may arrive as grammar-constrained
+            # structured_output (--json-schema) OR the <<<PIPELINE_STATUS>>> fence fallback, so the
+            # re-prompt names neither; it cites the validation reason and asks for a conforming object.
             prompt=(
-                f"Tvoj <<<PIPELINE_STATUS>>> blok sa nepodarilo spracovať: {result.reason}. "
-                "Najčastejšia príčina je neescapovaná úvodzovka v textovom poli (summary/question/findings) — "
-                "v JSON reťazcoch píš slovenské úvodzovky kučeravé (znaky „ a “) alebo ich escapuj spätným lomítkom; "
-                "rovná úvodzovka (U+0022) v texte predčasne ukončí reťazec a rozbije celý blok. "
-                "Pošli LEN opravený, platný <<<PIPELINE_STATUS>>> blok — rovnaký obsah, správna JSON syntax aj schéma."
+                f"Tvoj štruktúrovaný stavový výstup sa nepodarilo spracovať: {result.reason}. "
+                "Pošli LEN platný stavový objekt podľa schémy (F-007 §7.2) — rovnaký obsah, správne polia a hodnoty."
             ),
             recipient=recipient,
             on_message=on_message,

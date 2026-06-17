@@ -29,6 +29,13 @@ def _block(stage="gate_a", kind="gate_report", summary="ok", awaiting="director"
     return f"<<<PIPELINE_STATUS>>>\n{json.dumps(body)}\n<<<END_PIPELINE_STATUS>>>"
 
 
+def _block_dict(stage="gate_a", kind="gate_report", summary="ok", awaiting="director", **extra) -> dict:
+    """The status block as a plain dict — the shape claude returns in ``structured_output`` (R3)."""
+    body = {"stage": stage, "kind": kind, "summary": summary, "awaiting": awaiting}
+    body.update(extra)
+    return body
+
+
 def _make_version(db_session):
     user = User(
         username=f"u_{uuid.uuid4().hex[:8]}",
@@ -71,6 +78,7 @@ class FakeClaude:
         on_event=None,
         model=None,
         effort=None,
+        json_schema=None,
     ):
         self.calls.append(
             {
@@ -79,6 +87,7 @@ class FakeClaude:
                 "prompt": prompt,
                 "model": model,
                 "effort": effort,
+                "json_schema": json_schema,
             }
         )
         # ``response`` may be a callable(prompt)->str so a single fake can answer different roles
@@ -163,6 +172,72 @@ async def test_invoke_agent_parse_failure_is_silent(db_session, fake_claude):
     )
     assert isinstance(result, ParseFailure)
     assert _msgs(db_session, version.id) == []  # no raw escalation leaked to the Director
+
+
+# ── R3 (v0.7.0): native structured output preferred; fence is the fallback ──────
+
+
+async def test_invoke_agent_prefers_structured_output(db_session, fake_claude):
+    """R3 D1/D2: when claude returns a grammar-constrained ``structured_output`` object, the engine
+    validates + records IT — no fence in the result text is needed."""
+    version, _ = _make_version(db_session)
+    # The result text carries NO fence — only the structured_output object does.
+    fake_claude.response = (
+        "no fence here — just prose",
+        None,
+        _block_dict(stage="gate_b", kind="gate_report", summary="from structured", commits=["s1"]),
+    )
+    result = await orchestrator.invoke_agent(
+        db_session, version_id=version.id, role="designer", stage="gate_b", prompt="go"
+    )
+    assert isinstance(result, PipelineStatusBlock)
+    assert result.summary == "from structured"
+    msgs = _msgs(db_session, version.id)
+    assert len(msgs) == 1
+    assert msgs[0].content == "from structured"
+    assert msgs[0].payload["commits"] == ["s1"]
+
+
+async def test_invoke_agent_structured_invalid_falls_back_to_fence(db_session, fake_claude):
+    """R3 D2: a structured_output that fails the content contract degrades to the fence parse of the
+    result text — non-breaking + rollout-safe (the fence parser STAYS as the fallback)."""
+    version, _ = _make_version(db_session)
+    fake_claude.response = (
+        _block(stage="gate_b", kind="gate_report", summary="from fence"),  # valid fence in the text
+        None,
+        _block_dict(stage="not_a_real_stage", summary="bogus"),  # structured fails (unknown stage)
+    )
+    result = await orchestrator.invoke_agent(
+        db_session, version_id=version.id, role="designer", stage="gate_b", prompt="go"
+    )
+    assert isinstance(result, PipelineStatusBlock)
+    assert result.summary == "from fence"  # fence fallback won
+
+
+async def test_invoke_agent_structured_invalid_no_fence_is_parsefailure(db_session, fake_claude):
+    """R3 D2/D3: structured_output invalid AND no fence in the text → the SAME silent ParseFailure the
+    fence path returns, which the dispatch layer feeds to the bounded parse-retry → escalation."""
+    version, _ = _make_version(db_session)
+    fake_claude.response = (
+        "prose with no fence",
+        None,
+        _block_dict(stage="bogus_stage"),  # structured invalid; nothing to fall back to
+    )
+    result = await orchestrator.invoke_agent(
+        db_session, version_id=version.id, role="designer", stage="gate_a", prompt="go"
+    )
+    assert isinstance(result, ParseFailure)
+    assert _msgs(db_session, version.id) == []  # silent (no Director leak), like the fence path
+
+
+async def test_invoke_agent_passes_status_schema_to_claude(db_session, fake_claude):
+    """R3: the engine always invokes the agent with the PipelineStatusBlock JSON Schema (Gate E is the
+    only no-schema path — that's dialogue.py, not invoke_agent)."""
+    version, _ = _make_version(db_session)
+    fake_claude.response = _block(stage="gate_b", kind="gate_report", summary="ok")
+    await orchestrator.invoke_agent(db_session, version_id=version.id, role="designer", stage="gate_b", prompt="go")
+    assert fake_claude.calls  # the fake captured the call
+    assert fake_claude.calls[-1]["json_schema"] == orchestrator.PIPELINE_STATUS_JSON_SCHEMA
 
 
 # ── WS-D metrics: usage + timing capture (CR-NS-036) ────────────────────────────

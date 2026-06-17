@@ -246,26 +246,22 @@ def _format_validation_errors(exc: ValidationError) -> str:
     return "; ".join(entries)
 
 
-def parse_status_block(stdout: str) -> ParseResult:
-    """Parse the single PIPELINE_STATUS block from an agent's stdout.
+#: JSON Schema for the agent status block (R3, v0.7.0). Derived from the Pydantic model — the model
+#: IS the schema (single source, no hand-written drift). Passed to ``claude --json-schema`` so the
+#: runtime grammar-constrains the agent's output to a conforming object (returned in the envelope's
+#: ``structured_output`` field), making a malformed block impossible at the source. The imperative
+#: enum/cross-field checks below (STAGES / BLOCK_KINDS / question-required / task_plan-plan) are NOT
+#: expressible as the model's plain ``str`` fields, so :func:`_validate_block` still enforces them on
+#: BOTH transports — the schema is the first line of defense, not the only one.
+PIPELINE_STATUS_JSON_SCHEMA = PipelineStatusBlock.model_json_schema()
 
-    Returns the validated :class:`PipelineStatusBlock` or a
-    :class:`ParseFailure` describing why parsing failed. Never raises, never
-    infers missing data.
-    """
-    matches = _FENCE_RE.findall(stdout or "")
-    if not matches:
-        return ParseFailure("no PIPELINE_STATUS block found")
-    if len(matches) > 1:
-        return ParseFailure(f"expected exactly one PIPELINE_STATUS block, found {len(matches)}")
 
-    try:
-        data = json.loads(matches[0])
-    except ValueError as exc:
-        return ParseFailure(f"status block is not valid JSON: {exc}")
-    if not isinstance(data, dict):
-        return ParseFailure("status block JSON is not an object")
-
+def _validate_block(data: dict) -> ParseResult:
+    """Validate a status-block dict through :class:`PipelineStatusBlock` + the imperative
+    enum/cross-field rules. The SINGLE validation path shared by the fence transport
+    (:func:`parse_status_block`) and the structured-output transport (:func:`parse_structured_output`)
+    so both enforce IDENTICAL content rules (R3 D1: the content contract is transport-agnostic).
+    Returns the validated block or a :class:`ParseFailure`; never raises, never infers."""
     try:
         block = PipelineStatusBlock.model_validate(data)
     except ValidationError as exc:
@@ -288,3 +284,41 @@ def parse_status_block(stdout: str) -> ParseResult:
         return ParseFailure("task_plan gate_report requires a non-empty 'plan' (EPIC→FEAT→TASK)")
 
     return block
+
+
+def parse_status_block(stdout: str) -> ParseResult:
+    """Parse the single PIPELINE_STATUS block from an agent's stdout (the fence transport).
+
+    R3 (v0.7.0): this is the **fallback** — the orchestrator prefers the grammar-constrained
+    ``structured_output`` (:func:`parse_structured_output`) and only parses the fence when no
+    structured output was produced (older CLI / no schema) or it failed validation (D2
+    defense-in-depth). Returns the validated :class:`PipelineStatusBlock` or a :class:`ParseFailure`
+    describing why parsing failed. Never raises, never infers missing data.
+    """
+    matches = _FENCE_RE.findall(stdout or "")
+    if not matches:
+        return ParseFailure("no PIPELINE_STATUS block found")
+    if len(matches) > 1:
+        return ParseFailure(f"expected exactly one PIPELINE_STATUS block, found {len(matches)}")
+
+    try:
+        data = json.loads(matches[0])
+    except ValueError as exc:
+        return ParseFailure(f"status block is not valid JSON: {exc}")
+    if not isinstance(data, dict):
+        return ParseFailure("status block JSON is not an object")
+
+    return _validate_block(data)
+
+
+def parse_structured_output(obj: dict) -> ParseResult:
+    """Validate a grammar-constrained ``structured_output`` object (R3, v0.7.0 — the PRIMARY transport).
+
+    The agent was invoked with ``--json-schema`` (:data:`PIPELINE_STATUS_JSON_SCHEMA`), so the runtime
+    already forced the shape; here we run the SAME :func:`_validate_block` the fence path runs (reusing
+    every validator + the enum/cross-field rules), returning a :class:`ParseFailure` on any violation
+    exactly like the fence path — so a schema the model couldn't satisfy degrades to the fence
+    fallback + the parse-retry, never a silent loss. Never raises, never infers missing data."""
+    if not isinstance(obj, dict):
+        return ParseFailure("structured_output is not an object")
+    return _validate_block(obj)

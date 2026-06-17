@@ -210,9 +210,10 @@ async def _invoke_agent(
     # preserves the Gate E error surface. Behaviour is identical to the
     # original inline implementation.
     try:
-        # invoke_claude returns (text, usage) since WS-D (CR-NS-036); Gate E doesn't track
-        # token metrics, so drop the usage and preserve the original text-only contract.
-        text, _usage = await invoke_claude(
+        # invoke_claude returns (text, usage, structured_output) since R3 (v0.7.0); Gate E is
+        # free-text — it passes NO json_schema, so structured_output is None — and doesn't track
+        # token metrics, so drop both and preserve the original text-only contract.
+        text, _usage, _structured = await invoke_claude(
             project_slug=project_slug,
             claude_session_id=claude_session_id,
             prompt=prompt,

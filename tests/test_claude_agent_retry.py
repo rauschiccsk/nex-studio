@@ -24,8 +24,9 @@ def no_sleep(monkeypatch):
 def _fake_once(monkeypatch, outcomes):
     """Patch _invoke_once to yield `outcomes` in order (last repeats); count calls.
 
-    Each outcome is ("raise", message) or ("ok", text). _invoke_once returns ``(text, usage)`` since
-    WS-D (CR-NS-036), so the "ok" stand-in mirrors that — usage None (retry logic doesn't touch it)."""
+    Each outcome is ("raise", message) or ("ok", text). _invoke_once returns ``(text, usage,
+    structured_output)`` since R3 (v0.7.0), so the "ok" stand-in mirrors that — usage + structured
+    None (the retry logic touches neither)."""
     calls = {"n": 0}
 
     async def _once(**kwargs):
@@ -34,7 +35,7 @@ def _fake_once(monkeypatch, outcomes):
         kind, value = outcomes[idx]
         if kind == "raise":
             raise ClaudeAgentError(value)
-        return (value, None)
+        return (value, None, None)
 
     monkeypatch.setattr(claude_agent, "_invoke_once", _once)
     return calls

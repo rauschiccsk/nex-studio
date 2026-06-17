@@ -83,6 +83,17 @@ def _usage_from(envelope: dict) -> Optional[UsageMetadata]:
     )
 
 
+def _structured_from(envelope: dict) -> Optional[dict]:
+    """Extract the grammar-constrained ``structured_output`` object from a claude json / stream-json
+    ``result`` envelope (R3, v0.7.0). The ``claude`` CLI sets this field only when invoked with
+    ``--json-schema`` — the model's output is forced to conform, so a malformed status block is
+    impossible at the source. Returns ``None`` when absent or not an object (no schema passed, or an
+    older CLI) — never fabricated; the caller falls back to parsing the ``<<<PIPELINE_STATUS>>>`` fence
+    out of the ``result`` text (D2 defense-in-depth)."""
+    obj = envelope.get("structured_output")
+    return obj if isinstance(obj, dict) else None
+
+
 async def invoke_claude(
     *,
     project_slug: str,
@@ -93,11 +104,19 @@ async def invoke_claude(
     on_event: Optional[EventCallback] = None,
     model: Optional[str] = None,
     effort: Optional[str] = None,
-) -> tuple[str, Optional["UsageMetadata"]]:
+    json_schema: Optional[dict] = None,
+) -> tuple[str, Optional["UsageMetadata"], Optional[dict]]:
     """Invoke ``claude -p`` with bounded transient-error retry (CR-NS-018 robustness).
 
-    Returns ``(text, usage)`` (WS-D, CR-NS-036): the result text + token usage from the json /
-    stream-json envelope (``usage`` is ``None`` when the envelope carries none).
+    Returns ``(text, usage, structured_output)`` (WS-D, CR-NS-036; R3, v0.7.0): the result text +
+    token usage + the grammar-constrained structured object from the json / stream-json envelope.
+    ``usage`` is ``None`` when the envelope carries none; ``structured_output`` is ``None`` when no
+    ``json_schema`` was passed (e.g. Gate E) or the CLI emitted none (D2 fence fallback applies).
+
+    ``json_schema`` (R3): when given, the agent is invoked with ``--json-schema`` so the runtime
+    grammar-constrains its output to the schema and returns the validated object in the envelope's
+    ``structured_output`` field — making a malformed status block impossible at the source. Unset →
+    today's behavior (no flag, ``structured_output`` ``None``).
 
     Delegates to :func:`_invoke_once`; on a **transient** ``ClaudeAgentError``
     (529 / overloaded / 429 / rate limit in stderr) retries with bounded backoff
@@ -118,6 +137,7 @@ async def invoke_claude(
                 on_event=on_event,
                 model=model,
                 effort=effort,
+                json_schema=json_schema,
             )
         except ClaudeAgentError as exc:
             if attempt < len(_TRANSIENT_BACKOFF) and _TRANSIENT_RE.search(str(exc)):
@@ -145,7 +165,8 @@ async def _invoke_once(
     on_event: Optional[EventCallback] = None,
     model: Optional[str] = None,
     effort: Optional[str] = None,
-) -> tuple[str, Optional["UsageMetadata"]]:
+    json_schema: Optional[dict] = None,
+) -> tuple[str, Optional["UsageMetadata"], Optional[dict]]:
     """One ``claude -p`` subprocess invocation (no retry — see :func:`invoke_claude`).
 
     Args:
@@ -167,10 +188,16 @@ async def _invoke_once(
             path returned, so downstream status-block parsing is unaffected.
         model: optional ``--model <id>`` (CR-NS-040); ``None`` → no flag (CLI default).
         effort: optional ``--effort <level>`` (CR-NS-040); ``None`` → no flag (CLI default).
+        json_schema: optional ``--json-schema <schema>`` (R3, v0.7.0). When given, the runtime
+            grammar-constrains the agent's output to this JSON Schema and returns the validated
+            object in the envelope's ``structured_output`` field; ``None`` → no flag (no structured
+            output, fence fallback applies).
 
     Returns:
-        ``(text, usage)`` — the result text (stripped) + token usage from the json /
-        stream-json envelope; usage is ``None`` when the envelope carried none.
+        ``(text, usage, structured_output)`` — the result text (stripped) + token usage + the
+        grammar-constrained object from the json / stream-json envelope; ``usage`` is ``None`` when
+        the envelope carried none and ``structured_output`` is ``None`` when no schema was passed
+        (or the CLI emitted none).
 
     Raises:
         ClaudeAgentError: subprocess non-zero exit, timeout, decode/JSON failure, or a
@@ -204,6 +231,10 @@ async def _invoke_once(
         args += ["--model", model]
     if effort:
         args += ["--effort", effort]
+    # R3 (v0.7.0): grammar-constrain the output to the status-block schema. Stateless per-invoke flag
+    # (like --model/--effort) — added BEFORE the positional prompt; unset → no flag (today's behavior).
+    if json_schema is not None:
+        args += ["--json-schema", json.dumps(json_schema)]
     args.append(prompt)
 
     logger.info(
@@ -254,21 +285,25 @@ async def _invoke_once(
         raise ClaudeAgentError(f"claude json output not parseable: {exc}") from exc
     if not isinstance(envelope, dict) or "result" not in envelope:
         raise ClaudeAgentError("claude json output has no 'result' field")
-    return str(envelope["result"]).strip(), _usage_from(envelope)
+    return str(envelope["result"]).strip(), _usage_from(envelope), _structured_from(envelope)
 
 
-async def _invoke_streaming(proc, *, timeout: int, on_event: EventCallback) -> tuple[str, Optional["UsageMetadata"]]:
-    """Read ``--output-format stream-json`` NDJSON, emit events, return ``(text, usage)``.
+async def _invoke_streaming(
+    proc, *, timeout: int, on_event: EventCallback
+) -> tuple[str, Optional["UsageMetadata"], Optional[dict]]:
+    """Read ``--output-format stream-json`` NDJSON, emit events, return ``(text, usage, structured_output)``.
 
     The complete response is the ``result`` event's ``result`` field — the status block is parsed
     from it downstream, exactly as in json mode — and that same event carries the token ``usage``
-    (WS-D, CR-NS-036). A callback that raises is logged and swallowed (a broken UI feed must never
-    kill an agent run).
+    (WS-D, CR-NS-036) and, when ``--json-schema`` was passed, the grammar-constrained
+    ``structured_output`` object (R3). A callback that raises is logged and swallowed (a broken UI
+    feed must never kill an agent run).
     """
 
-    async def _consume() -> tuple[Optional[str], Optional[UsageMetadata]]:
+    async def _consume() -> tuple[Optional[str], Optional[UsageMetadata], Optional[dict]]:
         result_text: Optional[str] = None
         result_usage: Optional[UsageMetadata] = None
+        result_structured: Optional[dict] = None
         assert proc.stdout is not None
         async for raw in proc.stdout:
             line = raw.decode("utf-8", errors="replace").strip()
@@ -285,10 +320,11 @@ async def _invoke_streaming(proc, *, timeout: int, on_event: EventCallback) -> t
             if isinstance(evt, dict) and evt.get("type") == "result":
                 result_text = evt.get("result")
                 result_usage = _usage_from(evt)
-        return result_text, result_usage
+                result_structured = _structured_from(evt)
+        return result_text, result_usage, result_structured
 
     try:
-        result_text, result_usage = await asyncio.wait_for(_consume(), timeout=timeout)
+        result_text, result_usage, result_structured = await asyncio.wait_for(_consume(), timeout=timeout)
     except asyncio.TimeoutError as exc:
         proc.kill()
         await proc.wait()
@@ -302,4 +338,4 @@ async def _invoke_streaming(proc, *, timeout: int, on_event: EventCallback) -> t
         raise ClaudeAgentError(f"claude exited with code {proc.returncode}: {stderr_text[:500]}")
     if result_text is None:
         raise ClaudeAgentError("claude stream ended without a result event")
-    return result_text.strip(), result_usage
+    return result_text.strip(), result_usage, result_structured

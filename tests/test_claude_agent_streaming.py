@@ -77,7 +77,9 @@ async def test_streaming_emits_events_and_returns_result_text(monkeypatch):
     async def on_event(evt):
         events.append(evt)
 
-    out, usage = await invoke_claude(project_slug="x", claude_session_id=uuid.uuid4(), prompt="go", on_event=on_event)
+    out, usage, _structured = await invoke_claude(
+        project_slug="x", claude_session_id=uuid.uuid4(), prompt="go", on_event=on_event
+    )
 
     assert len(events) == 3  # every NDJSON line surfaced
     assert out == block  # final text == result event
@@ -120,7 +122,9 @@ async def test_callback_exception_does_not_kill_run(monkeypatch):
     async def on_event(evt):
         raise RuntimeError("broken feed")
 
-    out, _usage = await invoke_claude(project_slug="x", claude_session_id=uuid.uuid4(), prompt="go", on_event=on_event)
+    out, _usage, _structured = await invoke_claude(
+        project_slug="x", claude_session_id=uuid.uuid4(), prompt="go", on_event=on_event
+    )
     assert out == block  # a broken callback must not break the agent run
 
 
@@ -146,7 +150,7 @@ async def test_json_mode_returns_result_text_and_usage_no_callback(monkeypatch):
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
 
-    out, usage = await invoke_claude(project_slug="x", claude_session_id=uuid.uuid4(), prompt="go")
+    out, usage, _structured = await invoke_claude(project_slug="x", claude_session_id=uuid.uuid4(), prompt="go")
     assert out == "hello world"
     assert usage is not None
     assert (usage.input_tokens, usage.output_tokens) == (12, 34)
@@ -167,7 +171,7 @@ async def test_json_mode_no_usage_returns_none(monkeypatch):
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
 
-    out, usage = await invoke_claude(project_slug="x", claude_session_id=uuid.uuid4(), prompt="go")
+    out, usage, _structured = await invoke_claude(project_slug="x", claude_session_id=uuid.uuid4(), prompt="go")
     assert out == "hi"
     assert usage is None
 
@@ -203,7 +207,9 @@ async def test_streaming_parses_usage_from_result_event(monkeypatch):
     async def on_event(evt):
         pass
 
-    out, usage = await invoke_claude(project_slug="x", claude_session_id=uuid.uuid4(), prompt="go", on_event=on_event)
+    out, usage, _structured = await invoke_claude(
+        project_slug="x", claude_session_id=uuid.uuid4(), prompt="go", on_event=on_event
+    )
     assert out == "ok"
     assert usage is not None
     assert (usage.input_tokens, usage.output_tokens, usage.model) == (7, 9, "claude-y")
@@ -232,7 +238,9 @@ async def test_streaming_handles_large_result_line(monkeypatch):
     async def on_event(evt):
         pass
 
-    out, _usage = await invoke_claude(project_slug="x", claude_session_id=uuid.uuid4(), prompt="go", on_event=on_event)
+    out, _usage, _structured = await invoke_claude(
+        project_slug="x", claude_session_id=uuid.uuid4(), prompt="go", on_event=on_event
+    )
     assert out == block
     assert len(out) > 64 * 1024
 
@@ -271,3 +279,112 @@ async def test_default_streamreader_limit_overflows_but_ours_survives():
     ours.feed_eof()
     line = await ours.readline()
     assert len(line) == len(big) + 1
+
+
+# ── R3 (v0.7.0): native structured output via --json-schema ────────────────────
+
+
+async def test_json_mode_extracts_structured_output(monkeypatch):
+    """R3: with --json-schema, claude returns the grammar-constrained object in the envelope's
+    ``structured_output`` field — invoke_claude surfaces it as the 3rd tuple element."""
+    so = {"stage": "gate_b", "kind": "gate_report", "summary": "ok", "awaiting": "director"}
+    envelope = json.dumps({"result": "fence-or-prose text", "structured_output": so}).encode()
+
+    class _P:
+        returncode = 0
+
+        async def communicate(self):
+            return (envelope + b"\n", b"")
+
+    async def _fake_exec(*args, **kwargs):
+        return _P()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
+    out, _usage, structured = await invoke_claude(
+        project_slug="x", claude_session_id=uuid.uuid4(), prompt="go", json_schema={"type": "object"}
+    )
+    assert out == "fence-or-prose text"
+    assert structured == so
+
+
+async def test_json_mode_structured_output_none_when_absent(monkeypatch):
+    """No --json-schema (or an older CLI) → structured_output is None; downstream the fence fallback
+    parses the result text exactly as today (D2 defense-in-depth)."""
+
+    class _P:
+        returncode = 0
+
+        async def communicate(self):
+            return (json.dumps({"result": "hi"}).encode() + b"\n", b"")
+
+    async def _fake_exec(*args, **kwargs):
+        return _P()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
+    out, _usage, structured = await invoke_claude(project_slug="x", claude_session_id=uuid.uuid4(), prompt="go")
+    assert out == "hi"
+    assert structured is None
+
+
+async def test_streaming_extracts_structured_output(monkeypatch):
+    """R3: the stream-json ``result`` event carries ``structured_output`` when --json-schema was passed."""
+    so = {"stage": "gate_a", "kind": "done", "summary": "ok", "awaiting": "none"}
+    lines = [json.dumps({"type": "result", "result": "txt", "structured_output": so}).encode() + b"\n"]
+    _patch_exec(monkeypatch, _FakeProc(lines))
+
+    async def on_event(evt):
+        pass
+
+    out, _usage, structured = await invoke_claude(
+        project_slug="x",
+        claude_session_id=uuid.uuid4(),
+        prompt="go",
+        on_event=on_event,
+        json_schema={"type": "object"},
+    )
+    assert out == "txt"
+    assert structured == so
+
+
+async def test_json_schema_arg_appended_before_prompt_when_given(monkeypatch):
+    """R3: --json-schema <json> is injected BEFORE the positional prompt; the arg exists only when a
+    schema is passed."""
+    captured = {}
+
+    class _P:
+        returncode = 0
+
+        async def communicate(self):
+            return (json.dumps({"result": "ok"}).encode() + b"\n", b"")
+
+    async def _fake_exec(*args, **kwargs):
+        captured["args"] = args
+        return _P()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
+    schema = {"type": "object", "properties": {"stage": {"type": "string"}}}
+    await invoke_claude(project_slug="x", claude_session_id=uuid.uuid4(), prompt="THE_PROMPT", json_schema=schema)
+    args = captured["args"]
+    assert "--json-schema" in args
+    i = args.index("--json-schema")
+    assert args[i + 1] == json.dumps(schema)  # the schema json immediately follows the flag
+    assert args[-1] == "THE_PROMPT"  # positional prompt is last → the schema flag precedes it
+
+
+async def test_no_json_schema_arg_when_schema_none(monkeypatch):
+    """Gate E passes no schema → no --json-schema flag (today's behavior preserved)."""
+    captured = {}
+
+    class _P:
+        returncode = 0
+
+        async def communicate(self):
+            return (json.dumps({"result": "ok"}).encode() + b"\n", b"")
+
+    async def _fake_exec(*args, **kwargs):
+        captured["args"] = args
+        return _P()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
+    await invoke_claude(project_slug="x", claude_session_id=uuid.uuid4(), prompt="go")
+    assert "--json-schema" not in captured["args"]
