@@ -29,8 +29,8 @@ guessing why it stopped — without lowering any quality gate.
 |---|---|---|---|---|---|
 | **R1** | Dispatch resilience — lost-work detection + durable single-flight + session TTL + all-stage orphan recovery | 1 | HIGH | M–L | **BUILT + deployed** |
 | **R2** | BE↔FE contract single-source-of-truth — OpenAPI→TS codegen + Literal schemas + parity contract-test | 3 | HIGH | M | **BUILT + deployed** |
-| **R3** | Parsing hardening — native structured output (`claude --json-schema`) for the status block + fence fallback | 2 | MED | L | **specified (this version)** |
-| R4 | Operator legibility — `block_reason` enum + banner/next_action decoupling + autonomous-decision board summary + triage legibility + PipelineRail legend | 4 | MED | M–L | roadmap (coordinate with the agent-comms-transparency design) |
+| **R3** | Parsing hardening — native structured output (`claude --json-schema`) for the status block + fence fallback | 2 | MED | L | **BUILT + deployed** |
+| **R4** | Operator legibility — `block_reason` enum + banner precision + autonomous-decision board summary + triage legibility + agent liveness + PipelineRail legend | 4 | MED | M–L | **specified (this version)** |
 
 **Director-approved (2026-06-16):** develop the backlog into this spec version, **start with R1 + R2** (both HIGH,
 highest impact on what actually hurt during the F-009 build). R3 is the deepest investment (parser→tool_use); R4
@@ -40,6 +40,7 @@ coordinates with the existing agent-comms-transparency design — both are speci
 - **R1** — `R1-dispatch-resilience.md`
 - **R2** — `R2-contract-source-of-truth.md`
 - **R3** — `R3-structured-output.md`
+- **R4** — `R4-operator-legibility.md`
 
 ## 5. Cross-cutting standouts (why R1+R2 first)
 1. **Timeout/work-loss** (R1) — flagged by 2 classes; it bit us live in CR-094 (envelope empty after 1800s, work
