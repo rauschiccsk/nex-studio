@@ -86,6 +86,12 @@ emituje ich ako **typovaný `plan` payload** v status bloku (§9) — vrátane p
 `estimated_minutes` (odhad ĽUDSKEJ práce v minútach, advisory; spec v §9, E5/CR-NS-045) → orchestrátor ho
 **deterministicky zapíše** do ORM (`_write_task_plan` — idempotentný *replace* epík verzie
 pri re-pláne; atomicky alebo `blocked`, žiadny polovičný plán) → `awaiting_director`.
+**(v0.7.3) Generovanie je INKREMENTÁLNE:** Návrhár najprv emituje skeleton (EPIK/FEAT bez úloh),
+potom per-FEAT úlohy v samostatných ohraničených prechodoch (`--resume`); orchestrátor ich
+**akumuluje do JEDNÉHO plánu** (v skeleton-poradí) a zapíše RAZ (`_write_task_plan` nezmenený).
+Dôvod: jeden structured-output turn nezvládne celý strom veľkého dizajnu (`parse_exhaustion`).
+Plán ostáva konceptuálne JEDEN typovaný payload, schvaľovaný Directorom RAZ; mení sa len mechanika
+generovania, nie write-path ani „plán RAZ" kontrakt.
 **Žiadny Koordinátor-judge turn** (CR-2 decision 2026-06-07): deterministický write-path JE
 mechanická gate a **plán reviewuje Director** (schváli materializovaný strom RAZ — hrubozrnný
 ~6–8-task plán prečíta sám). Konzistentné s design-gate vzorom (gate_a–d sú Návrhár→Director
@@ -229,6 +235,12 @@ task/turn, injektnutý cross-cutting blok), Koordinátor (relay per-task verdict
   (todo/planned — Návrhár nič nepredznačí done), `task_count`/`auto_fix_count` server-managed
   (CR-3), `baseline_sha` CR-3. Parser: `stage==task_plan` → `kind=gate_report` + neprázdny
   `plan`, inak `ParseFailure`. `_write_task_plan` = idempotentný replace, atomicky alebo `blocked`.
+  **(v0.7.3) Generovanie = ohraničený multi-pass loop** (`_run_task_plan_round`): skeleton
+  (EPIK/FEAT, narrowed schema) + per-FEAT úlohy (narrowed schema, `--resume`), akumulácia
+  v skeleton-poradí → JEDEN assembled `plan` blok → `_write_task_plan` (nezmenený). `json_schema_override`
+  zužuje schému LEN pre tieto prechody (default = `PIPELINE_STATUS_JSON_SCHEMA`, ostatné call-sity
+  byte-identické). Per-FEAT zlyhanie → HALT (`blocked`) s názvom feat, nič sa nezapíše; `MAX_PLAN_FEATS` strop.
+  Schéma plánu, write-path aj „plán RAZ" kontrakt sa NEMENIA.
 - **Status-blok signály (§7.2 zladím ja):** plán = `gate_report` + štruktúra v `payload`;
   per-task Programátor `gate_report` (`commits`/`deliverables`); Audítor `task_pass` +
   findings. `_build_open_findings` počíta failed tasky z logu.
