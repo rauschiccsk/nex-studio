@@ -165,6 +165,11 @@ export function PipelineActionBar({
       <div className="flex flex-col gap-2">
         <textarea
           autoFocus
+          // CR-2 (v0.7.3): the single Director composer — return/answer/ask/return-with-comment all share it.
+          // `lang="sk"` is the correct app-side declaration so the browser spell-checks Slovak (not English);
+          // actual underlining depends on the browser having a SK dictionary installed.
+          lang="sk"
+          spellCheck
           value={text}
           onChange={(e) => setText(e.target.value)}
           placeholder={composer.label}

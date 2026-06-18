@@ -1,7 +1,7 @@
 // Orchestration Cockpit (F-007 §7). Backend owns the pipeline; this board is a
 // live view + Director action surface over it.
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { FolderOpen, Loader2, Play } from "lucide-react";
 
@@ -15,6 +15,7 @@ import PipelineRail, { deriveActiveAgent } from "../components/cockpit/PipelineR
 import ExchangePanel from "../components/cockpit/ExchangePanel";
 import DebugTerminalDrawer from "../components/cockpit/DebugTerminalDrawer";
 import TaskPlanPanel from "../components/cockpit/TaskPlanPanel";
+import { STAGE_LABELS } from "../components/cockpit/labels";
 
 export default function CockpitPage() {
   const navigate = useNavigate();
@@ -25,6 +26,25 @@ export default function CockpitPage() {
   const { board, error, activity, reconnecting, setBoard } = usePipelineWs(versionId);
   const [inFlight, setInFlight] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // CR-2 (v0.7.3): mark the browser tab when the Director must act, so a backgrounded "your turn" board is
+  // noticeable (a decision-needed state was too subdued — a healthy board read as "stuck"). Capture the app's
+  // base title ONCE (ref) and restore it on a non-decision status + on cleanup/unmount, so the "(•) Na rade"
+  // marker never leaks to another page.
+  const baseTitleRef = useRef(typeof document !== "undefined" ? document.title : "");
+  const titleStatus = board?.state?.status ?? null;
+  const titleStage = board?.state?.current_stage ?? null;
+  useEffect(() => {
+    const base = baseTitleRef.current;
+    if ((titleStatus === "awaiting_director" || titleStatus === "blocked") && titleStage) {
+      document.title = `(•) Na rade: Director — ${STAGE_LABELS[titleStage]}`;
+    } else {
+      document.title = base;
+    }
+    return () => {
+      document.title = base;
+    };
+  }, [titleStatus, titleStage]);
 
   const handleAction = async (action: PipelineActionName, payload?: Record<string, unknown>) => {
     if (!versionId) return;

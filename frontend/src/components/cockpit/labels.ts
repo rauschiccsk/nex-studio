@@ -57,6 +57,10 @@ export const RAW_REPORT_LABEL = "pôvodný report";
 // recovery without a Director click — the Director SEES it (never silent), badged distinctly.
 export const AUTONOMOUS_LABEL = "Koordinátor rozhodol";
 
+// CR-2 (v0.7.3): a Director-facing brief (payload.is_director_brief) — the Coordinator's relay / verify turn
+// addressed to the Director. Shares the synthesis's prominent rail, badged "Na rade" (it's the Director's turn).
+export const DIRECTOR_BRIEF_LABEL = "Na rade";
+
 // R4 (D1/D2): Slovak phrase per block_reason — the precise reason a pipeline is `blocked`, so the Director
 // distinguishes an agent QUESTION from an agent ERROR from a SYSTEM error from a parse failure at a glance.
 export const BLOCK_REASON_LABELS: Record<BlockReason, string> = {
@@ -155,6 +159,16 @@ export const TONE_BANNER: Record<StatusTone, string> = {
   amber: "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-200",
   red: "border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-200",
   neutral: "border-[var(--color-border-default)] bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)]",
+};
+
+// CR-2 (v0.7.3): the HIGH-CONTRAST sticky decision CTA banner — used (instead of the low-key TONE_BANNER) only
+// when status is awaiting_director / blocked, so a "your turn" board never reads as "stuck". Solid state-token
+// bg + fg + a left accent in the same fg (token-disciplined: the shared --color-state-* pairs carry light+dark,
+// no raw pastels). Tone-aware so it stays inside the unified palette (CR-NS-028): amber = awaiting, red = blocked.
+export const DECISION_BANNER: Partial<Record<StatusTone, string>> = {
+  amber:
+    "bg-[var(--color-state-warning-bg)] text-[var(--color-state-warning-fg)] border-[var(--color-state-warning-fg)]",
+  red: "bg-[var(--color-state-error-bg)] text-[var(--color-state-error-fg)] border-[var(--color-state-error-fg)]",
 };
 
 // Canonical stage order — mirrors backend orchestrator.STAGE_ORDER. Shared so the

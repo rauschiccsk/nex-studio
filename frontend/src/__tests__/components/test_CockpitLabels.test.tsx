@@ -10,7 +10,13 @@ import "@testing-library/jest-dom/vitest";
 
 import PipelineRail, { deriveActiveAgent } from "@/components/cockpit/PipelineRail";
 import PipelineMessageBubble from "@/components/cockpit/PipelineMessageBubble";
-import { BLOCK_REASON_LABELS, nextStageLabel, TRIAGE_CLASS_LABELS } from "@/components/cockpit/labels";
+import {
+  BLOCK_REASON_LABELS,
+  DECISION_BANNER,
+  DIRECTOR_BRIEF_LABEL,
+  nextStageLabel,
+  TRIAGE_CLASS_LABELS,
+} from "@/components/cockpit/labels";
 import type { BlockReason } from "@/services/api/pipeline";
 import type { ActivityLine, PipelineBoard, PipelineMessage, PipelineState } from "@/services/api/pipeline";
 
@@ -146,5 +152,21 @@ describe("deriveActiveAgent (real active agent, not current_actor)", () => {
 
   it("ignores a system/director latest message at rest", () => {
     expect(deriveActiveAgent(board(gateEState("blocked"), [msg("system")]), [])).toBeNull();
+  });
+});
+
+// CR-2 (v0.7.3): the Director-facing brief badge + the decision-CTA banner palette.
+describe("CR-2 Director-facing legibility labels", () => {
+  it("DIRECTOR_BRIEF_LABEL is the Slovak 'Na rade' turn marker", () => {
+    expect(DIRECTOR_BRIEF_LABEL).toBe("Na rade");
+  });
+
+  it("DECISION_BANNER is tone-aware (amber awaiting / red blocked) + token-disciplined (no raw pastels)", () => {
+    expect(DECISION_BANNER.amber).toContain("var(--color-state-warning-bg)");
+    expect(DECISION_BANNER.amber).toContain("var(--color-state-warning-fg)");
+    expect(DECISION_BANNER.red).toContain("var(--color-state-error-bg)");
+    // only the decision tones are defined (blue/green/neutral keep the low-key TONE_BANNER)
+    expect(DECISION_BANNER.blue).toBeUndefined();
+    expect(DECISION_BANNER.green).toBeUndefined();
   });
 });

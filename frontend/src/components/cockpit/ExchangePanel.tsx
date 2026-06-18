@@ -1,6 +1,7 @@
 // Right panel: next_action banner + message thread + action bar (F-007 §7).
 
 import { useEffect, useRef } from "react";
+import { Bell } from "lucide-react";
 
 import type {
   ActivityLine,
@@ -14,7 +15,14 @@ import PipelineActivityFeed from "./PipelineActivityFeed";
 import PipelineMessageBubble from "./PipelineMessageBubble";
 import TaskSummaryCard from "./TaskSummaryCard";
 import WhosTurnBoard from "./WhosTurnBoard";
-import { BLOCK_REASON_LABELS, PIPELINE_STATUS_TONE, ROLE_LABELS, STAGE_LABELS, TONE_BANNER } from "./labels";
+import {
+  BLOCK_REASON_LABELS,
+  DECISION_BANNER,
+  PIPELINE_STATUS_TONE,
+  ROLE_LABELS,
+  STAGE_LABELS,
+  TONE_BANNER,
+} from "./labels";
 
 // The Coordinator actions the orchestrator can EXECUTE on approval (F-008 §9) — used to decide whether
 // the latest directive is an executable proposal (drives the build approve button) vs a plain relay.
@@ -79,7 +87,14 @@ export function ExchangePanel({ board, inFlight, activity, onAction }: Props) {
 
   // Banner tone from the unified palette (CR-NS-028): agent_working=blue, awaiting=amber, blocked=red,
   // done=green — never emerald-for-working.
-  const banner = state ? TONE_BANNER[PIPELINE_STATUS_TONE[state.status] ?? "neutral"] : "";
+  const tone = state ? PIPELINE_STATUS_TONE[state.status] ?? "neutral" : "neutral";
+  const banner = state ? TONE_BANNER[tone] : "";
+  // CR-2 (v0.7.3): at awaiting_director / blocked the Director must act → render a HIGH-CONTRAST sticky CTA
+  // (instead of the low-key tonal banner) so a healthy "your turn" board never reads as "stuck".
+  // agent_working / done / paused keep the low-key banner (no false alarm). DECISION_BANNER is tone-aware
+  // (amber awaiting / red blocked) so the CTA stays inside the unified palette.
+  const decisionNeeded = state?.status === "awaiting_director" || state?.status === "blocked";
+  const decisionBanner = DECISION_BANNER[tone];
   // R4 (D1): the FALLBACK heuristic for an error-block (agent crash/timeout escalates via a system
   // notification — its last message is authored by "system"). Now superseded by the authoritative
   // `state.block_reason` (the banner above + PipelineActionBar derive from it); this stays only for NULL /
@@ -136,11 +151,19 @@ export function ExchangePanel({ board, inFlight, activity, onAction }: Props) {
 
   return (
     <div className="flex h-full flex-col">
-      {state && (
-        <div className={`flex-shrink-0 border-b px-4 py-2.5 text-xs ${banner}`}>
-          <span className="font-medium text-[var(--color-text-primary)]">{bannerText(state, isErrorBlock)}</span>
-        </div>
-      )}
+      {state &&
+        (decisionNeeded && decisionBanner ? (
+          <div
+            className={`sticky top-0 z-10 flex flex-shrink-0 items-center gap-2 border-l-4 px-4 py-2.5 text-sm font-semibold ${decisionBanner}`}
+          >
+            <Bell className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
+            <span>{bannerText(state, isErrorBlock)}</span>
+          </div>
+        ) : (
+          <div className={`flex-shrink-0 border-b px-4 py-2.5 text-xs ${banner}`}>
+            <span className="font-medium text-[var(--color-text-primary)]">{bannerText(state, isErrorBlock)}</span>
+          </div>
+        ))}
 
       {/* "Kto je na rade" board (WS-C2, CR-NS-035): whose turn + decision-type + relay chain + current
           task + the Coordinator's proposed action — honest, derived from the live state. Not at `done`

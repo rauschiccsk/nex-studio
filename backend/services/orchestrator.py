@@ -474,14 +474,14 @@ def _directive_for(stage: str, flow_type: str = "new_version") -> str:
             "schéma/dependency zmena) → ZASTAV: nepokračuj, nastav kind=blocked a pripoj štruktúrovaný "
             "`coordinator_directive` (triage_class=director_decision, proposed_action="
             "convert_to_full_version, rationale=prečo) navrhujúci konverziu na plnú verziu/pipeline.\n"
-            "Ukonči odpoveď štruktúrovaným stavovým výstupom (F-007 §7.2)."
+            "Ukonči odpoveď štruktúrovaným stavovým výstupom (F-007-orchestration-cockpit.md §5.3)."
         )
     # task_plan no longer flows through this generic directive — run_dispatch early-returns into
     # _run_task_plan_round (v0.7.3, CR-1), which builds its own narrowed skeleton / per-feat prompts
     # (_task_plan_skeleton_directive / _task_plan_feat_directive below).
     base = (
         f"Pokračuj fázou '{stage}' podľa autoritatívneho spec balíka a svojho charteru. "
-        "Ukonči odpoveď štruktúrovaným stavovým výstupom (F-007 §7.2)."
+        "Ukonči odpoveď štruktúrovaným stavovým výstupom (F-007-orchestration-cockpit.md §5.3)."
     )
     return base
 
@@ -920,19 +920,21 @@ def dispatch_directive(
     if action == "leave" and stage == "gate_e":
         return (
             "Director rozhodol nález ponechať (podľa odporúčania Koordinátora). "
-            "Pokračuj ďalšou otázkou previerky Gate E. Ukonči <<<PIPELINE_STATUS>>> blokom (§7.2)."
+            "Pokračuj ďalšou otázkou previerky Gate E. Ukonči <<<PIPELINE_STATUS>>> "
+            "blokom (F-007-orchestration-cockpit.md §5.3)."
         )
     if action == "approve" and stage == "gate_e":
         milestone = _latest_gate_e_milestone(db, version_id)
         if milestone is not None and milestone.author == "designer":  # per-question (Branch A)
             return (
                 f"Návrhár odpovedal na tvoju otázku: «{milestone.content}». Director to schválil. "
-                "Pokračuj ďalšou otázkou previerky Gate E. Ukonči <<<PIPELINE_STATUS>>> blokom (§7.2)."
+                "Pokračuj ďalšou otázkou previerky Gate E. Ukonči <<<PIPELINE_STATUS>>> "
+                "blokom (F-007-orchestration-cockpit.md §5.3)."
             )
         # topic boundary (latest = Customer gate_report, or none) — no stale answer
         return (
             "Director schválil — pokračuj v previerke Gate E ďalším okruhom "
-            "(alebo ďalšou otázkou). Ukonči <<<PIPELINE_STATUS>>> blokom (§7.2)."
+            "(alebo ďalšou otázkou). Ukonči <<<PIPELINE_STATUS>>> blokom (F-007-orchestration-cockpit.md §5.3)."
         )
     # Director ↔ Coordinator only (§2): ask / return @ gate_e are Coordinator-relayed —
     # the Coordinator revises its recommendation (NOT a message to the Customer/Designer).
@@ -940,13 +942,13 @@ def dispatch_directive(
         text = str(payload.get("text", "")).strip()
         return (
             f"Director konzultuje s Koordinátorom: {text}. Prepracuj svoje odporúčanie. "
-            "Ukonči <<<PIPELINE_STATUS>>> blokom (§7.2)."
+            "Ukonči <<<PIPELINE_STATUS>>> blokom (F-007-orchestration-cockpit.md §5.3)."
         )
     if action == "return" and stage == "gate_e":
         comment = str(payload.get("comment", "")).strip()
         return (
             f"Director vrátil (cez Koordinátora): {comment}. Prepracuj svoje odporúčanie. "
-            "Ukonči <<<PIPELINE_STATUS>>> blokom (§7.2)."
+            "Ukonči <<<PIPELINE_STATUS>>> blokom (F-007-orchestration-cockpit.md §5.3)."
         )
     # Branch B fix: "Schváliť návrh Koordinátora" → the edit instruction is the Coordinator's
     # LATEST (possibly consult-revised) recommendation — Coordinator-relayed to the Designer
@@ -957,7 +959,8 @@ def dispatch_directive(
         return (
             "Koordinátor odovzdáva Directorom schválené odporúčanie na zapracovanie: "
             f"{recommendation}. Uprav návrh podľa neho. Toto je vykonanie schválenej opravy — "
-            "NEhodnoť nové medzery (gap_found nech ostane false). Ukonči <<<PIPELINE_STATUS>>> blokom (§7.2)."
+            "NEhodnoť nové medzery (gap_found nech ostane false). Ukonči <<<PIPELINE_STATUS>>> "
+            "blokom (F-007-orchestration-cockpit.md §5.3)."
         )
     return directive_for_action(action, payload, stage)
 
@@ -1220,7 +1223,8 @@ async def invoke_agent_with_parse_retry(
             # re-prompt names neither; it cites the validation reason and asks for a conforming object.
             prompt=(
                 f"Tvoj štruktúrovaný stavový výstup sa nepodarilo spracovať: {result.reason}. "
-                "Pošli LEN platný stavový objekt podľa schémy (F-007 §7.2) — rovnaký obsah, správne polia a hodnoty."
+                "Pošli LEN platný stavový objekt podľa schémy "
+                "(F-007-orchestration-cockpit.md §5.3) — rovnaký obsah, správne polia a hodnoty."
             ),
             recipient=recipient,
             on_message=on_message,
@@ -1430,9 +1434,14 @@ async def _coordinator_relay_engine_failure(
             # + append a structured directive in the PAYLOAD — the human relay text stays plain (CR-NS-022).
             "Klasifikuj zlyhanie (triage §7.1 — zvyčajne nex_studio_bug alebo director_decision) a pripoj "
             "štruktúrovaný `coordinator_directive` popri vysvetlení (technické detaily nech ostanú v "
-            "payloade, nie v slovenskom texte). Ukonči <<<PIPELINE_STATUS>>> blokom (§7.2)."
+            "payloade, nie v slovenskom texte)."
+            + _DIRECTOR_FORMAT_BRIEF
+            + "Ukonči <<<PIPELINE_STATUS>>> blokom (F-007-orchestration-cockpit.md §5.3)."
         ),
         on_message=on_message,
+        # CR-2: an engine-failure/HALT escalation the Director reads at a block → Director-facing by
+        # construction → always the prominent rail.
+        extra_payload={"is_director_brief": True},
     )
     if isinstance(relay, ParseFailure):
         # Even the fallback must NOT leak the raw reason to the Director (CR-NS-022 §2) — keep it
@@ -1497,6 +1506,17 @@ async def _record_internal_turn_parse_failure(
         await on_message(msg)
 
 
+# CR-2 (v0.7.3): the shared Director-facing formatting brief — appended to ALL three Director-facing
+# Coordinator prompts (_coordinator_synthesis, verify_done judge, _coordinator_relay) so every message the
+# Director reads is headline-first + scannable, not a monolithic paragraph. The headline lives INLINE in the
+# rendered ``summary`` (the <<<PIPELINE_STATUS>>> contract / R3 grammar is UNCHANGED — no new schema field).
+_DIRECTOR_FORMAT_BRIEF = (
+    " Začni **jednoriadkovým nadpisom** (`## `) — najpodstatnejšie rozhodnutie/stav v jednej vete (TL;DR). "
+    "Potom krátke sekcie, **tučným** zvýrazni kľúčové pojmy, a pre možnosti/kroky/riziká použi odrážkové "
+    "zoznamy. Nikdy nepíš jeden monolitný odsek. Slovensky. "
+)
+
+
 async def _coordinator_synthesis(
     db: Session,
     state: PipelineState,
@@ -1533,9 +1553,10 @@ async def _coordinator_synthesis(
         stage=state.current_stage,
         prompt=(
             f"Fáza/udalosť '{trigger}' {verb}. Pre Directora to ZHRŇ — analyzuj ako senior vývojár a "
-            "vysvetli zrozumiteľnou rečou, ŠTRUKTÚROVANE (krátke odseky, **tučné** zvýraznenie "
-            "podstatného — nie monolitný jednofarebný blok): (1) čo sa stalo, (2) čo je ďalší krok / čo "
-            "od Directora treba, (3) riziká alebo poznámky. Ukonči <<<PIPELINE_STATUS>>> blokom (§7.2)."
+            "vysvetli zrozumiteľnou rečou, ŠTRUKTÚROVANE: (1) čo sa stalo, (2) čo je ďalší krok / čo "
+            "od Directora treba, (3) riziká alebo poznámky."
+            + _DIRECTOR_FORMAT_BRIEF
+            + "Ukonči <<<PIPELINE_STATUS>>> blokom (F-007-orchestration-cockpit.md §5.3)."
         ),
         recipient="director",
         on_message=on_message,
@@ -1865,9 +1886,17 @@ async def verify_done(
             + "Ak nájdeš problém, klasifikuj ho (triage podľa charteru §7.1) a popri slovenskom relayi "
             "pripoj štruktúrovaný `coordinator_directive` (triage_class, proposed_action, target, params, "
             "rationale, úprimná confidence) — pričom `target` musí byť OBJEKT {task_id?, role?, commit?} "
-            "alebo úplne vynechaný, NIKDY nie voľný text. Ukonči <<<PIPELINE_STATUS>>> blokom (§7.2)."
+            "alebo úplne vynechaný, NIKDY nie voľný text."
+            + _DIRECTOR_FORMAT_BRIEF
+            + "Ukonči <<<PIPELINE_STATUS>>> blokom (F-007-orchestration-cockpit.md §5.3)."
         ),
         on_message=on_message,
+        # CR-2 GATING (audit 2026-06-18): the verify turn carries the headline-first brief (above) but is
+        # NOT unconditionally a Director-facing prominent-rail message — on a gate_report PASS the synthesis
+        # is the Director-facing turn, and in the auto-return loop the worker is re-dispatched (agent_working,
+        # not the Director's turn). So `is_director_brief` is tagged by the CALLER's settle (only when the
+        # verify actually settles to awaiting_director/blocked) via `_mark_latest_coordinator_brief` — never
+        # here on every turn.
     )
     if isinstance(judgment, ParseFailure):
         # WS-E (CR-NS-037): the verify-judge turn exhausted parse-retries (v0.7.2 R-A: it now actually
@@ -1895,6 +1924,31 @@ async def verify_done(
         )
         return f"coordinator flagged: {judgment.question or judgment.summary}", directive, False
     return None, None, False
+
+
+def _mark_latest_coordinator_brief(db: Session, version_id: uuid.UUID, stage: str) -> None:
+    """CR-2 (v0.7.3) — tag the most recent Coordinator turn at ``stage`` as a Director-facing brief
+    (``payload.is_director_brief=true`` → the FE prominent rail).
+
+    Called from a settle that puts the Director directly on the Coordinator's verify turn (a mechanical /
+    scope block that records NO synthesis). Because it tags only the LATEST Coordinator turn at the settle
+    point, it never touches a gate_report PASS (the synthesis fired after it is the Director-facing turn) nor
+    an auto-return-loop intermediate verify (older Coordinator turns stay untagged) — exactly the audit gate.
+    """
+    msg = db.execute(
+        select(PipelineMessage)
+        .where(
+            PipelineMessage.version_id == version_id,
+            PipelineMessage.stage == stage,
+            PipelineMessage.author == "coordinator",
+        )
+        .order_by(PipelineMessage.seq.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if msg is not None:
+        # Reassign (not in-place mutate) so SQLAlchemy flags the JSONB column dirty.
+        msg.payload = {**(msg.payload or {}), "is_director_brief": True}
+        db.flush()
 
 
 async def _coordinator_relay(
@@ -1939,10 +1993,14 @@ async def _coordinator_relay(
             # E7 (F-008 §3, CR-NS-033): triage the surfaced problem + append a structured directive.
             "Klasifikuj problém (triage podľa charteru §7.1 — spec_problem / programmer_guidance / "
             "nex_studio_bug / director_decision) a popri relayi pripoj štruktúrovaný `coordinator_directive` "
-            "(proposed_action + úprimná confidence); Director ho schváli a engine vykoná. "
-            "Ukonči <<<PIPELINE_STATUS>>> blokom (§7.2)." + fast_fix_relay
+            "(proposed_action + úprimná confidence); Director ho schváli a engine vykoná."
+            + _DIRECTOR_FORMAT_BRIEF
+            + "Ukonči <<<PIPELINE_STATUS>>> blokom (F-007-orchestration-cockpit.md §5.3)."
+            + fast_fix_relay
         ),
         on_message=on_message,
+        # CR-2: a Director-facing brief → the FE gives it the prominent rail (mirrors is_synthesis).
+        extra_payload={"is_director_brief": True},
     )
     if isinstance(relay, ParseFailure):
         # WS-E (CR-NS-037): the relay turn exhausted parse-retries → no message recorded. Make it
@@ -2327,6 +2385,8 @@ async def run_dispatch(
                 state.status = "blocked"
                 state.block_reason = "system_error"  # R4 (D1): fast_fix release verify failed (engine-side)
                 state.next_action = "Fáza 'release' neprešla overením — pozri správy Koordinátora a rozhodni."
+                # CR-2: the Director reads the terminal verify turn directly here (no synthesis) → prominent rail.
+                _mark_latest_coordinator_brief(db, state.version_id, state.current_stage)
                 db.flush()
                 return state
         await _fast_fix_auto_deploy(db, state, on_message=on_message)
@@ -2360,6 +2420,8 @@ async def run_dispatch(
                 # Director makes the definitive call (the FAIL→target verdict renders here — Fix 2).
                 state.status = "awaiting_director"
                 state.next_action = "Audit označil otázku rozsahu druhýkrát — rozhodni: PASS alebo FAIL → fáza."
+                # CR-2: no synthesis on this branch → the Director reads the verify scope turn directly.
+                _mark_latest_coordinator_brief(db, state.version_id, state.current_stage)
         elif reason is not None:
             # Mechanical fail (or a scope flag at a non-gate_g gate — falls through to today's behavior).
             # The Coordinator already judged this (verify_done) — keep a plain next_action, no raw
@@ -2367,6 +2429,9 @@ async def run_dispatch(
             state.status = "blocked"
             state.block_reason = "system_error"  # R4 (D1): gate mechanical verify failed (engine-side)
             state.next_action = f"Fáza '{stage}' neprešla overením — pozri správy Koordinátora a rozhodni."
+            # CR-2: the terminal verify turn (no synthesis on the mechanical-block path) IS what the Director
+            # reads → prominent rail. Tags ONLY this terminal turn — auto-return intermediates stay untagged.
+            _mark_latest_coordinator_brief(db, state.version_id, state.current_stage)
         else:
             # §A.2 site 1 (gate_report PASS — gates A–D, release): Coordinator synthesis before settling.
             synthesis = await _coordinator_synthesis(db, state, trigger=f"fáza '{stage}'", on_message=on_message)
@@ -2443,10 +2508,14 @@ async def _coordinator_review_gap(
         stage="gate_e",
         prompt=(
             f"Návrhár našiel medzeru a navrhol opravu (bez editu): {designer_block.proposed_fix}. "
-            "Prekontroluj návrh a daj Directorovi odporúčanie (opraviť / ponechať + prečo). "
-            "Ukonči <<<PIPELINE_STATUS>>> blokom (§7.2)."
+            "Prekontroluj návrh a daj Directorovi odporúčanie (opraviť / ponechať + prečo)."
+            + _DIRECTOR_FORMAT_BRIEF
+            + "Ukonči <<<PIPELINE_STATUS>>> blokom (F-007-orchestration-cockpit.md §5.3)."
         ),
         on_message=on_message,
+        # CR-2: the Gate-E gap recommendation the Director reads at the per-question stop → Director-facing
+        # by construction → always the prominent rail.
+        extra_payload={"is_director_brief": True},
     )
     if isinstance(review, ParseFailure):
         # WS-E (CR-NS-037): a discarded gap-review parse-failure was a fully silent no-op → make it
@@ -2524,7 +2593,8 @@ async def _run_gate_e_round(
         # Symmetric relay (§5): tell the Customer what was fixed before its next question.
         customer_prompt = (
             f"Tvoj nález Návrhár opravil podľa schváleného riešenia: «{edit.summary}». "
-            "Pokračuj ďalšou otázkou previerky Gate E. Ukonči <<<PIPELINE_STATUS>>> blokom (§7.2)."
+            "Pokračuj ďalšou otázkou previerky Gate E. Ukonči <<<PIPELINE_STATUS>>> "
+            "blokom (F-007-orchestration-cockpit.md §5.3)."
         )
     else:
         customer_prompt = directive if directive is not None else _directive_for("gate_e")
@@ -2562,7 +2632,7 @@ async def _run_gate_e_round(
             stage="gate_e",
             prompt=(
                 f"Zákazník vo fáze Gate E sa pýta: {cust.question}. {_GATE_E_NO_EDIT}. "
-                "Ukonči <<<PIPELINE_STATUS>>> blokom (§7.2)."
+                "Ukonči <<<PIPELINE_STATUS>>> blokom (F-007-orchestration-cockpit.md §5.3)."
             ),
             on_event=on_event,
             recipient="coordinator",  # N→K: the Designer's answer is for the Coordinator
@@ -2844,7 +2914,10 @@ async def _verify_with_retries(
             version_id=state.version_id,
             role=state.current_actor,
             stage=state.current_stage,
-            prompt=f"Verify zlyhal: {reason}. Oprav a znovu ukonči <<<PIPELINE_STATUS>>> blokom (§7.2).",
+            prompt=(
+                f"Verify zlyhal: {reason}. Oprav a znovu ukonči <<<PIPELINE_STATUS>>> "
+                "blokom (F-007-orchestration-cockpit.md §5.3)."
+            ),
             on_message=on_message,
         )
         if isinstance(retry, ParseFailure):
@@ -3829,7 +3902,10 @@ def _directive_for_build_task(
     if prior_failures:
         joined = "\n".join(f"- pokus {i}: {r}" for i, r in enumerate(prior_failures, 1))
         parts.append(f"Predošlé NEÚSPEŠNÉ pokusy o túto úlohu — oprav uvedené:\n{joined}")
-    parts.append("Commitni zmeny a ukonči <<<PIPELINE_STATUS>>> blokom s commits[] + deliverables[] (§7.2).")
+    parts.append(
+        "Commitni zmeny a ukonči <<<PIPELINE_STATUS>>> blokom s commits[] + deliverables[] "
+        "(F-007-orchestration-cockpit.md §5.3)."
+    )
     return "\n\n".join(parts)
 
 
@@ -3849,7 +3925,10 @@ def _audit_prompt_for_task(task: Task, block: PipelineStatusBlock, cross_cutting
     )
     if cross_cutting_rules:
         parts.append(f"Prierezové pravidlá (musia byť dodržané):\n{cross_cutting_rules}")
-    parts.append("Ukonči <<<PIPELINE_STATUS>>> blokom: task_pass (true/false) + findings[] (čo treba opraviť). (§7.2)")
+    parts.append(
+        "Ukonči <<<PIPELINE_STATUS>>> blokom: task_pass (true/false) + findings[] (čo treba opraviť). "
+        "(F-007-orchestration-cockpit.md §5.3)"
+    )
     return "\n\n".join(parts)
 
 
@@ -3874,7 +3953,10 @@ def _coordinator_verify_prompt_for_task(
     )
     if cross_cutting_rules:
         parts.append(f"Prierezové pravidlá (musia byť dodržané):\n{cross_cutting_rules}")
-    parts.append("Ukonči <<<PIPELINE_STATUS>>> blokom: task_pass (true/false) + findings[] (čo treba opraviť). (§7.2)")
+    parts.append(
+        "Ukonči <<<PIPELINE_STATUS>>> blokom: task_pass (true/false) + findings[] (čo treba opraviť). "
+        "(F-007-orchestration-cockpit.md §5.3)"
+    )
     return "\n\n".join(parts)
 
 
@@ -4154,7 +4236,7 @@ async def _run_build_round(
                     # nex_studio_bug / director_decision — a repo/environment problem).
                     "Klasifikuj problém (triage podľa charteru §7.1) a popri slovenskom relayi pripoj "
                     "štruktúrovaný `coordinator_directive` (proposed_action + úprimná confidence). "
-                    "Ukonči <<<PIPELINE_STATUS>>> blokom (§7.2)."
+                    "Ukonči <<<PIPELINE_STATUS>>> blokom (F-007-orchestration-cockpit.md §5.3)."
                 ),
                 on_event=on_event,
                 on_message=on_message,
@@ -4329,7 +4411,7 @@ async def _run_build_round(
                     # escalate_dedo) the Director approves + the engine executes.
                     "Klasifikuj problém (triage podľa charteru §7.1) a popri relayi pripoj štruktúrovaný "
                     "`coordinator_directive` (proposed_action + úprimná confidence). "
-                    "Ukonči <<<PIPELINE_STATUS>>> blokom (§7.2)."
+                    "Ukonči <<<PIPELINE_STATUS>>> blokom (F-007-orchestration-cockpit.md §5.3)."
                 ),
                 on_event=on_event,
                 on_message=on_message,
@@ -4387,7 +4469,7 @@ async def _run_designer_spec_fix(
         f"Build úloha {task_label} narazila na problém v spec/dizajne: {rationale}. "
         + (f"Týka sa to sekcie: {section}. " if section else "")
         + "Oprav príslušnú spec/dizajn v `docs/specs/…` (si jediný s právom editovať spec), aby build "
-        "úloha mohla prejsť. Ukonči <<<PIPELINE_STATUS>>> blokom (§7.2)."
+        "úloha mohla prejsť. Ukonči <<<PIPELINE_STATUS>>> blokom (F-007-orchestration-cockpit.md §5.3)."
     )
     edit = await invoke_agent_with_parse_retry(
         db,

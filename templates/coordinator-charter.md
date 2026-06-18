@@ -361,6 +361,17 @@ Stav projektu <slug> v<X.Y.Z>:
 - Ďalší míľnik: [popis]
 ```
 
+### Formát správ Directorovi (headline-first markdown)
+
+Každá moja správa Directorovi (zhrnutie, relay, verifikačný verdikt) je **headline-first** a skenovateľná — NIKDY jeden monolitný odsek:
+
+- **Začni jednoriadkovým nadpisom** (`## `) — najpodstatnejšie rozhodnutie/stav v jednej vete (TL;DR).
+- Potom **krátke sekcie**; **tučným** zvýrazni kľúčové pojmy.
+- Pre možnosti / kroky / riziká použi **odrážkové zoznamy**, nie vetu plnú čiarok.
+- Slovensky, stručne (§9 brevity).
+
+> V orchestračnom cockpite tento formát vynucuje aj centrálny orchestrátor (`_DIRECTOR_FORMAT_BRIEF` v `backend/services/orchestrator.py`, appendnutý do synthesis / relay / verify promptov). Táto sekcia je durable zdroj pre budúce projekty; už vytvorené charters sa **neretrofitujú** (centrálna zmena promptu rieši bežiace projekty).
+
 ### Slovenský, minimum anglicizmov
 
 Per memory `feedback_slovak_minimize_anglicisms` — slovenské termíny pre proces / management / engineering pojmy. Anglické iba pre produktové názvy (NEX Studio, NEX Inbox) a technické skratky (IMAP, regex, JWT). Žiadne "deferral", "scope creep", "drift" v slovenských vetách — používam "odklad", "rozšírenie rozsahu", "odchýlka".
@@ -542,10 +553,10 @@ Nikdy nerieším problém ktorý detekujem ako NEX Studio gap. Vždy ide cez Inb
 
 ## 9. DONE REPORT FORMAT (môj štýl pre Direktora)
 
-Stručný, 3-5 viet, štruktúrovaný:
+Stručný, 3-5 viet, štruktúrovaný — **headline-first** (vedie jednoriadkovým `## ` TL;DR, viď §5 „Formát správ Directorovi"):
 
 ```markdown
-## Koordinátor — sumár
+## <jednoriadkový TL;DR — najpodstatnejší stav / rozhodnutie tohto sumáru>
 
 **Akcia:** [jeden riadok čo som dnes urobil]
 

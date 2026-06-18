@@ -7,7 +7,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import type { PipelineMessage, PipelineParticipant } from "../../services/api/pipeline";
-import { ROLE_LABELS, SYNTHESIS_LABEL, RAW_REPORT_LABEL, AUTONOMOUS_LABEL } from "./labels";
+import { ROLE_LABELS, SYNTHESIS_LABEL, RAW_REPORT_LABEL, AUTONOMOUS_LABEL, DIRECTOR_BRIEF_LABEL } from "./labels";
 
 const PARTICIPANT_EMOJI: Record<PipelineParticipant, string> = {
   coordinator: "🧭",
@@ -60,12 +60,17 @@ export function PipelineMessageBubble({ message }: Props) {
   // CR-NS-055 Pillar B (§B.3): an AUTONOMOUS Coordinator decision (payload.is_autonomous) — the Director SEES
   // every auto-executed bounded recovery (never silent), rendered distinctly ("Koordinátor rozhodol").
   const isAutonomous = Boolean((message.payload as { is_autonomous?: boolean } | null)?.is_autonomous);
+  // CR-2 (v0.7.3): a Director-facing brief (relay / verify turn, payload.is_director_brief) — shares the
+  // synthesis's prominent primary rail (it's a Coordinator→Director decision message), badged "Na rade".
+  const isDirectorBrief = Boolean((message.payload as { is_director_brief?: boolean } | null)?.is_director_brief);
+  // Both is_synthesis and is_director_brief get the PRIMARY rail (mutually exclusive: synthesis vs relay/verify).
+  const isPrimaryBrief = isSynthesis || isDirectorBrief;
   const isRawReport = message.kind === "gate_report" && message.author !== "coordinator" && !isSynthesis;
 
   const badge = KIND_BADGE[message.kind] ?? "bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)]";
-  // Synthesis → prominent primary rail; autonomous decision → amber attention rail; else the per-author
-  // accent (dimmed for a raw report).
-  const container = isSynthesis
+  // Synthesis / Director-brief → prominent primary rail; autonomous decision → amber attention rail; else the
+  // per-author accent (dimmed for a raw report).
+  const container = isPrimaryBrief
     ? "rounded-r-lg border-l-[6px] border-primary-500 bg-primary-500/10 ring-1 ring-primary-500/20 px-3 py-2.5 text-sm"
     : isAutonomous
       ? "rounded-r-lg border-l-[6px] border-amber-500 bg-amber-500/10 px-3 py-2.5 text-sm"
@@ -92,6 +97,10 @@ export function PipelineMessageBubble({ message }: Props) {
           <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold bg-primary-500/20 text-primary-700 dark:text-primary-200">
             {SYNTHESIS_LABEL}
           </span>
+        ) : isDirectorBrief ? (
+          <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold bg-primary-500/20 text-primary-700 dark:text-primary-200">
+            {DIRECTOR_BRIEF_LABEL}
+          </span>
         ) : (
           <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${badge}`}>
             {isRawReport ? RAW_REPORT_LABEL : message.kind}
@@ -102,6 +111,8 @@ export function PipelineMessageBubble({ message }: Props) {
         className="prose prose-sm dark:prose-invert max-w-none leading-relaxed text-[var(--color-text-primary)]
                    prose-headings:mt-3 prose-headings:font-semibold prose-headings:text-[var(--color-text-primary)]
                    prose-p:my-1.5 prose-p:text-sm
+                   prose-strong:font-semibold prose-strong:text-[var(--color-text-primary)]
+                   prose-ul:my-1.5 prose-ul:list-disc prose-ul:pl-5 prose-li:my-0.5
                    prose-code:bg-[var(--color-surface-hover)] prose-code:px-1 prose-code:text-[var(--color-version-text)]
                    prose-pre:bg-[var(--color-surface-hover)]"
       >

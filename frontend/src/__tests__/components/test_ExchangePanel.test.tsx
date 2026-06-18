@@ -147,6 +147,32 @@ describe("ExchangePanel — unified banner colours (CR-NS-028)", () => {
   });
 });
 
+// CR-2 (v0.7.3): at awaiting_director / blocked the banner becomes a HIGH-CONTRAST sticky decision CTA so a
+// "your turn" board never reads as "stuck"; agent_working / done keep the low-key tonal banner (no false alarm).
+describe("ExchangePanel — decision-needed CTA (CR-2)", () => {
+  it("awaiting_director → sticky high-contrast CTA (warning tokens, font-semibold)", () => {
+    render(<ExchangePanel board={mkBoard("gate_g", "auditor", "awaiting_director")} inFlight={false} activity={[]} onAction={vi.fn()} />);
+    const banner = screen.getByText("Na rade: Director — posúď fázu Audit").closest("div")!;
+    expect(banner).toHaveClass("sticky");
+    expect(banner).toHaveClass("font-semibold");
+    expect(banner).toHaveClass("bg-[var(--color-state-warning-bg)]"); // amber = awaiting, token-disciplined
+  });
+
+  it("blocked → sticky high-contrast CTA in the error (red) tone", () => {
+    render(<ExchangePanel board={mkBoard("gate_a", "designer", "blocked")} inFlight={false} activity={[]} onAction={vi.fn()} />);
+    const banner = screen.getByText("Na rade: Director — odpovedz Návrhár-ovi").closest("div")!;
+    expect(banner).toHaveClass("sticky");
+    expect(banner).toHaveClass("bg-[var(--color-state-error-bg)]"); // red = blocked
+  });
+
+  it("agent_working → NOT a sticky CTA (keeps the low-key tonal banner)", () => {
+    render(<ExchangePanel board={mkBoard("gate_a", "designer", "agent_working")} inFlight={false} activity={[]} onAction={vi.fn()} />);
+    const banner = screen.getByText("Návrhár pracuje na fáze Rozsah").closest("div")!;
+    expect(banner).not.toHaveClass("sticky");
+    expect(banner).toHaveClass("bg-sky-500/10"); // unchanged blue tonal banner
+  });
+});
+
 describe("ExchangePanel — live activity feed below the thread (CR-NS-026)", () => {
   it("renders the activity feed AFTER the thread and ABOVE the action bar while agent_working", () => {
     render(
