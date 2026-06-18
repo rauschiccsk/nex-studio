@@ -2404,20 +2404,73 @@ def _epics_of(db_session, version):
     return db_session.execute(select(Epic).where(Epic.version_id == version.id)).scalars().all()
 
 
+# ── (v0.7.3) incremental task_plan generation — narrowed multi-pass fake (CR-1) ──
+# The task_plan stage now generates the plan in bounded passes (skeleton + per-feat), each a
+# grammar-constrained structured_output turn, NOT one whole-tree fence. These helpers drive
+# _run_task_plan_round: a single callable that returns the right narrowed structured_output per
+# pass (keyed on the prompt), and a valid status-block fence for the post-write Coordinator synthesis.
+
+_DEFAULT_CROSS = "## Invarianty\n- spoločná transakčná hranica\n- immutable audit"
+
+
+def _skeleton_dict(plan_spec, cross=_DEFAULT_CROSS) -> dict:
+    """Skeleton-pass structured_output (EPIC + FEAT, NO tasks) from the same (epic, [(feat, [task,...])])
+    spec shape :func:`_plan` uses. Feat ``estimated_minutes`` derived as Σ of its tasks' estimates."""
+    epics = []
+    for e_title, feats in plan_spec:
+        fs = []
+        for f_title, tasks in feats:
+            f: dict = {"title": f_title}
+            ests = [t[2] for t in tasks if len(t) > 2 and t[2] is not None]
+            if ests:
+                f["estimated_minutes"] = sum(ests)
+            fs.append(f)
+        epics.append({"title": e_title, "feats": fs})
+    return {"epics": epics, "cross_cutting_rules": cross}
+
+
+def _feat_tasks_dict(tasks) -> dict:
+    """Per-feat-pass structured_output (``{tasks: [...]}``) from a ``[(title, type[, est]), ...]`` list."""
+    out = []
+    for t in tasks:
+        d: dict = {"title": t[0], "task_type": t[1]}
+        if len(t) > 2 and t[2] is not None:
+            d["estimated_minutes"] = t[2]
+        out.append(d)
+    return {"tasks": out}
+
+
+def _plan_fake(plan_spec, *, cross=_DEFAULT_CROSS, usage=None):
+    """A ``callable(prompt)`` stand-in for ``invoke_claude`` driving ``_run_task_plan_round``'s passes.
+
+    Keys on the prompt: the skeleton pass (contains ``"KOSTRU"``) → EPIC+FEAT(no tasks)+cross; a per-feat
+    pass (the feat title appears) → that feat's tasks; anything else (the post-write Coordinator synthesis)
+    → a valid task_plan status-block fence. Feat titles must be DISTINCT + non-substring within a spec."""
+    feat_by_title = {f_title: tasks for _e, feats in plan_spec for f_title, tasks in feats}
+
+    def _resp(prompt):
+        if "KOSTRU" in prompt:
+            return ("", usage, _skeleton_dict(plan_spec, cross))
+        for f_title, tasks in feat_by_title.items():
+            if f_title in prompt:
+                return ("", usage, _feat_tasks_dict(tasks))
+        return _block(
+            stage="task_plan", kind="done", summary="Plán pripravený — schváľ alebo vráť.", awaiting="director"
+        )
+
+    return _resp
+
+
 async def test_task_plan_write_path_materializes_hierarchy(db_session, fake_claude):
     version, project = _make_version(db_session)
     await orchestrator.apply_action(db_session, version_id=version.id, action="start")
     _to_task_plan(db_session, version)
-    fake_claude.response = _block(
-        stage="task_plan",
-        kind="gate_report",
-        summary="plán rozložený",
-        awaiting="director",
-        plan=_plan(
+    fake_claude.response = _plan_fake(
+        [
             ("Foundation", [("Schema", [("GL+AA+AP tables", "migration", 90), ("audit_log", "migration", 30)])]),
             ("Calc cores", [("Hlavná kniha", [("GL výpočet", "backend", 120)])]),
-        ),
-        cross_cutting_rules="## Invarianty\n- spoločná transakčná hranica\n- immutable audit",
+        ],
+        cross="## Invarianty\n- spoločná transakčná hranica\n- immutable audit",
     )
     state = await orchestrator.run_dispatch(db_session, version.id)
 
@@ -2449,15 +2502,17 @@ async def test_task_plan_write_path_materializes_hierarchy(db_session, fake_clau
     )
 
 
-async def test_task_plan_gate_report_without_plan_blocks(db_session, fake_claude):
+async def test_task_plan_skeleton_exhaustion_blocks(db_session, fake_claude):
+    # v0.7.3 CR-1: the skeleton pass that never yields a valid skeleton (here: no epics → fails
+    # TaskPlanSkeleton min_length) exhausts its per-pass parse-retries → blocked (parse_exhaustion),
+    # nothing written — the same parse-exhaustion path the old whole-tree planless gate_report took.
     version, _ = _make_version(db_session)
     await orchestrator.apply_action(db_session, version_id=version.id, action="start")
     _to_task_plan(db_session, version)
-    fake_claude.response = _block(
-        stage="task_plan", kind="gate_report", summary="zabudol som plán", awaiting="director"
-    )
+    fake_claude.response = lambda _prompt: ("", None, {"epics": []})  # invalid skeleton, every attempt
     state = await orchestrator.run_dispatch(db_session, version.id)
-    assert state.status == "blocked"  # parse_status_block rejects a planless task_plan gate_report
+    assert state.status == "blocked"
+    assert state.block_reason == "parse_exhaustion"
     assert _epics_of(db_session, version) == []  # nothing written
 
 
@@ -2468,13 +2523,7 @@ async def test_task_plan_write_fail_blocks_system_error(db_session, fake_claude,
     await orchestrator.apply_action(db_session, version_id=version.id, action="start")
     _to_task_plan(db_session, version)
     monkeypatch.setattr(orchestrator, "_write_task_plan", lambda db, state, block: "simulovaná chyba zápisu plánu")
-    fake_claude.response = _block(
-        stage="task_plan",
-        kind="gate_report",
-        summary="plán",
-        awaiting="director",
-        plan=_plan(("E1", [("F1", [("T1", "backend")])])),
-    )
+    fake_claude.response = _plan_fake([("E1", [("F1", [("T1", "backend")])])])
     state = await orchestrator.run_dispatch(db_session, version.id)
     assert state.status == "blocked"
     assert state.block_reason == "system_error"
@@ -2484,25 +2533,13 @@ async def test_task_plan_replan_replaces_no_duplicates(db_session, fake_claude):
     version, _ = _make_version(db_session)
     await orchestrator.apply_action(db_session, version_id=version.id, action="start")
     _to_task_plan(db_session, version)
-    fake_claude.response = _block(
-        stage="task_plan",
-        kind="gate_report",
-        summary="v1",
-        awaiting="director",
-        plan=_plan(("E1", [("F1", [("T1", "backend")])]), ("E2", [("F2", [("T2", "backend")])])),
-    )
+    fake_claude.response = _plan_fake([("E1", [("F1", [("T1", "backend")])]), ("E2", [("F2", [("T2", "backend")])])])
     await orchestrator.run_dispatch(db_session, version.id)
     assert len(_epics_of(db_session, version)) == 2
 
     # Director returned → Designer re-plans (fewer epics). The write-path must REPLACE.
     _to_task_plan(db_session, version)
-    fake_claude.response = _block(
-        stage="task_plan",
-        kind="gate_report",
-        summary="v2",
-        awaiting="director",
-        plan=_plan(("E1 only", [("F1", [("T1", "backend")])])),
-    )
+    fake_claude.response = _plan_fake([("E1 only", [("F1 only", [("T1", "backend")])])])
     await orchestrator.run_dispatch(db_session, version.id)
     epics = _epics_of(db_session, version)
     assert len(epics) == 1  # replaced, not appended
@@ -2514,16 +2551,226 @@ async def test_approve_at_task_plan_advances_to_build(db_session, fake_claude):
     version, _ = _make_version(db_session)
     await orchestrator.apply_action(db_session, version_id=version.id, action="start")
     _to_task_plan(db_session, version)
-    fake_claude.response = _block(
-        stage="task_plan",
-        kind="gate_report",
-        summary="plán",
-        awaiting="director",
-        plan=_plan(("E1", [("F1", [("T1", "backend")])])),
-    )
+    fake_claude.response = _plan_fake([("E1", [("F1", [("T1", "backend")])])])
     await orchestrator.run_dispatch(db_session, version.id)  # → awaiting_director
     state = await orchestrator.apply_action(db_session, version_id=version.id, action="approve")
     assert state.current_stage == "build"
+
+
+# ── (v0.7.3) incremental task_plan generation — multi-pass / fail-closed (CR-1) ──
+
+
+async def test_task_plan_passes_use_narrowed_schema_invoke_agent_untouched(db_session, fake_claude):
+    """The plan passes use the NARROWED schemas; the post-write Coordinator synthesis (via the
+    untouched invoke_agent) still uses the FULL PIPELINE_STATUS_JSON_SCHEMA — byte-identical guarantee."""
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _to_task_plan(db_session, version)
+    fake_claude.response = _plan_fake([("E1", [("F1", [("T1", "backend")])])])
+    await orchestrator.run_dispatch(db_session, version.id)
+    schemas = [c["json_schema"] for c in fake_claude.calls]
+    # deterministic order: skeleton pass, per-feat pass, then the Coordinator synthesis turn.
+    assert schemas[0] == orchestrator.TASK_PLAN_SKELETON_JSON_SCHEMA
+    assert schemas[1] == orchestrator.TASK_PLAN_FEAT_TASKS_JSON_SCHEMA
+    assert schemas[2] == orchestrator.PIPELINE_STATUS_JSON_SCHEMA  # synthesis — invoke_agent untouched
+    assert orchestrator.TASK_PLAN_SKELETON_JSON_SCHEMA != orchestrator.PIPELINE_STATUS_JSON_SCHEMA
+
+
+async def test_task_plan_passes_record_synthetic_notes_with_usage(db_session, fake_claude):
+    """Each pass records ONE synthetic audit note (author=designer, kind=notification) carrying the
+    turn's WS-D usage — the trail/metrics are preserved even though invoke_agent isn't used."""
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _to_task_plan(db_session, version)
+    fake_claude.response = _plan_fake(
+        [("E1", [("F1", [("T1", "backend")]), ("F2", [("T2", "backend")])])],
+        usage=claude_agent.UsageMetadata(input_tokens=50, output_tokens=20, model="m"),
+    )
+    await orchestrator.run_dispatch(db_session, version.id)
+    notes = [
+        m
+        for m in _msgs(db_session, version.id)
+        if m.author == "designer" and m.kind == "notification" and m.stage == "task_plan"
+    ]
+    assert len(notes) == 3  # 1 skeleton + 1 per-feat note per feat (2 feats)
+    assert sum(m.content.startswith("Plán — kostra:") for m in notes) == 1
+    assert sum(m.content.startswith("Plán — funkcia „") for m in notes) == 2
+    assert all(m.payload["usage"] == {"input_tokens": 50, "output_tokens": 20, "model": "m"} for m in notes)
+
+
+async def test_task_plan_assembles_in_skeleton_order(db_session, fake_claude):
+    """The full plan is assembled in SKELETON order, so _write_task_plan's MAX+1 numbering matches what
+    the Director reviewed (not per-feat arrival order)."""
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _to_task_plan(db_session, version)
+    fake_claude.response = _plan_fake(
+        [
+            ("Epic A", [("Feat A1", [("ta1", "backend")]), ("Feat A2", [("ta2", "backend")])]),
+            ("Epic B", [("Feat B1", [("tb1", "backend")])]),
+        ]
+    )
+    await orchestrator.run_dispatch(db_session, version.id)
+    epics = sorted(_epics_of(db_session, version), key=lambda e: e.number)
+    assert [e.title for e in epics] == ["Epic A", "Epic B"]
+    # feat/task numbers are MAX+1 PER parent, so traverse the hierarchy in (epic, feat) order.
+    feats_a = db_session.execute(select(Feat).where(Feat.epic_id == epics[0].id).order_by(Feat.number)).scalars().all()
+    feats_b = db_session.execute(select(Feat).where(Feat.epic_id == epics[1].id).order_by(Feat.number)).scalars().all()
+    assert [f.title for f in feats_a] == ["Feat A1", "Feat A2"]
+    assert [f.title for f in feats_b] == ["Feat B1"]
+    tasks_a1 = (
+        db_session.execute(select(Task).where(Task.feat_id == feats_a[0].id).order_by(Task.number)).scalars().all()
+    )
+    assert [t.title for t in tasks_a1] == ["ta1"]
+
+
+async def test_task_plan_per_feat_parse_retry_recovers(db_session, fake_claude):
+    """Acceptance: a per-pass parse-retry recovers a single-feat typo WITHOUT re-emitting the whole
+    tree (the skeleton is emitted once; only the failing feat's pass re-emits)."""
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _to_task_plan(db_session, version)
+    counters = {"skeleton": 0, "feat_typo": 0}
+
+    def _fake(prompt):
+        if "KOSTRU" in prompt:
+            counters["skeleton"] += 1
+            return ("", None, _skeleton_dict([("E1", [("F1", [("T1", "backend")])])]))
+        if "emituj IBA jej úlohy" in prompt:  # FIRST per-feat attempt → a typo (empty tasks → invalid)
+            counters["feat_typo"] += 1
+            return ("", None, {"tasks": []})
+        if "nepodarilo spracovať" in prompt:  # the per-pass parse-retry re-prompt → valid this time
+            return ("", None, _feat_tasks_dict([("T1", "backend")]))
+        return _block(stage="task_plan", kind="done", summary="OK", awaiting="director")  # synthesis
+
+    fake_claude.response = _fake
+    state = await orchestrator.run_dispatch(db_session, version.id)
+    assert state.status == "awaiting_director"
+    assert counters["skeleton"] == 1  # the whole tree was NOT re-emitted — skeleton once
+    assert counters["feat_typo"] == 1  # only the first feat attempt was the typo; the retry recovered
+    tasks = db_session.execute(select(Task)).scalars().all()
+    assert len(tasks) == 1 and tasks[0].title == "T1"
+
+
+async def test_task_plan_per_feat_failure_halts_naming_feat_writes_nothing(db_session, fake_claude, monkeypatch):
+    """Fail-closed: a per-feat pass exhausting its retries HALTs to blocked NAMING the feat and writes
+    NO Epic/Feat/Task rows (the write happens only after EVERY feat succeeds — never a half-plan)."""
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _to_task_plan(db_session, version)
+    captured: dict = {}
+
+    async def _capture_relay(db, version_id, stage, reason, on_message=None, *, failed=None):
+        captured["reason"] = reason
+
+    monkeypatch.setattr(orchestrator, "_coordinator_relay_engine_failure", _capture_relay)
+
+    def _fake(prompt):
+        if "KOSTRU" in prompt:
+            return ("", None, _skeleton_dict([("E1", [("Hlavná kniha", [("T1", "backend")])])]))
+        return ("", None, {"tasks": []})  # per-feat (+ every retry) → invalid → exhausts
+
+    fake_claude.response = _fake
+    state = await orchestrator.run_dispatch(db_session, version.id)
+    assert state.status == "blocked" and state.block_reason == "parse_exhaustion"
+    assert "Hlavná kniha" in captured["reason"]  # the relay names the failing feat
+    assert _epics_of(db_session, version) == []
+    assert db_session.execute(select(Feat)).scalars().all() == []
+    assert db_session.execute(select(Task)).scalars().all() == []
+
+
+async def test_task_plan_max_feats_cap_blocks(db_session, fake_claude, monkeypatch):
+    """MAX_PLAN_FEATS caps total feats: a skeleton exceeding it HALTs (system_error) BEFORE any per-feat
+    pass, writing nothing — an over-fine decomposition, never a runaway loop."""
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _to_task_plan(db_session, version)
+    monkeypatch.setattr(orchestrator, "MAX_PLAN_FEATS", 2)
+    fake_claude.response = _plan_fake(
+        [("E1", [("F1", [("T1", "backend")]), ("F2", [("T2", "backend")]), ("F3", [("T3", "backend")])])]
+    )
+    state = await orchestrator.run_dispatch(db_session, version.id)
+    assert state.status == "blocked" and state.block_reason == "system_error"
+    assert _epics_of(db_session, version) == []  # nothing written
+    # only the skeleton pass ran (no per-feat passes) — the cap fires before them.
+    feat_pass_calls = [c for c in fake_claude.calls if "emituj IBA jej úlohy" in c["prompt"]]
+    assert feat_pass_calls == []
+
+
+async def test_task_plan_skeleton_timeout_surfaces_lost_work_not_blocked(db_session, monkeypatch):
+    """Envelope-loss parity (R1, audit 2026-06-18): a ClaudeAgentError (timeout) in the SKELETON pass with
+    committed work settles to awaiting_director ('review & continue') with the lost-work audit — NOT the
+    pre-fix blocked/parse_exhaustion dead-end (task_plan was never carved out of R1)."""
+
+    async def _boom(**kwargs):
+        raise orchestrator.ClaudeAgentError("claude invocation timed out after 1200s")
+
+    monkeypatch.setattr(orchestrator, "_repo_head", lambda root: "h" * 40)
+    monkeypatch.setattr(orchestrator, "_rev_list_count", lambda root, baseline: 2)
+    monkeypatch.setattr(orchestrator, "invoke_claude", _boom)
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")  # arms baseline=h*40
+    _to_task_plan(db_session, version)
+
+    state = await orchestrator.run_dispatch(db_session, version.id)
+    assert state.status == "awaiting_director"  # R1: never a blocked dead-end
+    assert state.block_reason != "parse_exhaustion"  # a timeout is NOT mislabeled as parse_exhaustion
+    assert "2 commitov" in state.next_action
+    assert len(_lost_work_notifs(db_session, version.id)) == 1
+    assert _epics_of(db_session, version) == []  # nothing materialized
+
+
+async def test_task_plan_per_feat_timeout_surfaces_lost_work_no_rows(db_session, monkeypatch):
+    """Envelope-loss parity (R1) in a PER-FEAT pass: the skeleton succeeds, then a feat pass times out →
+    awaiting_director (audit recorded), NO Epic/Feat/Task rows (the write happens only after ALL feats)."""
+    calls = {"n": 0}
+
+    async def _seq(**kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:  # pass 1 — skeleton succeeds (grammar-constrained structured_output)
+            return ("", None, _skeleton_dict([("E1", [("F1", [("T1", "backend")])])]))
+        raise orchestrator.ClaudeAgentError("claude invocation timed out after 1200s")  # per-feat times out
+
+    monkeypatch.setattr(orchestrator, "_repo_head", lambda root: "h" * 40)
+    monkeypatch.setattr(orchestrator, "_rev_list_count", lambda root, baseline: 1)
+    monkeypatch.setattr(orchestrator, "invoke_claude", _seq)
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _to_task_plan(db_session, version)
+
+    state = await orchestrator.run_dispatch(db_session, version.id)
+    assert state.status == "awaiting_director"
+    assert state.block_reason != "parse_exhaustion"
+    assert "1 commitov" in state.next_action
+    assert len(_lost_work_notifs(db_session, version.id)) == 1
+    assert _epics_of(db_session, version) == []  # no half-plan
+    assert db_session.execute(select(Task)).scalars().all() == []
+
+
+async def test_task_plan_claude_error_no_baseline_blocks_agent_error(db_session, monkeypatch):
+    """Accurate block_reason: a ClaudeAgentError with NO audit baseline (lost_work None) → blocked
+    AGENT_ERROR (still a timeout/crash), never the parse_exhaustion mislabel reserved for unparseable output."""
+
+    async def _boom(**kwargs):
+        raise orchestrator.ClaudeAgentError("claude invocation timed out after 1200s")
+
+    monkeypatch.setattr(orchestrator, "invoke_claude", _boom)
+    version, _ = _make_version(db_session)
+    state = PipelineState(
+        version_id=version.id,
+        flow_type="new_version",
+        current_stage="task_plan",
+        current_actor="designer",
+        status="agent_working",
+        next_action="working",
+    )
+    db_session.add(state)
+    db_session.flush()  # dispatch_baseline_sha stays NULL → _audit_lost_work is a no-op
+
+    result = await orchestrator.run_dispatch(db_session, version.id)
+    assert result.status == "blocked"
+    assert result.block_reason == "agent_error"  # NOT parse_exhaustion
+    assert _lost_work_notifs(db_session, version.id) == []  # no baseline → no lost-work audit
 
 
 # ── build per-task loop (F-007 §6, CR-NS-020 CR-3) ──────────────────────────────
@@ -3822,16 +4069,11 @@ async def test_synthesis_at_task_plan_pass(db_session, fake_claude, monkeypatch)
     written, a Coordinator synthesis fires (is_synthesis) and drives next_action."""
     seq = SequenceClaude(
         [
-            _block(
-                stage="task_plan",
-                kind="gate_report",
-                summary="plán rozložený",
-                awaiting="director",
-                plan=_plan(("E1", [("F1", [("T1", "backend")])])),
-            ),  # Designer plan (worker) → written
+            ("", None, _skeleton_dict([("E1", [("F1", [("T1", "backend")])])])),  # pass 1 — skeleton
+            ("", None, _feat_tasks_dict([("T1", "backend")])),  # pass 2 — feat F1 tasks → plan written
             _block(
                 stage="task_plan", kind="done", summary="Plán hotový — schváľ alebo vráť.", awaiting="director"
-            ),  # synthesis
+            ),  # post-write Coordinator synthesis
         ]
     )
     monkeypatch.setattr(orchestrator, "invoke_claude", seq)

@@ -105,6 +105,58 @@ class TaskPlan(BaseModel):
     epics: list[TaskPlanEpic] = Field(min_length=1)
 
 
+# ── (v0.7.3) incremental task_plan generation — narrowed per-pass schemas (CR-1) ──
+# A large design's full EPIC→FEAT→TASK tree overflows ONE structured-output turn (the
+# model drops the per-feat tasks → ``parse_exhaustion``). The Designer instead emits the
+# plan in bounded passes: a skeleton (EPIC + FEAT, NO tasks) then one pass per feat (that
+# feat's tasks). These narrowed models constrain each pass; the orchestrator
+# (``_run_task_plan_round``) accumulates them into ONE full :class:`TaskPlan` (above) and
+# writes it via the UNCHANGED ``_write_task_plan``. They are SEPARATE types — the full-plan
+# models are deliberately NOT relaxed (F-007 §9 "schéma nemení"); ``TaskPlanFeat.tasks``
+# keeps ``min_length=1`` so the assembled plan is always non-empty.
+
+
+class TaskPlanSkeletonFeat(BaseModel):
+    """A feat in the skeleton pass — title/description/estimated_minutes, **NO** tasks
+    (tasks arrive in the per-feat passes)."""
+
+    title: str = Field(min_length=1, max_length=500)
+    description: str = ""
+    estimated_minutes: Optional[int] = None
+
+
+class TaskPlanSkeletonEpic(BaseModel):
+    """An epic in the skeleton pass — title + optional ``module_id`` + ≥1 (task-less) feat."""
+
+    title: str = Field(min_length=1, max_length=500)
+    module_id: Optional[UUID] = None
+    feats: list[TaskPlanSkeletonFeat] = Field(min_length=1)
+
+
+class TaskPlanSkeleton(BaseModel):
+    """Pass 1: the EPIC + FEAT skeleton (no tasks) + the cross-cutting rules, codified once.
+    The per-feat passes fill in each feat's tasks; the orchestrator assembles the full plan."""
+
+    epics: list[TaskPlanSkeletonEpic] = Field(min_length=1)
+    cross_cutting_rules: Optional[str] = None
+
+
+class TaskPlanFeatTasks(BaseModel):
+    """Passes 2..N: ONLY one feat's tasks (≥1). Reuses :class:`TaskPlanTask` so the per-task
+    contract is identical to the full plan; the orchestrator grafts these onto the matching
+    skeleton feat."""
+
+    tasks: list[TaskPlanTask] = Field(min_length=1)
+
+
+#: Narrowed JSON Schemas for the two task_plan passes (v0.7.3, CR-1). Derived from the models
+#: (single source). Used ONLY by the dedicated ``_invoke_plan_pass`` helper;
+#: :data:`PIPELINE_STATUS_JSON_SCHEMA` stays the default for every other agent invocation
+#: (byte-identical — ``invoke_agent`` is untouched).
+TASK_PLAN_SKELETON_JSON_SCHEMA = TaskPlanSkeleton.model_json_schema()
+TASK_PLAN_FEAT_TASKS_JSON_SCHEMA = TaskPlanFeatTasks.model_json_schema()
+
+
 class CoordinatorTarget(BaseModel):
     """What a ``coordinator_directive``'s action operates on (F-008 §2, A1)."""
 
@@ -322,3 +374,33 @@ def parse_structured_output(obj: dict) -> ParseResult:
     if not isinstance(obj, dict):
         return ParseFailure("structured_output is not an object")
     return _validate_block(obj)
+
+
+# ── (v0.7.3) narrowed task_plan-pass parsers (CR-1) ──────────────────────────
+# The narrowed passes emit a :class:`TaskPlanSkeleton` / :class:`TaskPlanFeatTasks` object
+# (NOT a :class:`PipelineStatusBlock`), so they do NOT go through ``_validate_block`` and
+# therefore never hit the ``stage==task_plan`` plan-required guard above (it stays unchanged
+# and only fires for the FINAL assembled status block). These parsers mirror
+# :func:`parse_structured_output`'s shape: validate the grammar-constrained structured_output
+# against the narrowed model, returning the model or a :class:`ParseFailure` (the per-pass
+# parse-retry feeds the reason back). Never raise, never infer.
+
+
+def parse_task_plan_skeleton(obj: dict) -> Union[TaskPlanSkeleton, ParseFailure]:
+    """Validate a skeleton pass's structured_output — EPIC + FEAT (no tasks) + cross_cutting_rules."""
+    if not isinstance(obj, dict):
+        return ParseFailure("task_plan skeleton structured_output is not an object")
+    try:
+        return TaskPlanSkeleton.model_validate(obj)
+    except ValidationError as exc:
+        return ParseFailure(f"task_plan skeleton invalid — {_format_validation_errors(exc)}")
+
+
+def parse_task_plan_feat_tasks(obj: dict) -> Union[TaskPlanFeatTasks, ParseFailure]:
+    """Validate a per-feat pass's structured_output — ONLY that feat's tasks (≥1)."""
+    if not isinstance(obj, dict):
+        return ParseFailure("task_plan feat-tasks structured_output is not an object")
+    try:
+        return TaskPlanFeatTasks.model_validate(obj)
+    except ValidationError as exc:
+        return ParseFailure(f"task_plan feat-tasks invalid — {_format_validation_errors(exc)}")

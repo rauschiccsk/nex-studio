@@ -54,11 +54,18 @@ from backend.services import task as task_service
 from backend.services.claude_agent import ClaudeAgentError, invoke_claude
 from backend.services.pipeline_status import (
     PIPELINE_STATUS_JSON_SCHEMA,
+    TASK_PLAN_FEAT_TASKS_JSON_SCHEMA,
+    TASK_PLAN_SKELETON_JSON_SCHEMA,
     CoordinatorDirective,
     ParseFailure,
     PipelineStatusBlock,
+    TaskPlan,
+    TaskPlanEpic,
+    TaskPlanFeat,
     parse_status_block,
     parse_structured_output,
+    parse_task_plan_feat_tasks,
+    parse_task_plan_skeleton,
 )
 
 logger = logging.getLogger(__name__)
@@ -219,6 +226,12 @@ _AUTO_FIX_RETRIES = 5
 # Distinct from ``_VERIFY_RETRIES`` (which retries a *valid* report that failed
 # verification).
 _PARSE_RETRIES = 2
+# Upper bound on the total feats in an incrementally-generated task_plan (v0.7.3, CR-1). Each feat
+# costs one bounded ``--resume`` per-feat pass, so this caps the multi-pass loop. A coarse-grained plan
+# (module ≈ task, F-007 §4) is well under this even for a large multi-module app; exceeding it signals
+# an over-fine decomposition → fail-closed HALT (``blocked``) with a Coordinator relay, never a runaway
+# loop. Generous on purpose (the cap is a backstop, not a design target).
+MAX_PLAN_FEATS = 40
 _ACTIONS = frozenset(
     {
         "start",
@@ -463,19 +476,58 @@ def _directive_for(stage: str, flow_type: str = "new_version") -> str:
             "convert_to_full_version, rationale=prečo) navrhujúci konverziu na plnú verziu/pipeline.\n"
             "Ukonči odpoveď štruktúrovaným stavovým výstupom (F-007 §7.2)."
         )
+    # task_plan no longer flows through this generic directive — run_dispatch early-returns into
+    # _run_task_plan_round (v0.7.3, CR-1), which builds its own narrowed skeleton / per-feat prompts
+    # (_task_plan_skeleton_directive / _task_plan_feat_directive below).
     base = (
         f"Pokračuj fázou '{stage}' podľa autoritatívneho spec balíka a svojho charteru. "
         "Ukonči odpoveď štruktúrovaným stavovým výstupom (F-007 §7.2)."
     )
-    if stage == "task_plan":
-        # E5 (CR-NS-045): the per-task human-effort estimate is the metrics page's human-baseline source.
-        base += (
-            " Pri KAŽDEJ úlohe (TASK) uveď pole `estimated_minutes` = realistický odhad práce pre "
-            "schopného ĽUDSKÉHO vývojára v minútach (NIE čas AI výpočtu); pri každom FEAT-e uveď "
-            "`estimated_minutes` ako súčet jeho úloh. Je to ADVISORY pole — chýbajúci odhad je povolený "
-            "a NIKDY neblokuje build."
-        )
     return base
+
+
+# E5 (CR-NS-045): the per-task human-effort estimate is the metrics page's human-baseline source — kept
+# in BOTH task_plan prompts below (skeleton → feat-level Σ; per-feat → per-task), advisory, never blocking.
+_TASK_PLAN_ESTIMATE_NOTE = (
+    "`estimated_minutes` = realistický odhad práce pre schopného ĽUDSKÉHO vývojára v minútach "
+    "(NIE čas AI výpočtu); ADVISORY pole — chýbajúci odhad je povolený a NIKDY neblokuje build."
+)
+
+
+def _task_plan_skeleton_directive(director_note: Optional[str] = None) -> str:
+    """Pass 1 prompt (v0.7.3, CR-1): the Designer emits the EPIC + FEAT **skeleton** only — NO tasks.
+
+    Bounded so a large design's tree never overflows one structured-output turn (the per-feat tasks
+    come in their own passes). On a Director ``return`` (re-plan) the framed comment is prepended so
+    the Designer applies the edit on the resumed session, not a blind re-plan.
+    """
+    base = (
+        "Vo fáze 'task_plan' najprv vytvor KOSTRU plánu: emituj IBA epiky a funkcie (EPIC + FEAT), "
+        "BEZ úloh. Pre KAŽDÝ epik uveď `title` a (ak relevantné, inak vynechaj) `module_id`. Pre KAŽDÚ "
+        "funkciu uveď `title`, `description` a `estimated_minutes` (Σ odhadov jej úloh). Doplň "
+        "`cross_cutting_rules` (regulované invarianty knihy, markdown, kodifikované RAZ). Úlohy "
+        "NEemituj — doplnia sa v ďalších prechodoch po jednej funkcii. "
+        + _TASK_PLAN_ESTIMATE_NOTE
+        + " Vráť LEN štruktúrovaný objekt podľa schémy (epics + cross_cutting_rules)."
+    )
+    if director_note:
+        return f"{director_note}\n\n{base}"
+    return base
+
+
+def _task_plan_feat_directive(feat_title: str) -> str:
+    """Passes 2..N prompt (v0.7.3, CR-1): the Designer emits ONLY one feat's tasks.
+
+    Runs on the resumed Designer session, so the full design + the just-emitted skeleton stay in
+    context; the orchestrator grafts the returned tasks onto the matching skeleton feat.
+    """
+    return (
+        f"Pre funkciu „{feat_title}“ z kostry plánu emituj IBA jej úlohy (`tasks`). Pre KAŽDÚ "
+        "úlohu uveď `title`, `task_type`, `description`, `checklist_type`, `priority` a `estimated_minutes`. "
+        "Granularita HRUBOZRNNÁ — modul ≈ úloha (F-007 §4); nedeľ koherentný modul. "
+        + _TASK_PLAN_ESTIMATE_NOTE
+        + " Vráť LEN štruktúrovaný objekt podľa schémy s poľom `tasks` (≥1 úloha)."
+    )
 
 
 def _prepend_fast_fix_directive(db: Session, version_id: uuid.UUID, prompt: str) -> str:
@@ -1175,6 +1227,170 @@ async def invoke_agent_with_parse_retry(
             extra_payload=extra_payload,
             metrics=turn_metrics,
         )
+    return result
+
+
+# Marks a task_plan-pass ParseFailure that originated from a ``ClaudeAgentError`` (timeout/crash) rather
+# than an unparseable structured output — lets _settle_plan_pass_failure pick the accurate block_reason
+# (agent_error vs parse_exhaustion) without a new ParseFailure field. Same wording invoke_agent uses.
+_PLAN_PASS_ENVELOPE_LOSS_PREFIX = "claude invocation failed:"
+
+
+async def _plan_pass_once(
+    db: Session,
+    state: PipelineState,
+    *,
+    prompt: str,
+    json_schema: dict,
+    parser: Callable[[dict], Any],
+    on_event: Optional[claude_agent.EventCallback],
+    on_message: Optional[MessageCallback],
+    metrics: "_DispatchMetrics",
+) -> Any:
+    """One ``claude`` invocation for a task_plan generation pass (v0.7.3, CR-1).
+
+    Resumes the SAME ``(project, designer)`` claude session the gate stages used (so the full design
+    + the just-emitted skeleton stay in context), grammar-constrains the output to the **narrowed**
+    ``json_schema``, meters the turn into ``metrics``, and parses the ``structured_output`` envelope
+    field with ``parser``. Returns the parsed narrowed model or a :class:`ParseFailure` — it records
+    **no** message of its own on the parse path (the caller :func:`_invoke_plan_pass` records ONE
+    synthetic note on overall success). Mirrors :func:`invoke_agent`'s session/metrics handling — incl.
+    the **R1 envelope-loss path** (a ``ClaudeAgentError`` runs :func:`_audit_lost_work` and rides its
+    audit dict on ``ParseFailure.lost_work`` so the caller settles to ``awaiting_director``, not a
+    ``blocked`` dead-end) — but never assumes a :class:`PipelineStatusBlock` (the narrowed passes do
+    not emit one — that is why they cannot use ``invoke_agent``, which stays byte-identical)."""
+    version_id = state.version_id
+    slug = _project_slug_for_version(db, version_id)
+    session_id, is_first = _resolve_orch_session(db, slug, "designer")
+    db.execute(
+        update(OrchestratorSession)
+        .where(OrchestratorSession.project_slug == slug, OrchestratorSession.role == "designer")
+        .values(last_input_at=datetime.now(timezone.utc))
+    )
+    model_override, effort_override = _resolve_dispatch_overrides(db, version_id, "designer")
+    charter_path: Optional[Path] = None
+    if is_first:  # task_plan normally runs after the gate stages (session exists → resume); defensive.
+        charter_path = claude_agent.PROJECTS_ROOT / slug / ".claude" / "agents" / "designer" / "CLAUDE.md"
+
+    tagged_on_event: Optional[claude_agent.EventCallback] = None
+    if on_event is not None:
+
+        async def tagged_on_event(evt: dict) -> None:
+            await on_event({**evt, "_role": "designer"} if isinstance(evt, dict) else evt)
+
+        await tagged_on_event({"type": "active_role"})
+
+    _started = perf_counter()
+    try:
+        _text, usage, structured = _split_claude_result(
+            await invoke_claude(
+                project_slug=slug,
+                claude_session_id=session_id,
+                prompt=prompt,
+                charter_path=charter_path,
+                timeout=_timeout_for("task_plan"),
+                on_event=tagged_on_event,
+                model=model_override,
+                effort=effort_override,
+                json_schema=json_schema,
+            )
+        )
+    except ClaudeAgentError as exc:
+        # A failed invocation still burned wall-clock (no usage envelope) — count it (WS-D).
+        metrics.record(None, perf_counter() - _started)
+        # R1 envelope-loss parity (CR-1, audit 2026-06-18): a timeout/crash may have left real commits
+        # behind even though the JSON envelope was lost — audit baseline..HEAD and ride the audit dict on
+        # ParseFailure.lost_work so the round settles to awaiting_director ("review & continue"), exactly
+        # like invoke_agent. A no-op (None) when no dispatch baseline was armed; the prefix below then lets
+        # the round set block_reason=agent_error (a ClaudeAgentError), never the parse_exhaustion mislabel.
+        lost_work = await _audit_lost_work(
+            db,
+            version_id=version_id,
+            slug=slug,
+            stage="task_plan",
+            timeout_seconds=_timeout_for("task_plan"),
+            on_message=on_message,
+        )
+        return ParseFailure(
+            f"{_PLAN_PASS_ENVELOPE_LOSS_PREFIX} {exc}",
+            usage=metrics.usage_payload(),
+            timing=metrics.timing_payload(),
+            lost_work=lost_work,
+        )
+    metrics.record(usage, perf_counter() - _started)
+    if structured is None:  # narrowed passes are schema-driven — no structured object means no plan data
+        return ParseFailure("task_plan pass produced no structured_output")
+    return parser(structured)
+
+
+async def _invoke_plan_pass(
+    db: Session,
+    state: PipelineState,
+    *,
+    prompt: str,
+    json_schema: dict,
+    parser: Callable[[dict], Any],
+    label_fn: Callable[[Any], str],
+    on_event: Optional[claude_agent.EventCallback] = None,
+    on_message: Optional[MessageCallback] = None,
+) -> Any:
+    """One bounded task_plan generation pass with per-pass parse-retry (v0.7.3, CR-1).
+
+    The narrowed-schema sibling of :func:`invoke_agent_with_parse_retry`, used ONLY by
+    :func:`_run_task_plan_round`. The passes emit a ``TaskPlanSkeleton`` / ``TaskPlanFeatTasks``
+    object (NOT a status block), so they bypass ``invoke_agent`` / ``invoke_agent_with_parse_retry`` /
+    :data:`PIPELINE_STATUS_JSON_SCHEMA` entirely — those stay byte-identical. The same parse-retry
+    policy applies **per pass** (``_PARSE_RETRIES``): a single-feat JSON typo re-emits just that pass,
+    never the whole tree. On success it records ONE concise synthetic audit ``pipeline_message``
+    (author=``designer``, kind=``notification`` — these are not status blocks, so ``note``-style) with
+    the turn's accumulated usage/timing, so the ``on_message`` broadcast + WS-D metrics are preserved.
+    Returns the parsed narrowed model, or a :class:`ParseFailure` on retry-exhaustion (carrying the
+    accumulated metrics → the round's fail-closed HALT)."""
+    metrics = _DispatchMetrics()
+    result = await _plan_pass_once(
+        db,
+        state,
+        prompt=prompt,
+        json_schema=json_schema,
+        parser=parser,
+        on_event=on_event,
+        on_message=on_message,
+        metrics=metrics,
+    )
+    attempts = 0
+    while isinstance(result, ParseFailure) and result.lost_work is None and attempts < _PARSE_RETRIES:
+        # Retry only a genuine PARSE failure (re-emit the block). An envelope-loss (ClaudeAgentError →
+        # lost_work set) is NOT a re-emittable typo — stop and let the R1 path settle to awaiting_director
+        # (re-invoking would just risk another long timeout and could drop the lost_work signal).
+        attempts += 1
+        result = await _plan_pass_once(
+            db,
+            state,
+            prompt=(
+                f"Tvoj štruktúrovaný výstup sa nepodarilo spracovať: {result.reason}. "
+                "Pošli LEN platný objekt podľa schémy — rovnaký obsah, správne polia a hodnoty."
+            ),
+            json_schema=json_schema,
+            parser=parser,
+            on_event=None,  # cheap re-emit retries don't stream (mirror invoke_agent_with_parse_retry)
+            on_message=on_message,
+            metrics=metrics,
+        )
+    if isinstance(result, ParseFailure):
+        # Attach the accumulated turn metrics so the fail-closed Coordinator relay can carry the lost tokens.
+        return replace(result, usage=metrics.usage_payload(), timing=metrics.timing_payload())
+    msg = _record_message(
+        db,
+        version_id=state.version_id,
+        stage="task_plan",
+        author="designer",
+        recipient="director",
+        kind="notification",
+        content=label_fn(result),
+        payload={"usage": metrics.usage_payload(), "timing": metrics.timing_payload()},
+    )
+    if on_message is not None:
+        await on_message(msg)
     return result
 
 
@@ -1995,6 +2211,13 @@ async def run_dispatch(
             return await _run_designer_spec_fix(db, state, on_event=on_event, on_message=on_message)
         return await _run_build_round(db, state, on_event=on_event, directive=directive, on_message=on_message)
 
+    # task_plan (F-007 §5, v0.7.3 CR-1): the plan is generated INCREMENTALLY — a bounded skeleton +
+    # per-feat multi-pass loop (not the single whole-tree turn that overflowed on a large design) — then
+    # the UNCHANGED single write. A dedicated round (mirror _run_gate_e_round), so the generic invoke
+    # below never handles task_plan.
+    if stage == "task_plan":
+        return await _run_task_plan_round(db, state, on_event=on_event, directive=directive, on_message=on_message)
+
     # E2 (CR-NS-042): on the FRESH gate_a dispatch (directive is None), prepend the version's included
     # backlog items so the Designer authors them as the version's requirements (no-op for other stages /
     # no items). A Director return/ask (directive set) does NOT re-inject — once-only, same --resume thread.
@@ -2107,27 +2330,6 @@ async def run_dispatch(
                 db.flush()
                 return state
         await _fast_fix_auto_deploy(db, state, on_message=on_message)
-        db.flush()
-        return state
-
-    if stage == "task_plan" and result.kind == "gate_report":
-        # F-007 §5 / CR-NS-020 CR-2: the plan's mechanical gate is the deterministic
-        # write-path (not the disk-deliverable verify_mechanical, nor a Coordinator judge
-        # turn — the Director reviews the materialized tree himself, per Dedo 2026-06-07).
-        reason = _write_task_plan(db, state, result)
-        if reason is not None:
-            # Plan write failed → blocked (CR-NS-022 §2): Coordinator relays it in plain Slovak.
-            await _coordinator_relay_engine_failure(
-                db, version_id, stage, f"plán úloh sa nepodarilo zapísať: {reason}", on_message
-            )
-            state.status = "blocked"
-            state.block_reason = "system_error"  # R4 (D1): task-plan write failed (engine-side)
-            state.next_action = "Plán úloh zamietnutý — Koordinátor poslal Directorovi vysvetlenie."
-        else:
-            # §A.2 site 1 (gate_report PASS — task_plan): Coordinator synthesis before settling.
-            synthesis = await _coordinator_synthesis(db, state, trigger="plán úloh", on_message=on_message)
-            state.status = "awaiting_director"
-            state.next_action = synthesis or "Director: schváliť/vrátiť plán úloh."
         db.flush()
         return state
 
@@ -2380,6 +2582,216 @@ async def _run_gate_e_round(
     # Unexpected Customer output → let the Director judge.
     state.status = "awaiting_director"
     state.next_action = "Director: posúď výstup fázy gate_e."
+    db.flush()
+    return state
+
+
+async def _settle_plan_pass_failure(
+    db: Session,
+    state: PipelineState,
+    failed: ParseFailure,
+    *,
+    relay_reason: str,
+    on_message: Optional[MessageCallback],
+) -> PipelineState:
+    """Settle a failed task_plan pass (skeleton or per-feat) — R1 envelope-loss parity (v0.7.3, CR-1).
+
+    Two distinct failure modes, two distinct settles:
+
+    * **Envelope-loss (``ClaudeAgentError`` — timeout/crash) with an armed dispatch baseline**
+      (``failed.lost_work`` is set): work may have committed even though the JSON envelope was lost.
+      :func:`_plan_pass_once` already recorded the ``_audit_lost_work`` notification, so settle to
+      ``awaiting_director`` with its "review & continue" ``next_action`` — the SAME R1 path
+      :func:`invoke_agent` takes; NOT a ``blocked`` dead-end (task_plan was never carved out of R1). No
+      Coordinator relay (that would dispatch a SECOND agent turn — the audit note IS the message).
+    * **Hard failure** (``lost_work`` is ``None``): relay to the Director via the Coordinator and HALT
+      ``blocked`` with an ACCURATE ``block_reason`` — ``agent_error`` when it was still a
+      ``ClaudeAgentError`` (timeout/crash with no audit baseline), ``parse_exhaustion`` only for a
+      genuinely unparseable structured output. Never mislabel a timeout as ``parse_exhaustion``.
+    """
+    if failed.lost_work is not None:
+        state.status = "awaiting_director"
+        state.next_action = failed.lost_work["next_action"]
+        db.flush()
+        return state
+    await _coordinator_relay_engine_failure(
+        db, state.version_id, "task_plan", f"{relay_reason}: {failed.reason}", on_message, failed=failed
+    )
+    state.status = "blocked"
+    state.block_reason = (
+        "agent_error" if failed.reason.startswith(_PLAN_PASS_ENVELOPE_LOSS_PREFIX) else "parse_exhaustion"
+    )
+    state.next_action = "Blokované — Koordinátor poslal Directorovi vysvetlenie a ďalší krok."
+    db.flush()
+    return state
+
+
+async def _run_task_plan_round(
+    db: Session,
+    state: PipelineState,
+    *,
+    on_event: Optional[claude_agent.EventCallback] = None,
+    directive: Optional[str] = None,
+    on_message: Optional[MessageCallback] = None,
+) -> PipelineState:
+    """Generate the task_plan INCREMENTALLY (v0.7.3, CR-1), then the UNCHANGED single write.
+
+    Mirrors :func:`_run_gate_e_round` (a bounded multi-pass loop), replacing the single whole-tree
+    structured-output turn that overflowed on a large design (``parse_exhaustion``):
+
+    * **Pass 1 — skeleton:** EPIC + FEAT (no tasks) + ``cross_cutting_rules``.
+    * **Passes 2..N — per feat (skeleton order):** that feat's ``tasks[]``, accumulated in memory.
+    * **Assemble** the full :class:`TaskPlan` in **skeleton order** (so ``_write_task_plan``'s MAX+1
+      numbering matches what the Director reviews), record the Designer ``gate_report`` (carries the
+      plan + ``cross_cutting_rules`` the build loop re-reads), then call the **unchanged**
+      :func:`_write_task_plan` and the existing settle (Coordinator synthesis → ``awaiting_director``).
+
+    Fail-closed: a skeleton exhaustion → the same ``parse_exhaustion`` relay as today; a single per-feat
+    exhaustion → HALT (``blocked``) via the Coordinator engine-failure relay **naming the feat**, writing
+    **nothing**; :data:`MAX_PLAN_FEATS` caps total feats. The passes use the dedicated
+    :func:`_invoke_plan_pass` — ``invoke_agent`` stays byte-identical.
+    """
+    version_id = state.version_id
+
+    # Pass 1 — skeleton (EPIC + FEAT, no tasks) + cross_cutting_rules.
+    skeleton = await _invoke_plan_pass(
+        db,
+        state,
+        prompt=_task_plan_skeleton_directive(directive),
+        json_schema=TASK_PLAN_SKELETON_JSON_SCHEMA,
+        parser=parse_task_plan_skeleton,
+        label_fn=lambda s: (
+            f"Plán — kostra: {len(s.epics)} epík, "
+            f"{sum(len(e.feats) for e in s.epics)} funkcií; úlohy sa dopĺňajú per funkcia."
+        ),
+        on_event=on_event,
+        on_message=on_message,
+    )
+    if isinstance(skeleton, ParseFailure):
+        # Skeleton failure: a genuine parse exhaustion → the same parse_exhaustion relay as today; an
+        # envelope-loss (timeout) → R1 awaiting_director (never a blocked dead-end). See the helper.
+        return await _settle_plan_pass_failure(
+            db,
+            state,
+            skeleton,
+            relay_reason="agent 'designer' nevrátil platnú kostru plánu ani po opravách",
+            on_message=on_message,
+        )
+
+    # MAX_PLAN_FEATS cap (fail-closed) — a coarse-grained plan (module ≈ task) never needs this many.
+    feat_refs = [(ei, fi, feat) for ei, epic in enumerate(skeleton.epics) for fi, feat in enumerate(epic.feats)]
+    if len(feat_refs) > MAX_PLAN_FEATS:
+        await _coordinator_relay_engine_failure(
+            db,
+            version_id,
+            "task_plan",
+            f"plán má priveľa funkcií ({len(feat_refs)} > strop {MAX_PLAN_FEATS}) — rozklad je príliš "
+            "jemnozrnný; treba hrubšiu granularitu (modul ≈ úloha, F-007 §4)",
+            on_message,
+        )
+        state.status = "blocked"
+        state.block_reason = "system_error"
+        state.next_action = "Plán úloh zamietnutý — Koordinátor poslal Directorovi vysvetlenie."
+        db.flush()
+        return state
+
+    # Passes 2..N — per-feat tasks, accumulated in skeleton order.
+    feat_tasks: dict[tuple[int, int], list] = {}
+    for ei, fi, feat in feat_refs:
+        pass_result = await _invoke_plan_pass(
+            db,
+            state,
+            prompt=_task_plan_feat_directive(feat.title),
+            json_schema=TASK_PLAN_FEAT_TASKS_JSON_SCHEMA,
+            parser=parse_task_plan_feat_tasks,
+            label_fn=lambda r, _t=feat.title: f"Plán — funkcia „{_t}“: {len(r.tasks)} úloh.",
+            on_event=on_event,
+            on_message=on_message,
+        )
+        if isinstance(pass_result, ParseFailure):
+            # Fail-closed: one per-feat pass exhausting → HALT naming the feat, write NOTHING (no half-plan
+            # — the write happens only after EVERY feat succeeds). An envelope-loss (timeout) instead
+            # settles R1 awaiting_director ("review & continue"), never a blocked dead-end (see the helper).
+            return await _settle_plan_pass_failure(
+                db,
+                state,
+                pass_result,
+                relay_reason=f"úlohy pre funkciu „{feat.title}“ sa nepodarilo vygenerovať ani po opravách",
+                on_message=on_message,
+            )
+        feat_tasks[(ei, fi)] = pass_result.tasks
+
+    # Assemble the FULL TaskPlan in skeleton order. TaskPlanFeat.tasks min_length=1 + the per-feat
+    # passes' own ≥1 guarantee make this non-empty (point 7's assembled-block assertion); a defensive
+    # ValidationError → fail-closed HALT (nothing written).
+    try:
+        full_plan = TaskPlan(
+            epics=[
+                TaskPlanEpic(
+                    title=epic.title,
+                    module_id=epic.module_id,
+                    feats=[
+                        TaskPlanFeat(
+                            title=feat.title,
+                            description=feat.description,
+                            estimated_minutes=feat.estimated_minutes,
+                            tasks=feat_tasks[(ei, fi)],
+                        )
+                        for fi, feat in enumerate(epic.feats)
+                    ],
+                )
+                for ei, epic in enumerate(skeleton.epics)
+            ]
+        )
+    except ValidationError as exc:
+        await _coordinator_relay_engine_failure(
+            db, version_id, "task_plan", f"zostavený plán je neúplný: {exc}", on_message
+        )
+        state.status = "blocked"
+        state.block_reason = "system_error"
+        state.next_action = "Plán úloh zamietnutý — Koordinátor poslal Directorovi vysvetlenie."
+        db.flush()
+        return state
+
+    assembled = PipelineStatusBlock(
+        stage="task_plan",
+        kind="gate_report",
+        summary="Plán úloh vygenerovaný inkrementálne (kostra + úlohy po funkciách).",
+        awaiting="director",
+        plan=full_plan,
+        cross_cutting_rules=skeleton.cross_cutting_rules,
+    )
+    # Record the Designer gate_report carrying the assembled plan + cross_cutting_rules: the build loop
+    # re-reads the rules from THIS message (_fetch_cross_cutting_rules), and it is the audit-trail record
+    # of the plan the Director reviews. No usage of its own (orchestrator-synthesized — the per-pass notes
+    # already accounted the agent tokens); mode="json" so a TaskPlanEpic.module_id UUID serializes for JSONB.
+    plan_msg = _record_message(
+        db,
+        version_id=version_id,
+        stage="task_plan",
+        author="designer",
+        recipient="director",
+        kind="gate_report",
+        content=assembled.summary,
+        payload={"plan": full_plan.model_dump(mode="json"), "cross_cutting_rules": skeleton.cross_cutting_rules},
+    )
+    if on_message is not None:
+        await on_message(plan_msg)
+
+    reason = _write_task_plan(db, state, assembled)
+    if reason is not None:
+        # Plan write failed → blocked (CR-NS-022 §2): Coordinator relays it in plain Slovak.
+        await _coordinator_relay_engine_failure(
+            db, version_id, "task_plan", f"plán úloh sa nepodarilo zapísať: {reason}", on_message
+        )
+        state.status = "blocked"
+        state.block_reason = "system_error"  # R4 (D1): task-plan write failed (engine-side)
+        state.next_action = "Plán úloh zamietnutý — Koordinátor poslal Directorovi vysvetlenie."
+    else:
+        # §A.2 site 1 (task_plan PASS): Coordinator synthesis before settling.
+        synthesis = await _coordinator_synthesis(db, state, trigger="plán úloh", on_message=on_message)
+        state.status = "awaiting_director"
+        state.next_action = synthesis or "Director: schváliť/vrátiť plán úloh."
     db.flush()
     return state
 

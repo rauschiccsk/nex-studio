@@ -10,7 +10,11 @@ import pytest
 from backend.services.pipeline_status import (
     ParseFailure,
     PipelineStatusBlock,
+    TaskPlanFeatTasks,
+    TaskPlanSkeleton,
     parse_status_block,
+    parse_task_plan_feat_tasks,
+    parse_task_plan_skeleton,
 )
 
 
@@ -331,3 +335,55 @@ def test_parse_failure_names_the_exact_missing_field():
     # the exact dotted+indexed path, not a stringified error array
     assert "plan.epics[0].feats[0].tasks[0].task_type" in res.reason
     assert "[{" not in res.reason  # NOT the raw `exc.errors()` list dump
+
+
+# ── (v0.7.3) narrowed task_plan-pass parsers (CR-1) ──────────────────────────
+
+
+def test_parse_task_plan_skeleton_accepts_feats_without_tasks():
+    # The skeleton pass emits EPIC + FEAT (NO tasks) + cross_cutting_rules — validates against the
+    # SEPARATE TaskPlanSkeleton type (the full plan models stay strict; F-007 §9 "schéma nemení").
+    obj = {
+        "epics": [
+            {
+                "title": "Foundation",
+                "module_id": "11111111-1111-1111-1111-111111111111",
+                "feats": [{"title": "Schema", "description": "tables", "estimated_minutes": 120}],
+            }
+        ],
+        "cross_cutting_rules": "## Invarianty\n- audit",
+    }
+    res = parse_task_plan_skeleton(obj)
+    assert isinstance(res, TaskPlanSkeleton)
+    assert res.epics[0].feats[0].title == "Schema"
+    assert res.cross_cutting_rules.startswith("## Invarianty")
+    assert str(res.epics[0].module_id) == "11111111-1111-1111-1111-111111111111"
+
+
+def test_parse_task_plan_skeleton_rejects_empty_and_non_object():
+    assert isinstance(parse_task_plan_skeleton({"epics": []}), ParseFailure)  # min_length=1
+    assert isinstance(parse_task_plan_skeleton({"epics": [{"title": "E", "feats": []}]}), ParseFailure)
+    assert isinstance(parse_task_plan_skeleton([]), ParseFailure)  # not an object
+    # a stray module label still fails at parse (parity with the full plan), not a cryptic write
+    bad = {"epics": [{"title": "E", "module_id": "backend", "feats": [{"title": "F"}]}]}
+    assert isinstance(parse_task_plan_skeleton(bad), ParseFailure)
+
+
+def test_parse_task_plan_feat_tasks_accepts_tasks_only():
+    obj = {"tasks": [{"title": "GL výpočet", "task_type": "backend", "estimated_minutes": 90}]}
+    res = parse_task_plan_feat_tasks(obj)
+    assert isinstance(res, TaskPlanFeatTasks)
+    assert res.tasks[0].title == "GL výpočet" and res.tasks[0].task_type == "backend"
+
+
+def test_parse_task_plan_feat_tasks_rejects_empty_and_bad_task():
+    assert isinstance(parse_task_plan_feat_tasks({"tasks": []}), ParseFailure)  # ≥1 task required
+    assert isinstance(parse_task_plan_feat_tasks({"tasks": [{"title": "T"}]}), ParseFailure)  # task_type missing
+    assert isinstance(parse_task_plan_feat_tasks("nope"), ParseFailure)  # not an object
+
+
+def test_task_plan_plan_required_guard_unchanged():
+    # Point 7: the ~283 plan-required guard is UNTOUCHED — a task_plan gate_report STILL needs a plan
+    # (the narrowed passes never hit this guard; only the final assembled block does, and it has one).
+    planless = _block(stage="task_plan", kind="gate_report", summary="x", awaiting="director")
+    assert isinstance(parse_status_block(planless), ParseFailure)
