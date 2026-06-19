@@ -1,0 +1,366 @@
+"""v0.7.5 CR-1 — App-starts acceptance smoke (HARD gate at full-flow ``gate_g``) unit tests.
+
+Two layers:
+
+* **The runner** (:func:`orchestrator._run_acceptance_smoke` + helpers) — graceful SKIP when the
+  project has no compose / no acceptance suite, a non-zero step → ``(False, reason)``, a clean run →
+  ``(True, "OK")``, teardown ALWAYS runs (the ``finally``), and the ephemeral override strips
+  ``container_name`` + host ``ports`` via the Compose-Spec ``!reset`` tag. ``docker`` itself is never
+  invoked — the single ``_compose_smoke_step`` subprocess seam is faked.
+
+* **The wiring** (:func:`orchestrator.verify_done`) — the smoke runs ONLY at ``gate_g``; a FAIL
+  short-circuits BEFORE the Coordinator judgment (the HARD deterministic gate), a PASS feeds a verdict
+  line into the judge prompt, and a non-``gate_g`` gate never invokes the smoke at all. Plus the
+  structural fast-fix guarantee: ``FAST_FIX_STAGE_ORDER`` has no ``gate_g``.
+"""
+
+from __future__ import annotations
+
+import uuid
+
+import pytest
+from sqlalchemy import select
+
+from backend.db.models.foundation import User
+from backend.db.models.pipeline import PipelineMessage, PipelineState
+from backend.db.models.projects import Project
+from backend.db.models.versions import Version
+from backend.services import orchestrator
+from backend.services.pipeline_status import PipelineStatusBlock
+
+COMPOSE_YML = """\
+services:
+  backend:
+    build: .
+    container_name: demo-backend
+    ports:
+      - "10180:10180"
+  postgres:
+    image: postgres:16-alpine
+    container_name: demo-postgres
+    ports:
+      - "10182:5432"
+"""
+
+
+# ---------------------------------------------------------------------------
+# Runner: _run_acceptance_smoke + helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_project(root, slug: str, *, compose: bool, acceptance: bool) -> None:
+    """Materialise a fake project tree under *root*/<slug> for the discovery step."""
+    proj = root / slug
+    proj.mkdir(parents=True, exist_ok=True)
+    if compose:
+        (proj / "docker-compose.yml").write_text(COMPOSE_YML)
+    if acceptance:
+        (proj / "backend" / "tests" / "acceptance").mkdir(parents=True, exist_ok=True)
+
+
+class _StepRecorder:
+    """Fake for ``orchestrator._compose_smoke_step``: scripts ``(rc, out)`` per compose step
+    (``up`` / ``ready`` = the in-container ``python`` /health probe / ``pytest`` = the acceptance
+    suite / ``down``) and records every command it was asked to run. Unknown steps default to PASS."""
+
+    def __init__(self, results: dict[str, tuple[int, str]]) -> None:
+        self._results = results
+        self.calls: list[list[str]] = []
+
+    async def __call__(self, cmd: list[str], timeout: int) -> tuple[int, str]:
+        self.calls.append(cmd)
+        if "python" in cmd:  # the readiness probe runs `exec -T backend python -c …`
+            key = "ready"
+        elif "pytest" in cmd:
+            key = "pytest"
+        elif "up" in cmd:
+            key = "up"
+        elif "down" in cmd:
+            key = "down"
+        else:
+            key = "other"
+        return self._results.get(key, (0, "ok"))
+
+    def ran(self, token: str) -> bool:
+        return any(token in cmd for cmd in self.calls)
+
+    def count(self, token: str) -> int:
+        return sum(1 for cmd in self.calls if token in cmd)
+
+
+@pytest.mark.asyncio
+async def test_smoke_skips_without_compose(monkeypatch, tmp_path) -> None:
+    """No ``docker-compose.yml`` → graceful SKIP (treated as PASS), never spawns docker."""
+    monkeypatch.setattr(orchestrator.claude_agent, "PROJECTS_ROOT", tmp_path)
+    _make_project(tmp_path, "noc", compose=False, acceptance=True)
+    rec = _StepRecorder({})
+    monkeypatch.setattr(orchestrator, "_compose_smoke_step", rec)
+
+    ok, detail = await orchestrator._run_acceptance_smoke("noc", "v0.7.5")
+
+    assert ok is True
+    assert "SKIPPED" in detail
+    assert rec.calls == [], "a skip must never spawn a docker subprocess"
+
+
+@pytest.mark.asyncio
+async def test_smoke_skips_without_acceptance_suite(monkeypatch, tmp_path) -> None:
+    """Compose present but no ``backend/tests/acceptance`` → graceful SKIP."""
+    monkeypatch.setattr(orchestrator.claude_agent, "PROJECTS_ROOT", tmp_path)
+    _make_project(tmp_path, "nosuite", compose=True, acceptance=False)
+    rec = _StepRecorder({})
+    monkeypatch.setattr(orchestrator, "_compose_smoke_step", rec)
+
+    ok, detail = await orchestrator._run_acceptance_smoke("nosuite", "v0.7.5")
+
+    assert ok is True
+    assert "SKIPPED" in detail
+    assert rec.calls == []
+
+
+@pytest.mark.asyncio
+async def test_smoke_fail_returns_reason_and_tears_down(monkeypatch, tmp_path) -> None:
+    """A non-zero ``up`` → ``(False, reason)`` carrying the tail, AND teardown still runs (finally)."""
+    monkeypatch.setattr(orchestrator.claude_agent, "PROJECTS_ROOT", tmp_path)
+    _make_project(tmp_path, "boom", compose=True, acceptance=True)
+    rec = _StepRecorder({"up": (1, "build error: missing base image")})
+    monkeypatch.setattr(orchestrator, "_compose_smoke_step", rec)
+
+    ok, detail = await orchestrator._run_acceptance_smoke("boom", "v0.7.5")
+
+    assert ok is False
+    assert detail.startswith("up exit 1:")
+    assert "build error" in detail
+    assert rec.ran("down"), "the isolated stack must be torn down even when 'up' failed"
+    assert not rec.ran("pytest"), "a failed 'up' short-circuits before the acceptance suite"
+    assert not rec.ran("python"), "a failed 'up' short-circuits before the readiness poll"
+
+
+@pytest.mark.asyncio
+async def test_smoke_acceptance_fail_returns_reason(monkeypatch, tmp_path) -> None:
+    """``up`` succeeds, the acceptance suite fails → ``(False, "acceptance exit …")`` + teardown."""
+    monkeypatch.setattr(orchestrator.claude_agent, "PROJECTS_ROOT", tmp_path)
+    _make_project(tmp_path, "redtests", compose=True, acceptance=True)
+    rec = _StepRecorder({"up": (0, ""), "pytest": (1, "2 failed, 3 passed")})
+    monkeypatch.setattr(orchestrator, "_compose_smoke_step", rec)
+
+    ok, detail = await orchestrator._run_acceptance_smoke("redtests", "v0.7.5")
+
+    assert ok is False
+    assert detail.startswith("acceptance exit 1:")
+    assert "2 failed" in detail
+    assert rec.ran("python"), "the readiness poll runs before the suite"
+    assert rec.ran("down")
+
+
+@pytest.mark.asyncio
+async def test_smoke_pass(monkeypatch, tmp_path) -> None:
+    """``up`` + acceptance both green → ``(True, "OK")`` and teardown runs."""
+    monkeypatch.setattr(orchestrator.claude_agent, "PROJECTS_ROOT", tmp_path)
+    _make_project(tmp_path, "green", compose=True, acceptance=True)
+    rec = _StepRecorder({"up": (0, "Started"), "ready": (0, ""), "pytest": (0, "8 passed"), "down": (0, "")})
+    monkeypatch.setattr(orchestrator, "_compose_smoke_step", rec)
+
+    ok, detail = await orchestrator._run_acceptance_smoke("green", "v0.7.5")
+
+    assert (ok, detail) == (True, "OK")
+    assert rec.ran("up") and rec.ran("python") and rec.ran("pytest") and rec.ran("down")
+    # Isolation: the stack is brought up under the dedicated ``-p <slug>-smoke`` project.
+    up_cmd = next(cmd for cmd in rec.calls if "up" in cmd)
+    assert "-p" in up_cmd and "green-smoke" in up_cmd
+
+
+def test_override_strips_container_name_and_ports(tmp_path) -> None:
+    """The ephemeral override resets ``container_name`` + ``ports`` for EVERY service via ``!reset``."""
+    compose = tmp_path / "docker-compose.yml"
+    compose.write_text(COMPOSE_YML)
+
+    override = orchestrator._acceptance_smoke_override(compose)
+
+    assert "  backend:" in override and "  postgres:" in override
+    assert override.count("container_name: !reset null") == 2
+    assert override.count("ports: !reset null") == 0  # ports reset to an empty list, not null
+    assert override.count("ports: !reset []") == 2
+
+
+@pytest.mark.asyncio
+async def test_smoke_not_ready_timeout_returns_clear_fail(monkeypatch, tmp_path) -> None:
+    """``up`` ok but ``/health`` never answers within budget → a CLEAR ``(False, "App not ready …")``
+    FAIL (Director Obs-2: not a confusing mid-suite connection-refused), the acceptance suite is never
+    reached, and teardown still runs. The probe is polled for the full bounded budget."""
+    monkeypatch.setattr(orchestrator.claude_agent, "PROJECTS_ROOT", tmp_path)
+    _make_project(tmp_path, "slowboot", compose=True, acceptance=True)
+
+    async def _no_sleep(*_a, **_k):  # keep the bounded readiness loop instant
+        return None
+
+    monkeypatch.setattr(orchestrator.asyncio, "sleep", _no_sleep)
+    rec = _StepRecorder({"up": (0, ""), "ready": (1, "URLError: <urlopen error [Errno 111] Connection refused>")})
+    monkeypatch.setattr(orchestrator, "_compose_smoke_step", rec)
+
+    ok, detail = await orchestrator._run_acceptance_smoke("slowboot", "v0.7.5")
+
+    assert ok is False
+    assert detail.startswith("App not ready within 120s:")
+    assert "Connection refused" in detail
+    assert not rec.ran("pytest"), "the acceptance suite must NOT run when the app never became ready"
+    assert rec.ran("down"), "teardown runs even when readiness times out"
+    expected = orchestrator.ACCEPTANCE_SMOKE_READY_TIMEOUT // orchestrator.ACCEPTANCE_SMOKE_READY_INTERVAL
+    assert rec.count("python") == expected, "the readiness probe is polled for the full bounded budget"
+
+
+def test_compose_backend_port_extraction(tmp_path) -> None:
+    """The readiness target = the ``backend`` service's CONTAINER port (short + long syntax); ``None``
+    when undeterminable so the caller skips the poll rather than guess."""
+    short = tmp_path / "short.yml"
+    short.write_text(COMPOSE_YML)  # backend ports "10180:10180" → container port 10180
+    assert orchestrator._compose_backend_port(short) == 10180
+
+    longform = tmp_path / "long.yml"
+    longform.write_text("services:\n  backend:\n    ports:\n      - target: 8000\n        published: 18000\n")
+    assert orchestrator._compose_backend_port(longform) == 8000
+
+    noports = tmp_path / "noports.yml"
+    noports.write_text("services:\n  backend:\n    image: x\n")
+    assert orchestrator._compose_backend_port(noports) is None
+
+
+# ---------------------------------------------------------------------------
+# Wiring: verify_done HARD gate (gate_g only) + fast-fix safety
+# ---------------------------------------------------------------------------
+
+
+def _mk_block(stage: str, kind: str = "gate_report") -> PipelineStatusBlock:
+    """A status block with empty commits/deliverables → ``verify_mechanical`` is a no-op (PASS)."""
+    return PipelineStatusBlock(stage=stage, kind=kind, summary="ok", awaiting="director")
+
+
+def _seed_version(db, stage: str) -> uuid.UUID:
+    creator = User(
+        username=f"sm_{uuid.uuid4().hex[:8]}",
+        email=f"sm_{uuid.uuid4().hex[:8]}@test.local",
+        password_hash="x",
+        role="ri",
+    )
+    db.add(creator)
+    db.flush()
+    project = Project(
+        name="Smoke Fixture",
+        slug=f"smoke-{uuid.uuid4().hex[:8]}",
+        category="multimodule",
+        description="v0.7.5 CR-1 smoke test fixture.",
+        created_by=creator.id,
+    )
+    db.add(project)
+    db.flush()
+    version = Version(project_id=project.id, version_number="v0.7.5", status="active")
+    db.add(version)
+    db.flush()
+    state = PipelineState(
+        version_id=version.id,
+        flow_type="new_version",
+        current_stage=stage,
+        current_actor="auditor",
+        status="agent_working",
+    )
+    db.add(state)
+    db.flush()
+    return version.id
+
+
+class _FakeAgent:
+    """Scripted stand-in for ``orchestrator.invoke_agent`` recording each call's role + prompt."""
+
+    def __init__(self, result_by_role: dict[str, object]) -> None:
+        self._result_by_role = result_by_role
+        self.calls: list[tuple[str, str]] = []
+
+    async def __call__(self, db, **kw):  # noqa: ANN001 - mirrors invoke_agent's (db, **kwargs) shape
+        self.calls.append((kw["role"], kw.get("prompt", "")))
+        return self._result_by_role[kw["role"]]
+
+    @property
+    def roles(self) -> list[str]:
+        return [r for r, _ in self.calls]
+
+
+@pytest.mark.asyncio
+async def test_verify_done_gate_g_smoke_fail_short_circuits(db_session, monkeypatch) -> None:
+    """At ``gate_g`` a smoke FAIL returns a non-None reason BEFORE the judgment (no Coordinator turn),
+    and records the evidence as a ``system→director`` message — the HARD deterministic gate."""
+    version_id = _seed_version(db_session, "gate_g")
+
+    async def _smoke(slug, version_label):
+        return False, "up exit 1: boom"
+
+    monkeypatch.setattr(orchestrator, "_run_acceptance_smoke", _smoke)
+    fake = _FakeAgent({"coordinator": _mk_block("gate_g")})
+    monkeypatch.setattr(orchestrator, "invoke_agent", fake)
+
+    reason, directive, is_coord_error = await orchestrator.verify_done(db_session, version_id, _mk_block("gate_g"))
+
+    assert reason == "App-starts smoke FAIL: up exit 1: boom"
+    assert directive is None and is_coord_error is False
+    assert "coordinator" not in fake.roles, "a smoke FAIL must short-circuit BEFORE the judgment turn"
+    smoke_msgs = (
+        db_session.execute(
+            select(PipelineMessage).where(
+                PipelineMessage.version_id == version_id,
+                PipelineMessage.author == "system",
+                PipelineMessage.recipient == "director",
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(smoke_msgs) == 1
+    assert smoke_msgs[0].payload == {"smoke": {"pass": False, "detail": "up exit 1: boom"}}
+    assert "FAIL" in smoke_msgs[0].content
+
+
+@pytest.mark.asyncio
+async def test_verify_done_gate_g_smoke_pass_runs_judgment_with_verdict(db_session, monkeypatch) -> None:
+    """A smoke PASS records the evidence, runs the judgment, and injects a verdict line into its prompt."""
+    version_id = _seed_version(db_session, "gate_g")
+
+    async def _smoke(slug, version_label):
+        return True, "OK"
+
+    monkeypatch.setattr(orchestrator, "_run_acceptance_smoke", _smoke)
+    fake = _FakeAgent({"coordinator": _mk_block("gate_g")})
+    monkeypatch.setattr(orchestrator, "invoke_agent", fake)
+
+    reason, directive, is_coord_error = await orchestrator.verify_done(db_session, version_id, _mk_block("gate_g"))
+
+    assert reason is None and directive is None and is_coord_error is False
+    assert "coordinator" in fake.roles, "a smoke PASS must proceed to the judgment turn"
+    coord_prompt = next(prompt for role, prompt in fake.calls if role == "coordinator")
+    assert "app-starts smoke" in coord_prompt.lower(), "the judge prompt must carry the smoke verdict line"
+
+
+@pytest.mark.asyncio
+async def test_verify_done_non_gate_g_never_runs_smoke(db_session, monkeypatch) -> None:
+    """At a non-``gate_g`` gate the smoke is never invoked (and the judge prompt has no verdict line)."""
+    version_id = _seed_version(db_session, "gate_b")
+    called = {"smoke": False}
+
+    async def _smoke(slug, version_label):
+        called["smoke"] = True
+        return True, "OK"
+
+    monkeypatch.setattr(orchestrator, "_run_acceptance_smoke", _smoke)
+    fake = _FakeAgent({"coordinator": _mk_block("gate_b")})
+    monkeypatch.setattr(orchestrator, "invoke_agent", fake)
+
+    reason, _directive, _err = await orchestrator.verify_done(db_session, version_id, _mk_block("gate_b"))
+
+    assert reason is None
+    assert called["smoke"] is False, "the smoke must run ONLY at gate_g"
+    coord_prompt = next(prompt for role, prompt in fake.calls if role == "coordinator")
+    assert "app-starts smoke" not in coord_prompt.lower(), "no smoke verdict line outside gate_g"
+
+
+def test_fast_fix_stage_order_has_no_gate_g() -> None:
+    """Structural fast-fix guarantee: the fast-fix lane can never reach the smoke (no ``gate_g``)."""
+    assert "gate_g" not in orchestrator.FAST_FIX_STAGE_ORDER
+    assert "gate_g" in orchestrator.STAGE_ORDER, "the full-flow lane still owns gate_g"
