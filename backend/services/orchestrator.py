@@ -19,6 +19,7 @@ convention (Phase 3).
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import shutil
@@ -50,7 +51,7 @@ from backend.schemas.epic import EpicCreate
 from backend.schemas.feat import FeatCreate
 from backend.schemas.task import TaskCreate
 from backend.services import backlog as backlog_service
-from backend.services import claude_agent, fast_fix
+from backend.services import claude_agent, fast_fix, template_bootstrap
 from backend.services import epic as epic_service
 from backend.services import feat as feat_service
 from backend.services import task as task_service
@@ -249,6 +250,7 @@ _ACTIONS = frozenset(
         "verdict",
         "rerun_release_audit",
         "uat_accept",
+        "retry_publish",
         "end_gate_e",
         "end_build",
         "continue_build",
@@ -268,6 +270,7 @@ _ADVANCING_ACTIONS = frozenset(
         "verdict",
         "rerun_release_audit",
         "uat_accept",
+        "retry_publish",
         "return",
         "end_gate_e",
         "end_build",
@@ -358,6 +361,11 @@ def determine_available_actions(state: PipelineState) -> set[str]:
             actions.add("rerun_release_audit")
     elif stage == "release":
         actions.add("uat_accept")
+        # v0.8.0 CR-3: a FULL-FLOW (new_version) release whose ENGINE publish failed settles to blocked —
+        # offer "retry_publish" (re-attempt the engine push + CI) ONLY there. Gated to new_version so it is
+        # ABSENT for fast_fix (its release never engine-publishes — out of scope) and for cr/bug.
+        if status == "blocked" and state.flow_type == "new_version":
+            actions.add("retry_publish")
 
     return actions
 
@@ -2232,6 +2240,132 @@ async def _run_uat_deploy(project_slug: str, uat_slug: str) -> tuple[bool, str]:
     return False, (f"exit {proc.returncode}: {tail}" if tail else f"exit {proc.returncode}")
 
 
+# Engine-owned GitHub release publish (v0.8.0 CR-1). ``RELEASE_PUBLISH_TIMEOUT`` bounds the CI WATCH —
+# ``≈ STAGE_TIMEOUT["release"]`` (900s); a slower CI is NOT a false block (the push already succeeded →
+# "still running"). ``RELEASE_PUBLISH_STEP_TIMEOUT`` is the per-subprocess backstop for the quick
+# git/gh steps (setup-git / push / rev-parse / run list); ``RELEASE_PUBLISH_PUSH_RETRIES`` mirrors the
+# template_bootstrap push retry (354-377). The run REGISTERS a few seconds after the push (≈ a CI
+# trigger lag) — poll ``gh run list`` for the pushed HEAD up to ATTEMPTS×INTERVAL before watching.
+RELEASE_PUBLISH_TIMEOUT = 900
+RELEASE_PUBLISH_STEP_TIMEOUT = 180
+RELEASE_PUBLISH_PUSH_RETRIES = 1
+RELEASE_PUBLISH_RUN_RESOLVE_ATTEMPTS = 6
+RELEASE_PUBLISH_RUN_RESOLVE_INTERVAL = 5  # seconds between run-resolve polls (≈30s budget for CI to register)
+
+
+async def _run_publish_step(cmd: list[str], timeout: int) -> tuple[int, str]:
+    """Run ONE git/gh subprocess for the release publish; never raises. Returns ``(returncode,
+    combined_output)``.
+
+    The single subprocess seam for :func:`_run_release_publish` (the unit tests fake THIS, never
+    ``git``/``gh`` themselves) — mirrors :func:`_compose_smoke_step` (``create_subprocess_exec`` +
+    ``wait_for``, stderr folded into stdout, async so a network round-trip never blocks the event loop).
+    Inherits the backend's runtime env — the SAME ``GH_TOKEN`` + ``gh auth setup-git`` credential helper
+    create-project uses — which is NEVER read, logged, or returned here. A spawn failure → ``(127,
+    reason)``; a timeout → ``(124, reason)`` (sentinel non-zero codes the caller treats as that step's
+    failure, like a real non-zero exit)."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
+        )
+    except OSError as exc:
+        return 127, f"spawn failed: {exc}"
+    try:
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        return 124, f"timeout ({timeout}s)"
+    return proc.returncode, (stdout or b"").decode("utf-8", "replace")
+
+
+async def _resolve_pushed_ci_run(repo_full_name: str, head_sha: str) -> Optional[str]:
+    """The GitHub Actions run id whose ``headSha`` is exactly the pushed HEAD, or ``None`` when
+    undeterminable (gh error / not yet registered / unparseable).
+
+    Matching on the SHA (not "the latest run") ties the watch to the commit the publish just pushed —
+    a stale already-green run can never be mistaken for this release's CI (a false PASS). The caller
+    polls this (the run registers a few seconds after the push). ``None`` → the caller keeps polling,
+    then treats CI as "still running" (the push already succeeded — never a false block)."""
+    rc, out = await _run_publish_step(
+        ["gh", "run", "list", "-R", repo_full_name, "--limit", "20", "--json", "databaseId,headSha"],
+        RELEASE_PUBLISH_STEP_TIMEOUT,
+    )
+    if rc != 0:
+        return None
+    try:
+        runs = json.loads(out or "[]")
+    except (ValueError, TypeError):
+        return None
+    for run in runs if isinstance(runs, list) else []:
+        if isinstance(run, dict) and run.get("headSha") == head_sha:
+            run_id = run.get("databaseId")
+            return str(run_id) if run_id is not None else None
+    return None
+
+
+async def _run_release_publish(project_slug: str, repo_full_name: str) -> tuple[bool, str]:
+    """Engine-owned GitHub publish of a finalized release (v0.8.0 CR-1): push the project's local
+    commits to GitHub and verify CI, using the backend's EXISTING ``GH_TOKEN`` + ``gh auth setup-git``
+    credential helper — the SAME path create-project uses (no new credential; nothing token-valued is
+    read/logged/returned).
+
+    Returns ``(ok, detail)`` and NEVER raises (modelled on :func:`_run_uat_deploy`): a spawn failure /
+    timeout becomes a settled outcome, never a hang. Steps:
+
+    1. ``gh auth setup-git`` — idempotent; wires the HTTPS credential helper (template_bootstrap pattern,
+       339-348). A non-zero exit is NON-fatal — the push below surfaces the real credential error.
+    2. ``git push origin main`` in ``/opt/projects/<slug>`` with a retry on a transient failure (mirror
+       template_bootstrap 354-377). Push failure after retries → ``(False, "git push failed: <err>")``.
+    3. Verify CI for the pushed HEAD: resolve the run whose ``headSha`` is the pushed HEAD (poll
+       ``gh run list``, since the run registers a few seconds after the push), then ``gh run watch
+       <id> --exit-status`` bounded by :data:`RELEASE_PUBLISH_TIMEOUT`. CI green → ``(True, "published +
+       CI green (<id>)")``; CI red → ``(False, "CI failed (<id>): <tail>")``; can't determine / watch
+       times out → ``(True, "pushed; CI still running (<id>) — monitor")`` (the push SUCCEEDED — do NOT
+       false-block on a slow/undeterminable CI)."""
+    project_root = claude_agent.PROJECTS_ROOT / project_slug
+
+    # 1. Wire creds — idempotent; non-zero is non-fatal (the push surfaces any real credential error).
+    await _run_publish_step(["gh", "auth", "setup-git"], RELEASE_PUBLISH_STEP_TIMEOUT)
+
+    # 2. Push (with one retry on a transient failure) — mirror template_bootstrap 354-377.
+    push_cmd = ["git", "-C", str(project_root), "push", "origin", "main"]
+    last_err = ""
+    for _attempt in range(RELEASE_PUBLISH_PUSH_RETRIES + 1):
+        rc, out = await _run_publish_step(push_cmd, RELEASE_PUBLISH_STEP_TIMEOUT)
+        if rc == 0:
+            break
+        last_err = out.strip()[-400:]
+    else:
+        return False, f"git push failed: {last_err}"
+
+    # 3. Verify CI for the pushed HEAD. Resolve the local HEAD, then poll for ITS run (registration lag).
+    rc, out = await _run_publish_step(
+        ["git", "-C", str(project_root), "rev-parse", "HEAD"], RELEASE_PUBLISH_STEP_TIMEOUT
+    )
+    head_sha = out.strip() if rc == 0 else ""
+    if not head_sha:
+        return True, "pushed; CI still running (HEAD nezistený) — monitor"
+
+    run_id: Optional[str] = None
+    for attempt in range(RELEASE_PUBLISH_RUN_RESOLVE_ATTEMPTS):
+        run_id = await _resolve_pushed_ci_run(repo_full_name, head_sha)
+        if run_id is not None:
+            break
+        if attempt < RELEASE_PUBLISH_RUN_RESOLVE_ATTEMPTS - 1:
+            await asyncio.sleep(RELEASE_PUBLISH_RUN_RESOLVE_INTERVAL)
+    if run_id is None:
+        return True, "pushed; CI still running (run zatiaľ nezaregistrovaný) — monitor"
+
+    rc, out = await _run_publish_step(
+        ["gh", "run", "watch", run_id, "--exit-status", "-R", repo_full_name], RELEASE_PUBLISH_TIMEOUT
+    )
+    if rc == 0:
+        return True, f"published + CI green ({run_id})"
+    if rc in (124, 127):  # our watch timed out / could not spawn — push already succeeded; never false-block CI.
+        return True, f"pushed; CI still running ({run_id}) — monitor"
+    return False, f"CI failed ({run_id}): {out.strip()[-300:]}"
+
+
 # App-starts acceptance smoke (v0.7.5 CR-1) — the deterministic HARD gate behind full-flow ``gate_g``.
 ACCEPTANCE_SMOKE_TIMEOUT = 900  # matches UAT_DEPLOY_TIMEOUT — covers ``up --build`` + the acceptance suite.
 # Readiness gate (v0.7.5 CR-1 robustness, Director Obs-2): ``up --wait`` only guarantees the container is
@@ -2492,6 +2626,73 @@ async def _fast_fix_auto_deploy(
         state.next_action = f"UAT deploy zlyhal: {detail}. Skús znova alebo vráť."
 
 
+async def _release_auto_publish(
+    db: Session, state: PipelineState, *, on_message: Optional[MessageCallback] = None
+) -> None:
+    """Engine-owned GitHub publish of a finalized FULL-FLOW release (v0.8.0 CR-2).
+
+    The Coordinator finalizes the release LOCALLY (clean + secure) but the agent's headless environment
+    has NO GitHub credentials — so the ENGINE (which has ``GH_TOKEN``) publishes here. Modelled EXACTLY
+    on :func:`_fast_fix_auto_deploy`: resolves the version's ``project.repo_url`` and the repo full name
+    (``{github_org}/{slug}`` — the SAME :func:`template_bootstrap._repo_from_url` create-project uses):
+
+    * ``repo_url`` NULL (no GitHub repo) → skip gracefully with a ``system→director`` note and settle to
+      ``awaiting_director`` (the Director still accepts; nothing was published — never silently blocked),
+      mirroring the ``_fast_fix_auto_deploy`` NULL-slug skip.
+    * set → run :func:`_run_release_publish` (push + CI verify). Success → ``awaiting_director`` (the
+      Director's ``uat_accept``). Failure (push/CI failed) → ``blocked`` with the publish error in
+      ``next_action`` — surfaced to the Director, never hidden.
+
+    Records the outcome as a ``system→director`` notification (payload ``{"release_publish": {ok,
+    detail}}``); mutates ``state.status`` / ``state.next_action``; the caller flushes."""
+    version_id = state.version_id
+    project = db.execute(
+        select(Project).join(Version, Version.project_id == Project.id).where(Version.id == version_id)
+    ).scalar_one_or_none()
+    repo_url = project.repo_url if project is not None else None
+    project_slug = project.slug if project is not None else _project_slug_for_version(db, version_id)
+
+    if not repo_url:
+        msg = _record_message(
+            db,
+            version_id=version_id,
+            stage="release",
+            author="system",
+            recipient="director",
+            kind="notification",
+            content="Projekt nemá nakonfigurovaný GitHub repozitár (repo_url) — preskakujem publikovanie.",
+            payload={"release_publish": {"skipped": True, "reason": "no_repo_url"}},
+        )
+        if on_message is not None:
+            await on_message(msg)
+        state.status = "awaiting_director"
+        state.next_action = "Director: over a akceptuj (GitHub publish preskočený — projekt nemá repo_url)."
+        return
+
+    repo_full_name = template_bootstrap._repo_from_url(repo_url, project_slug)
+    ok, detail = await _run_release_publish(project_slug, repo_full_name)
+    content = "Publikované na GitHub + CI zelené — over a akceptuj." if ok else f"GitHub publish/CI zlyhal: {detail}"
+    msg = _record_message(
+        db,
+        version_id=version_id,
+        stage="release",
+        author="system",
+        recipient="director",
+        kind="notification",
+        content=content,
+        payload={"release_publish": {"repo": repo_full_name, "ok": ok, "detail": detail}},
+    )
+    if on_message is not None:
+        await on_message(msg)
+    if ok:
+        state.status = "awaiting_director"
+        state.next_action = "Publikované na GitHub + CI zelené — over a akceptuj (uat_accept)."
+    else:
+        state.status = "blocked"
+        state.block_reason = "system_error"  # R4 (D1): engine-side GitHub publish / CI failure
+        state.next_action = f"GitHub publish/CI zlyhal: {detail}"
+
+
 async def run_dispatch(
     db: Session,
     version_id: uuid.UUID,
@@ -2723,6 +2924,14 @@ async def run_dispatch(
             synthesis = await _coordinator_synthesis(db, state, trigger=f"fáza '{stage}'", on_message=on_message)
             state.status = "awaiting_director"
             state.next_action = synthesis or f"Director: schváliť/vrátiť fázu '{stage}'."
+            # v0.8.0 CR-2: the FULL-FLOW (new_version) release settle is ENGINE-OWNED publish. The
+            # Coordinator finalized LOCALLY (clean + secure) but has no GitHub creds; the engine (with
+            # GH_TOKEN) pushes + verifies CI HERE, overriding the awaiting_director settle above with the
+            # publish outcome (success → awaiting_director for uat_accept, failure → blocked, surfaced).
+            # Gated to new_version so the fast_fix release block (its own early return above) stays
+            # UNTOUCHED; cr/bug keep the generic awaiting_director settle (their publish is out of scope).
+            if stage == "release" and state.flow_type == "new_version":
+                await _release_auto_publish(db, state, on_message=on_message)
         db.flush()
         return state
 
@@ -5150,6 +5359,30 @@ async def apply_action(
             kind="notification",
             content="UAT akceptované zákazníkom — pipeline dokončená.",
         )
+        db.flush()
+        return state
+
+    if action == "retry_publish":
+        # v0.8.0 CR-3: re-attempt the engine-owned GitHub publish for a FULL-FLOW release whose publish
+        # failed (release/blocked). Re-runs _release_auto_publish (re-push + CI verify) synchronously
+        # within the action — an engine step like uat_accept, NOT a stage advance; the result sets the
+        # status (success → awaiting_director for uat_accept, failure → blocked, surfaced). Scoped to a
+        # new_version release: fast_fix never engine-publishes (out of scope), so it stays UNTOUCHED.
+        if state.current_stage != "release":
+            raise OrchestratorError("retry_publish je platné len vo fáze release")
+        if state.flow_type != "new_version":
+            raise OrchestratorError("retry_publish je platné len pre plnú verziu (new_version)")
+        _record_message(
+            db,
+            version_id=version_id,
+            stage="release",
+            author="director",
+            recipient="system",
+            kind="directive",
+            content="Publikovať na GitHub (znova) — engine push + CI.",
+            payload={"retry_publish": True},
+        )
+        await _release_auto_publish(db, state)
         db.flush()
         return state
 

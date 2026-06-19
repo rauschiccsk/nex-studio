@@ -465,6 +465,21 @@ export function PipelineActionBar({
         </ActionRow>
       )}
 
+      {/* v0.8.0 CR-3: a FULL-FLOW release whose ENGINE publish failed settles to blocked — the engine
+          re-pushes the local commits to GitHub and watches CI (no agent re-run). Backend offers it only at
+          a new_version release/blocked, so render purely on allowed(...) (absent for fast_fix / cr / bug). */}
+      {current_stage === "release" && blocked && allowed("retry_publish") && (
+        <ActionRow hint="Engine pushne lokálne commity na GitHub a sleduje CI.">
+          <button
+            onClick={() => onAction("retry_publish")}
+            disabled={inFlight}
+            className={`${btn} bg-primary-600 text-white hover:bg-primary-500`}
+          >
+            Publikovať na GitHub
+          </button>
+        </ActionRow>
+      )}
+
       {/* Coordinator proposal (E7, F-008 §9): when the Coordinator has emitted an EXECUTABLE directive,
           the Director approves it with ONE button labelled by the concrete effect (WS-C class-D) →
           apply_coordinator_recommendation runs the matching executor. Shown at a settled build only. */}

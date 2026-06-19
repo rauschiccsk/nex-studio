@@ -142,6 +142,7 @@ export type PipelineActionName =
   | "verdict"
   | "rerun_release_audit"
   | "uat_accept"
+  | "retry_publish"
   | "end_gate_e"
   | "end_build"
   | "continue_build"

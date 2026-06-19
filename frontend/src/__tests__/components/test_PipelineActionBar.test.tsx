@@ -769,3 +769,45 @@ describe("PipelineActionBar — gate_g FAIL re-gate (CR-NS-057 §F2.4)", () => {
     expect(onAction).toHaveBeenCalledWith("verdict", { verdict: "FAIL" });
   });
 });
+
+// v0.8.0 CR-3: the engine-owned GitHub publish recovery button at a release/blocked (publish failed).
+describe("PipelineActionBar — retry_publish (release publish)", () => {
+  it("at (release, blocked) with retry_publish allowed shows 'Publikovať na GitHub' and fires retry_publish", () => {
+    const onAction = vi.fn();
+    render(
+      <PipelineActionBar
+        state={mkState("release", "blocked")}
+        availableActions={["retry_publish", "ask", "return", "answer"]}
+        inFlight={false}
+        onAction={onAction}
+      />,
+    );
+    screen.getByText("Publikovať na GitHub").click();
+    expect(onAction).toHaveBeenCalledWith("retry_publish");
+  });
+
+  it("at (release, awaiting_director) shows 'Akceptovať UAT', never the publish button", () => {
+    render(
+      <PipelineActionBar
+        state={mkState("release", "awaiting_director")}
+        availableActions={["uat_accept", "ask", "return"]}
+        inFlight={false}
+        onAction={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("Akceptovať UAT")).toBeInTheDocument();
+    expect(screen.queryByText("Publikovať na GitHub")).not.toBeInTheDocument();
+  });
+
+  it("hides the publish button when retry_publish is not in the offered set (e.g. fast_fix release/blocked)", () => {
+    render(
+      <PipelineActionBar
+        state={mkState("release", "blocked")}
+        availableActions={["ask", "return", "answer"]} // backend omits retry_publish for fast_fix
+        inFlight={false}
+        onAction={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText("Publikovať na GitHub")).not.toBeInTheDocument();
+  });
+});
