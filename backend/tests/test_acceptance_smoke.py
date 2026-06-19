@@ -16,6 +16,11 @@ Two layers:
 
 from __future__ import annotations
 
+import contextlib
+import io
+import types
+import urllib.error
+import urllib.request
 import uuid
 
 import pytest
@@ -207,6 +212,88 @@ async def test_smoke_not_ready_timeout_returns_clear_fail(monkeypatch, tmp_path)
     assert rec.ran("down"), "teardown runs even when readiness times out"
     expected = orchestrator.ACCEPTANCE_SMOKE_READY_TIMEOUT // orchestrator.ACCEPTANCE_SMOKE_READY_INTERVAL
     assert rec.count("python") == expected, "the readiness probe is polled for the full bounded budget"
+
+
+@pytest.mark.asyncio
+async def test_smoke_404_health_is_ready_and_proceeds(monkeypatch, tmp_path) -> None:
+    """LIVE nex-asistent v0.7.7 case: the probe path returns 404 (health is at the versioned route) →
+    READY on the FIRST poll (no looping to the budget) → the smoke proceeds to the acceptance run. The
+    404→exit-0 mapping lives in the probe; here it is modelled by the readiness step returning rc 0."""
+    monkeypatch.setattr(orchestrator.claude_agent, "PROJECTS_ROOT", tmp_path)
+    _make_project(tmp_path, "v1health", compose=True, acceptance=True)
+    rec = _StepRecorder({"up": (0, ""), "ready": (0, "status 404"), "pytest": (0, "5 passed")})
+    monkeypatch.setattr(orchestrator, "_compose_smoke_step", rec)
+
+    ok, detail = await orchestrator._run_acceptance_smoke("v1health", "v0.7.7")
+
+    assert (ok, detail) == (True, "OK")
+    assert rec.count("python") == 1, "a 404 (server up) is READY on the first poll — no looping"
+    assert rec.ran("pytest"), "a responding server (even 404 at the probe path) proceeds to the suite"
+
+
+# ---------------------------------------------------------------------------
+# Readiness probe classification (v0.7.7): server responded (status < 500) = READY.
+# Execute the in-container probe SOURCE locally with a stubbed urlopen so the actual
+# status→exit-code mapping is verified (a mocked _compose_smoke_step cannot reach it).
+# ---------------------------------------------------------------------------
+
+
+def _exec_probe(monkeypatch, fake_urlopen) -> tuple[int, str]:
+    """Run :func:`orchestrator._readiness_probe_src` with ``urllib.request.urlopen`` stubbed; return
+    ``(exit_code, stdout)``. The probe ``import urllib.request`` resolves to the patched module."""
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    buf = io.StringIO()
+    code = 0
+    try:
+        with contextlib.redirect_stdout(buf):
+            exec(compile(orchestrator._readiness_probe_src(10180), "<probe>", "exec"), {})  # noqa: S102
+    except SystemExit as exc:
+        code = exc.code if isinstance(exc.code, int) else 1
+    return code, buf.getvalue()
+
+
+def test_readiness_probe_404_is_ready(monkeypatch) -> None:
+    """A 404 (server responding, probe path not a declared route) → READY (exit 0) — the v0.7.7 fix."""
+
+    def _u(*_a, **_k):
+        raise urllib.error.HTTPError("http://localhost/health", 404, "Not Found", {}, None)
+
+    code, out = _exec_probe(monkeypatch, _u)
+    assert code == 0
+    assert "404" in out
+
+
+def test_readiness_probe_200_is_ready(monkeypatch) -> None:
+    """A 2xx success → READY (exit 0) — unchanged happy path."""
+
+    def _u(*_a, **_k):
+        return types.SimpleNamespace(status=200)
+
+    code, out = _exec_probe(monkeypatch, _u)
+    assert code == 0
+    assert "200" in out
+
+
+def test_readiness_probe_connection_refused_keeps_polling(monkeypatch) -> None:
+    """No HTTP response (connection refused — server not accepting yet) → keep polling (exit 1)."""
+
+    def _u(*_a, **_k):
+        raise urllib.error.URLError("Connection refused")
+
+    code, _out = _exec_probe(monkeypatch, _u)
+    assert code == 1
+
+
+def test_readiness_probe_5xx_keeps_polling(monkeypatch) -> None:
+    """A 5xx (server up but signalling starting/unavailable) → keep polling (exit 1)."""
+    for status in (500, 503):
+
+        def _u(*_a, _s=status, **_k):
+            raise urllib.error.HTTPError("http://localhost/health", _s, "err", {}, None)
+
+        code, out = _exec_probe(monkeypatch, _u)
+        assert code == 1, f"status {status} must keep polling"
+        assert str(status) in out
 
 
 def test_compose_backend_port_extraction(tmp_path) -> None:

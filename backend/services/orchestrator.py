@@ -2302,26 +2302,49 @@ def _compose_backend_port(compose_path: Path) -> Optional[int]:
     return int(container) if container.isdigit() else None
 
 
-async def _await_acceptance_app_ready(base: list[str], port: int) -> tuple[bool, str]:
-    """Poll the ``backend`` service's in-container ``/health`` until it answers (exit 0) or the budget
-    (:data:`ACCEPTANCE_SMOKE_READY_TIMEOUT`) elapses. ``up --wait`` only guarantees the container is
-    RUNNING — a backend WITHOUT a healthcheck may still be booting/migrating, so without this gate the
-    first acceptance request races the boot into a confusing connection-refused mid-suite (a FALSE FAIL
-    on a HARD gate). Returns ``(True, "healthy")`` once it answers, else ``(False, last)`` on timeout.
+def _readiness_probe_src(port: int) -> str:
+    """In-container stdlib Python probe (the same interpreter that runs the acceptance suite — no curl
+    dependency; slim Python images like asistent's ``python:3.12-slim`` ship no curl).
 
-    Probes via the container's OWN Python stdlib (``urllib.request`` — the same interpreter that runs the
-    acceptance suite, so guaranteed present wherever ``poetry run pytest`` runs), NOT ``curl``: slim
-    Python images (asistent's ``python:3.12-slim``) ship no curl, which would make the poll fail forever
-    and re-introduce the very false FAIL this gate removes. Same ``/health`` convention as the
-    postscaffold smoke (``create_project_postscaffold._run_smoke_test``)."""
-    probe = f"import urllib.request as u; u.urlopen('http://localhost:{port}/health', timeout=5)"
-    cmd = base + ["exec", "-T", "backend", "python", "-c", probe]
+    Exit ``0`` = **READY**: the server returned an HTTP response with status ``< 500`` — a 2xx/3xx success
+    OR a 4xx (e.g. 404, where the probe path simply isn't a declared route — irrelevant; the acceptance
+    suite uses the app's real routes). Exit ``1`` = **keep polling**: status ``>= 500`` (server up but
+    signalling starting/unavailable) OR no HTTP response at all (connection refused / reset / DNS /
+    timeout). Path-agnostic (v0.7.7) — a 404 at the probe path now means "up", so a versioned health route
+    (nex-asistent's ``/api/v1/health``) no longer false-FAILs the gate. Prints ``status <code>`` / ``err
+    <e>`` so the caller can surface the last observation."""
+    return (
+        "import sys, urllib.request, urllib.error\n"
+        "try:\n"
+        f"    r = urllib.request.urlopen('http://localhost:{port}/health', timeout=5)\n"
+        "    print('status', getattr(r, 'status', 200)); sys.exit(0)\n"
+        "except urllib.error.HTTPError as e:\n"
+        "    print('status', e.code); sys.exit(0 if e.code < 500 else 1)\n"
+        "except Exception as e:\n"
+        "    print('err', e); sys.exit(1)\n"
+    )
+
+
+async def _await_acceptance_app_ready(base: list[str], port: int) -> tuple[bool, str]:
+    """Poll the ``backend`` service's in-container health endpoint until the SERVER RESPONDS (any HTTP
+    status ``< 500``) or the budget (:data:`ACCEPTANCE_SMOKE_READY_TIMEOUT`) elapses. ``up --wait`` only
+    guarantees the container is RUNNING — a backend WITHOUT a healthcheck may still be booting/migrating,
+    so without this gate the first acceptance request races the boot into a confusing connection-refused
+    mid-suite (a FALSE FAIL on a HARD gate). Returns ``(True, last)`` once the server responds, else
+    ``(False, last)`` on timeout.
+
+    Readiness = "the server is accepting + handling HTTP requests", NOT "this exact path returns 2xx"
+    (v0.7.7, LIVE-confirmed: nex-asistent serves health at the versioned ``/api/v1/health``, so a probe to
+    ``/health`` gets 404 — which now correctly means "up"). The status``<500`` classification lives in
+    :func:`_readiness_probe_src` (it runs in-container); here we treat the probe's exit 0 as READY and
+    keep polling on exit ``!= 0`` (status ``>= 500`` / connection error / timeout)."""
+    cmd = base + ["exec", "-T", "backend", "python", "-c", _readiness_probe_src(port)]
     attempts = max(1, ACCEPTANCE_SMOKE_READY_TIMEOUT // ACCEPTANCE_SMOKE_READY_INTERVAL)
     last = "no response"
     for i in range(attempts):
         rc, out = await _compose_smoke_step(cmd, 30)
         if rc == 0:
-            return True, "healthy"
+            return True, out.strip()[-200:] or "ready"
         last = out.strip()[-200:] or f"exit {rc}"
         if i < attempts - 1:
             await asyncio.sleep(ACCEPTANCE_SMOKE_READY_INTERVAL)
