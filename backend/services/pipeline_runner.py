@@ -150,17 +150,22 @@ async def _run(version_id: uuid.UUID, directive: str | None = None, gate_e_dispa
                 db, version_id, on_event, directive, gate_e_dispatch=gate_e_dispatch, on_message=on_message
             )
             db.commit()
-            # Fast-Fix one-touch auto-chain (CR-NS-097): run_dispatch returns status=agent_working ONLY when
-            # it DELIBERATELY auto-advanced the stage (fast_fix: kickoff→build on a trivial triage,
-            # build→release on a clean build) and wants the next stage run in THIS same single-flight task —
-            # no Director gate between them. Continue dispatching with a stage-correct activity callback,
-            # broadcasting each intermediate state so the board steps kickoff→build→release live, until it
-            # settles (release → awaiting_director for the Director's single uat_accept). Bounded as a
-            # backstop: every other path always settles, so this never fires for new_version/cr/bug.
+            # Engine auto-chain (CR-NS-097 fast-fix + PIPELINE-AUTONOMY new_version routine-gate auto-ratify):
+            # run_dispatch returns status=agent_working ONLY when it DELIBERATELY auto-advanced the stage and
+            # wants the next stage run in THIS same single-flight task — no Director gate between them. Cases:
+            #   • fast_fix one-touch lane: kickoff→build on a trivial triage, build→release on a clean build;
+            #   • new_version Phase 1: routine gates a→d auto-ratify on a deterministically-clean PASS (the
+            #     chain then settles at gate_e — Gate E bounding is Phase 3, not yet auto-ratified);
+            #   • new_version Phase 2: a clean build (build_readiness clean — 0 todo ∧ 0 failed) auto-ratifies
+            #     build→gate_g (the release verdict at gate_g stays a KEY Director click, never auto).
+            # Continue dispatching with a stage-correct activity callback, broadcasting each intermediate state
+            # so the board steps through the auto-advanced stages live, until it settles. Bounded as a backstop
+            # by len(STAGE_ORDER) — the full waterfall, the longest possible auto-chain (stages advance
+            # monotonically, so no chain can exceed it). The old len(FAST_FIX_STAGE_ORDER)=4 fit the a→d chain
+            # EXACTLY (zero headroom) and is too tight now that build→gate_g can also chain. Every real path
+            # settles (status != agent_working) well before the bound, so it only stops a hypothetical runaway.
             guard = 0
-            while (
-                state is not None and state.status == "agent_working" and guard < len(orchestrator.FAST_FIX_STAGE_ORDER)
-            ):
+            while state is not None and state.status == "agent_working" and guard < len(orchestrator.STAGE_ORDER):
                 guard += 1
                 await _broadcast_state(version_id, state)
                 on_event = _activity_callback(version_id, state.current_stage, state.current_actor)

@@ -204,6 +204,39 @@ async def test_run_new_version_does_not_auto_chain(db_session, monkeypatch):
     assert len([p for _, p in fake_reg.events if p["type"] == "state_changed"]) == 1
 
 
+async def test_run_new_version_build_to_gate_g_auto_chains_within_widened_bound(db_session, monkeypatch):
+    """PIPELINE-AUTONOMY Phase 2: a new_version build that auto-ratifies build→gate_g (agent_working) makes
+    _run CONTINUE the chain in the SAME task — exactly like the fast-fix lane — until gate_g (the KEY release
+    verdict) settles awaiting_director. Exercises the WIDENED loop bound len(STAGE_ORDER); the old
+    len(FAST_FIX_STAGE_ORDER)=4 already fit this 1-step chain, but the bound must cover the longest new_version
+    auto-chain (a→d is 4 — the old EXACT fit), so it is now len(STAGE_ORDER)."""
+    version = _make_version(db_session)
+    _seed_working_state(db_session, version.id)  # flow_type=new_version, at build below
+    state = db_session.execute(select(PipelineState).where(PipelineState.version_id == version.id)).scalar_one()
+    state.current_stage, state.current_actor = "build", "implementer"
+    db_session.flush()
+    fake_reg = _wire_runner(db_session, monkeypatch)
+
+    steps = iter([("gate_g", "agent_working"), ("gate_g", "awaiting_director")])
+
+    async def fake_run_dispatch(db, vid, on_event=None, directive=None, gate_e_dispatch=None, on_message=None):
+        st = db.execute(select(PipelineState).where(PipelineState.version_id == vid)).scalar_one()
+        st.current_stage, st.status = next(steps)
+        db.flush()
+        return st
+
+    monkeypatch.setattr(orchestrator, "run_dispatch", fake_run_dispatch)
+
+    await pipeline_runner._run(version.id)
+
+    settled = db_session.execute(select(PipelineState).where(PipelineState.version_id == version.id)).scalar_one()
+    assert settled.current_stage == "gate_g" and settled.status == "awaiting_director"
+    # one state_changed for the build→gate_g advance + the final gate_g settle — the board steps live.
+    state_evts = [p["state"] for _, p in fake_reg.events if p["type"] == "state_changed"]
+    assert [s["current_stage"] for s in state_evts] == ["gate_g", "gate_g"]
+    assert [s["status"] for s in state_evts] == ["agent_working", "awaiting_director"]
+
+
 async def test_run_unexpected_exception_marks_blocked(db_session, monkeypatch):
     version = _make_version(db_session)
     _seed_working_state(db_session, version.id)

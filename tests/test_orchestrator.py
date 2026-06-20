@@ -1396,16 +1396,18 @@ async def test_new_version_gate_a_pass_auto_ratifies(db_session, fake_claude):
 
 
 async def test_new_version_gates_a_to_d_auto_ratify_full_chain(db_session, fake_claude):
-    """The full routine-gate chain auto-advances a→b→c→d→gate_e within the runner's auto-chain guard
-    (len(FAST_FIX_STAGE_ORDER)=4 iterations — the chain fits). Mirrors pipeline_runner._run's loop. Gate E
-    (Phase 3, not in scope) settles awaiting_director, so exactly the 4 a–d gates auto-ratify."""
+    """The full routine-gate chain auto-advances a→b→c→d→gate_e within the runner's auto-chain guard. Mirrors
+    pipeline_runner._run's loop with its Phase-2 WIDENED bound len(STAGE_ORDER) — the a→d chain (4 iterations)
+    fit the old len(FAST_FIX_STAGE_ORDER)=4 EXACTLY; the widened bound leaves ample headroom (and is required
+    now that build→gate_g can also chain). Gate E (Phase 3, not in scope) settles awaiting_director, so exactly
+    the 4 a–d gates auto-ratify."""
     version, _ = _make_version(db_session)
     await orchestrator.apply_action(db_session, version_id=version.id, action="start")
     _settle(db_session, version.id)
     await orchestrator.apply_action(db_session, version_id=version.id, action="approve")  # → gate_a, agent_working
     state = await orchestrator.run_dispatch(db_session, version.id)
     guard = 0
-    while state is not None and state.status == "agent_working" and guard < len(orchestrator.FAST_FIX_STAGE_ORDER):
+    while state is not None and state.status == "agent_working" and guard < len(orchestrator.STAGE_ORDER):
         guard += 1
         state = await orchestrator.run_dispatch(db_session, version.id)
     assert state.current_stage == "gate_e"
@@ -1486,6 +1488,122 @@ async def test_record_autonomous_gate_excluded_from_per_task_caps(db_session):
     assert summary["count"] == 1
     assert summary["recent"][0]["stage"] == "gate_b"
     assert summary["recent"][0]["task"] is None
+
+
+# ── PIPELINE-AUTONOMY Phase 2: build-approve auto-ratify ─────────────────────────
+
+
+async def test_new_version_build_auto_ratifies_to_gate_g(db_session, fake_claude, monkeypatch):
+    """A CLEAN new_version build (build_readiness clean — all tasks done, 0 open findings) AUTO-RATIFIES the
+    final sign-off: advance build→gate_g (agent_working, so the runner chains the Auditor) instead of settling
+    awaiting_director, with a Director-visible is_autonomous record carrying stage=build + NO task_id (Issue 6)
+    + NO confidence (§0.1)."""
+    monkeypatch.setattr(orchestrator, "_repo_head", lambda root: "a" * 40)
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")  # new_version, autonomy ON
+    _seed_one_feat(db_session, version, project, ["T-one", "T-two"])
+    _to_build(db_session, version)
+    fake_claude.response = _build_fake()
+
+    state = await orchestrator.run_dispatch(db_session, version.id)
+
+    assert state.current_stage == "gate_g"
+    assert state.status == "agent_working"  # advanced — the runner continues the chain (gate_g verdict settles)
+    assert task_service.get_next_todo_task(db_session, version.id) is None  # all tasks done
+    autos = _autos(db_session, version.id)
+    assert len(autos) == 1
+    assert autos[0].payload["stage"] == "build"
+    assert autos[0].payload["action"] == "auto_ratify_build"
+    assert autos[0].payload.get("confidence") is None  # no confidence on a clean-readiness ratify (§0.1)
+    assert "task_id" not in autos[0].payload  # gate-level record → per-task caps exclude it
+    # the board roll-up surfaces the build auto-ratify (deterministic, §3.3)
+    summary = orchestrator.autonomous_decisions_summary(db_session, version.id)
+    assert any(d["stage"] == "build" for d in summary["recent"])
+
+
+async def test_new_version_build_failed_task_no_auto_ratify(db_session, fake_claude, monkeypatch):
+    """A failed task HALTs the build at awaiting_director (the failed-task settle, never the clean-completion
+    seam) → NO build auto-ratify, even with autonomy ON. The deterministic readiness HALT-on-exception
+    (design §4): anything not-clean stops for the Director, never a silent advance."""
+    monkeypatch.setattr(orchestrator, "_repo_head", lambda root: "c" * 40)
+    monkeypatch.setattr(orchestrator, "verify_mechanical", lambda slug, block, baseline_sha=None: "vždy zlyhá")
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")  # new_version, autonomy ON
+    _epic, _feat, (task,) = _seed_one_feat(db_session, version, project, ["T"])
+    _to_build(db_session, version)
+    fake_claude.response = _build_fake()
+
+    state = await orchestrator.run_dispatch(db_session, version.id)
+
+    assert state.status == "awaiting_director" and state.current_stage == "build"  # HALT, NOT auto-advanced
+    db_session.refresh(task)
+    assert task.status == "failed"
+    assert _autos(db_session, version.id) == []  # no auto-ratify on a non-clean build
+
+
+async def test_maybe_autonomous_build_ratify_guard(db_session, fake_claude, monkeypatch):
+    """The deterministic build-ratify guard rejects every non-clean / non-routine case (the happy advance is
+    covered end-to-end by test_new_version_build_auto_ratifies_to_gate_g): a todo task and a failed task both
+    leave build_readiness un-clean; a non-new_version flow, a non-build stage, and the kickoff opt-out all
+    reject — settle as today, never auto."""
+    monkeypatch.setattr(orchestrator, "_repo_head", lambda root: "a" * 40)
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")  # new_version, autonomy ON
+    _epic, _feat, (task,) = _seed_one_feat(db_session, version, project, ["T"])
+    state = _to_build(db_session, version)
+    mbr = orchestrator._maybe_autonomous_build_ratify
+
+    # a todo task → build_readiness not clean (all_tasks_done False) → no auto
+    assert await mbr(db_session, state) is False and state.current_stage == "build"
+    # a failed task → 0 todo but an open finding → not clean → no auto (the defensive seam branch)
+    db_session.execute(update(Task).where(Task.id == task.id).values(status="failed"))
+    db_session.flush()
+    assert await mbr(db_session, state) is False and state.current_stage == "build"
+    # mark all done so ONLY the next guard under test rejects
+    db_session.execute(update(Task).where(Task.id == task.id).values(status="done"))
+    db_session.flush()
+    # wrong flow (cr / bug / fast_fix never build-ratify — fast_fix has its own build→release advance)
+    state.flow_type = "cr"
+    assert await mbr(db_session, state) is False
+    state.flow_type = "new_version"
+    # wrong stage (only the build-completion seam ever calls this)
+    state.current_stage = "gate_d"
+    assert await mbr(db_session, state) is False
+    state.current_stage = "build"
+    # kickoff opt-out → the Director wants the manual build sign-off
+    monkeypatch.setattr(orchestrator, "_autonomy_enabled", lambda db, version_id: False)
+    assert await mbr(db_session, state) is False and state.current_stage == "build"
+
+
+async def test_new_version_build_to_gate_g_chain_within_widened_bound(db_session, fake_claude, monkeypatch):
+    """The build→gate_g auto-chain runs within the runner's WIDENED bound (len(STAGE_ORDER)). Mirrors
+    pipeline_runner._run's loop: a clean build auto-ratifies build→gate_g (agent_working), then gate_g — the
+    KEY release verdict, NEVER auto-ratified (design §1.1) — settles awaiting_director for the Director's
+    single verdict click. Exactly one auto-advance (build), well within the widened bound."""
+    monkeypatch.setattr(orchestrator, "_repo_head", lambda root: "a" * 40)
+    # gate_g's verify (verify_done = mechanical + smoke) → PASS stub so the gate_g dispatch settles for the
+    # verdict without a real smoke run. The build round uses _verify_task (verify_mechanical + Auditor turn),
+    # NOT verify_done, so the build loop is unaffected by this stub.
+    monkeypatch.setattr(orchestrator, "verify_done", _synthesis_verify_pass)
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")  # new_version, autonomy ON
+    _seed_one_feat(db_session, version, project, ["T"])
+    _to_build(db_session, version)
+    fake_claude.response = _build_fake()
+
+    # first dispatch: the build loop completes clean → auto-ratify build→gate_g (agent_working)
+    state = await orchestrator.run_dispatch(db_session, version.id)
+    assert state.current_stage == "gate_g" and state.status == "agent_working"
+    # the runner's widened auto-chain loop then runs gate_g
+    guard = 0
+    while state is not None and state.status == "agent_working" and guard < len(orchestrator.STAGE_ORDER):
+        guard += 1
+        state = await orchestrator.run_dispatch(db_session, version.id)
+    # gate_g is KEY — settles awaiting_director for the verdict (NOT auto-ratified)
+    assert state.current_stage == "gate_g" and state.status == "awaiting_director"
+    assert guard == 1  # exactly one extra dispatch — the build→gate_g chain is short, well within the bound
+    # exactly the build auto-ratified; gate_g did NOT
+    assert [m.payload["stage"] for m in _autos(db_session, version.id)] == ["build"]
 
 
 def test_agent_sessions_active_idle_stale(db_session):
@@ -3156,7 +3274,11 @@ def _build_fake(*, audit_pass=True, audit_findings=None):
 async def test_build_loop_runs_tasks_in_order_then_awaits_director(db_session, fake_claude, monkeypatch):
     monkeypatch.setattr(orchestrator, "_repo_head", lambda root: "a" * 40)
     version, project = _make_version(db_session)
-    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    # PIPELINE-AUTONOMY Phase 2: auto-ratify OFF → a clean build settles awaiting_director (manual sign-off
+    # path under test; the build→gate_g auto-ratify is covered by test_new_version_build_auto_ratifies_to_gate_g).
+    await orchestrator.apply_action(
+        db_session, version_id=version.id, action="start", payload={"autonomy_enabled": False}
+    )
     _seed_cross_cutting(db_session, version, "## Invarianty\n- podvojnosť")
     _epic, feat, tasks = _seed_one_feat(db_session, version, project, ["T-one", "T-two"])
     _to_build(db_session, version)
@@ -3287,7 +3409,10 @@ async def test_build_auto_fix_retries_then_passes(db_session, fake_claude, monke
 
     monkeypatch.setattr(orchestrator, "verify_mechanical", _verify)
     version, project = _make_version(db_session)
-    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    # PIPELINE-AUTONOMY Phase 2: auto-ratify OFF → a clean build settles awaiting_director (manual sign-off path).
+    await orchestrator.apply_action(
+        db_session, version_id=version.id, action="start", payload={"autonomy_enabled": False}
+    )
     _epic, feat, (task,) = _seed_one_feat(db_session, version, project, ["T"])
     _to_build(db_session, version)
     fake_claude.response = _build_fake()
@@ -3362,7 +3487,10 @@ async def test_return_at_build_halt_resets_failed_and_reattempts(db_session, fak
     monkeypatch.setattr(orchestrator, "_repo_head", lambda root: "e" * 40)
     monkeypatch.setattr(orchestrator, "verify_mechanical", lambda slug, block, baseline_sha=None: "zlyhá")
     version, project = _make_version(db_session)
-    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    # PIPELINE-AUTONOMY Phase 2: auto-ratify OFF → the re-attempted clean build settles awaiting_director.
+    await orchestrator.apply_action(
+        db_session, version_id=version.id, action="start", payload={"autonomy_enabled": False}
+    )
     _epic, _feat, (task,) = _seed_one_feat(db_session, version, project, ["T"])
     _to_build(db_session, version)
     fake_claude.response = _build_fake()
@@ -3399,7 +3527,10 @@ async def test_build_resume_reclaims_orphaned_in_progress(db_session, fake_claud
 
     monkeypatch.setattr(orchestrator, "verify_mechanical", _verify)
     version, project = _make_version(db_session)
-    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    # PIPELINE-AUTONOMY Phase 2: auto-ratify OFF → the reclaimed clean build settles awaiting_director.
+    await orchestrator.apply_action(
+        db_session, version_id=version.id, action="start", payload={"autonomy_enabled": False}
+    )
     _epic, _feat, (task,) = _seed_one_feat(db_session, version, project, ["T"])
     task.status = "in_progress"  # orphaned by a prior (dead) dispatch
     task.baseline_sha = "0" * 40  # the baseline captured by that prior dispatch
@@ -3452,7 +3583,10 @@ async def test_build_audit_fail_escalates_findings_then_passes(db_session, fake_
 
     fake_claude.response = _resp
     version, project = _make_version(db_session)
-    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    # PIPELINE-AUTONOMY Phase 2: auto-ratify OFF → the clean build (after audit re-passes) settles awaiting_director.
+    await orchestrator.apply_action(
+        db_session, version_id=version.id, action="start", payload={"autonomy_enabled": False}
+    )
     _epic, feat, (task,) = _seed_one_feat(db_session, version, project, ["T"])
     _to_build(db_session, version)
 
@@ -3666,7 +3800,10 @@ async def test_recover_then_continue_build_reclaims_and_continues(db_session, fa
     monkeypatch.setattr(orchestrator, "_repo_head", lambda root: "a" * 40)
     fake_claude.response = _build_fake()
     version, project = _make_version(db_session)
-    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    # PIPELINE-AUTONOMY Phase 2: auto-ratify OFF → the reclaimed clean build settles awaiting_director.
+    await orchestrator.apply_action(
+        db_session, version_id=version.id, action="start", payload={"autonomy_enabled": False}
+    )
     _epic, _feat, (task,) = _seed_one_feat(db_session, version, project, ["T"])
     task.status = "in_progress"  # the Programmer was mid-task when the backend restarted
     task.baseline_sha = "0" * 40  # baseline persisted by that dispatch
@@ -4326,7 +4463,12 @@ async def test_synthesis_at_gate_report_pass(db_session, monkeypatch):
 async def test_synthesis_at_build_completion(db_session, fake_claude):
     """§A.2 site 2: build completion (no todo task) settles with a Coordinator synthesis sign-off."""
     version, _ = _make_version(db_session)
-    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    # PIPELINE-AUTONOMY Phase 2: this asserts the SETTLE path (synthesis as the build sign-off next_action) —
+    # auto-ratify OFF so the clean build settles awaiting_director instead of advancing to gate_g. The synthesis
+    # emission verified here is unchanged either way (it runs before the auto-ratify check).
+    await orchestrator.apply_action(
+        db_session, version_id=version.id, action="start", payload={"autonomy_enabled": False}
+    )
     _to_build(db_session, version)  # no tasks → the first loop iteration hits the final sign-off
     fake_claude.response = _block(
         stage="build", kind="done", summary="Build dokončený — finálne schválenie.", awaiting="director"
@@ -5262,7 +5404,11 @@ async def test_new_version_build_still_uses_auditor_regression(db_session, fake_
     # Regression: new_version per-task verify is UNCHANGED — the Auditor (not the Coordinator) verifies.
     monkeypatch.setattr(orchestrator, "_repo_head", lambda root: "a" * 40)
     version, project = _make_version(db_session)
-    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    # PIPELINE-AUTONOMY Phase 2: auto-ratify OFF → the clean build settles awaiting_director for the manual
+    # approve→gate_g this regression checks (the auto-ratify advance lands at gate_g too — covered separately).
+    await orchestrator.apply_action(
+        db_session, version_id=version.id, action="start", payload={"autonomy_enabled": False}
+    )
     _seed_cross_cutting(db_session, version, "## Invarianty")
     _seed_one_feat(db_session, version, project, ["T"])
     _to_build(db_session, version)

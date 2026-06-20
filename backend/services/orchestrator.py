@@ -4653,6 +4653,61 @@ async def _maybe_autonomous_gate_ratify(
     return True
 
 
+async def _maybe_autonomous_build_ratify(
+    db: Session,
+    state: PipelineState,
+    *,
+    on_message: Optional[MessageCallback] = None,
+) -> bool:
+    """PIPELINE-AUTONOMY Phase 2 (design §5.1 / §1 row #12) — at the new_version BUILD completion, AUTO-RATIFY
+    the final build sign-off with NO Director click: advance build→gate_g + re-dispatch (the runner's
+    auto-chain runs the Auditor), instead of settling ``awaiting_director`` for the build-approve click.
+    Sibling of :func:`_maybe_autonomous_gate_ratify` — but the build-completion seam has no gate_report verify
+    (no ``reason``/``is_scope``); its deterministic readiness IS the structural ``Task.status``, so the guard
+    is :func:`build_readiness` clean (design §0.1), not a verify reason.
+
+    Returns ``True`` when it advanced (the caller returns the now-``agent_working`` state at gate_g);
+    ``False`` → the caller takes the existing ``awaiting_director`` build sign-off settle unchanged. ALL must
+    hold:
+
+    * ``flow_type == 'new_version'`` — fast_fix has its OWN build→release auto-advance (handled above this
+      seam); cr / bug keep the generic awaiting_director build sign-off byte-for-byte;
+    * ``current_stage == 'build'`` — defensive (only ever called from the build-completion seam);
+    * :func:`build_readiness` clean — all tasks done (0 todo) ∧ 0 open findings (no ``failed`` /
+      ``in_progress`` task). ANY todo / failed / in_progress task → NOT clean → settle as today (never auto;
+      the Director addresses the open task). This is the deterministic readiness HALT-on-exception (design §4);
+    * the version's kickoff autonomy toggle is ON (:func:`_autonomy_enabled`, default).
+
+    gate_g itself is NEVER auto-ratified (the KEY release verdict, design §1.1 — :func:`_maybe_autonomous_gate_ratify`
+    excludes it), so this advance lands at a Director-gated verdict, never an unsupervised publish. Recorded
+    Director-visibly via :func:`_record_autonomous_gate` (``is_autonomous=true`` + ``stage='build'`` + a
+    deterministic rationale) so the board roll-up shows the build auto-ratified. No silent advance is possible."""
+    if state.flow_type != "new_version":
+        return False
+    if state.current_stage != "build":
+        return False  # defensive: only the build-completion seam calls this
+    all_tasks_done, open_findings = build_readiness(db, state.version_id)
+    if not all_tasks_done or open_findings != 0:
+        return False  # a todo / failed / in_progress task → build not clean → settle for the Director
+    if not _autonomy_enabled(db, state.version_id):
+        return False  # kickoff opt-out → the Director wants the build sign-off click
+    rationale = (
+        "Build dokončený — všetky úlohy hotové, žiadne otvorené nálezy (0 todo ∧ 0 zlyhaných) — "
+        "auto-ratifikované, postup na Audit (gate_g)."
+    )
+    state.current_stage = _next_stage("build", state.flow_type)  # → gate_g
+    _begin_dispatch(db, state)  # status=agent_working at gate_g → the runner continues the chain
+    await _record_autonomous_gate(
+        db,
+        state.version_id,
+        stage="build",
+        action="auto_ratify_build",
+        rationale=rationale,
+        on_message=on_message,
+    )
+    return True
+
+
 def _fast_fix_answer_brief(task: Task, answer: str) -> str:
     """The re-dispatch brief that resumes a fast_fix build task with the Coordinator's autonomous answer
     (CR-NS-103). Used as the next attempt's ``pending_directive`` (mirrors the Director's framed-return path)."""
@@ -5140,6 +5195,18 @@ async def _run_build_round(
                 return state
             # §A.2 site 2 (build completion): Coordinator synthesis before settling.
             synthesis = await _coordinator_synthesis(db, state, trigger="build", completed=True, on_message=on_message)
+            # PIPELINE-AUTONOMY Phase 2 (design §5.1 / §1 row #12): a CLEAN new_version build (build_readiness
+            # clean — 0 todo ∧ 0 failed) AUTO-RATIFIES the final sign-off → advance build→gate_g + re-dispatch
+            # (the runner's auto-chain runs the Auditor) instead of settling awaiting_director for a build-approve
+            # click. Synthesis above STILL runs + records (additive observability: the Director reads it in the
+            # roll-up at the next KEY settle — the gate_g verdict). Returns True only when it advanced (status now
+            # agent_working at gate_g); False → fall through to the existing awaiting_director settle below,
+            # byte-for-byte unchanged. Reaching here already means no todo task remains; a failed/in_progress task
+            # would make build_readiness not clean → settle as today (never auto). gate_g is NEVER auto-ratified
+            # (KEY release verdict) so this lands at a Director-gated verdict, never an unsupervised publish.
+            if await _maybe_autonomous_build_ratify(db, state, on_message=on_message):
+                db.flush()
+                return state
             state.status = "awaiting_director"
             state.next_action = synthesis or "Director: finálne schválenie buildu (→ Audit)."
             db.flush()
