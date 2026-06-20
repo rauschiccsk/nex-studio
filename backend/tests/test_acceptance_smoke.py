@@ -44,6 +44,26 @@ services:
     container_name: demo-backend
     ports:
       - "10180:10180"
+  frontend:
+    build: ./frontend
+    container_name: demo-frontend
+    ports:
+      - "10181:80"
+  postgres:
+    image: postgres:16-alpine
+    container_name: demo-postgres
+    ports:
+      - "10182:5432"
+"""
+
+# A compose with a backend web app but NO frontend service — the nex-asistent "no FE emitted" bug.
+COMPOSE_YML_NO_FRONTEND = """\
+services:
+  backend:
+    build: .
+    container_name: demo-backend
+    ports:
+      - "10180:10180"
   postgres:
     image: postgres:16-alpine
     container_name: demo-postgres
@@ -57,13 +77,13 @@ services:
 # ---------------------------------------------------------------------------
 
 
-def _make_project(root, slug: str, *, compose: bool = True) -> None:
+def _make_project(root, slug: str, *, compose: bool = True, compose_yml: str = COMPOSE_YML) -> None:
     """Materialise a fake project tree under *root*/<slug> for the discovery step (v0.7.9: the boot
     check keys ONLY on docker-compose.yml — no acceptance suite is required or run)."""
     proj = root / slug
     proj.mkdir(parents=True, exist_ok=True)
     if compose:
-        (proj / "docker-compose.yml").write_text(COMPOSE_YML)
+        (proj / "docker-compose.yml").write_text(compose_yml)
 
 
 class _StepRecorder:
@@ -78,8 +98,13 @@ class _StepRecorder:
 
     async def __call__(self, cmd: list[str], timeout: int) -> tuple[int, str]:
         self.calls.append(cmd)
-        if "python" in cmd:  # the readiness probe runs `exec -T backend python -c …`
-            key = "ready"
+        if "python" in cmd:  # the readiness probe runs `exec -T <svc> python -c …`
+            # Distinguish the backend self-probe (targets localhost) from the frontend cross-probe
+            # (targets the FE service/container name). Tests that script only "ready" apply it to both.
+            joined = " ".join(cmd)
+            key = "ready" if "localhost" in joined else "ready_fe"
+            if key not in self._results:
+                key = "ready"
         elif "up" in cmd:
             key = "up"
         elif "down" in cmd:
@@ -153,10 +178,10 @@ def test_override_strips_container_name_and_ports(tmp_path) -> None:
 
     override = orchestrator._acceptance_smoke_override(compose)
 
-    assert "  backend:" in override and "  postgres:" in override
-    assert override.count("container_name: !reset null") == 2
+    assert "  backend:" in override and "  frontend:" in override and "  postgres:" in override
+    assert override.count("container_name: !reset null") == 3
     assert override.count("ports: !reset null") == 0  # ports reset to an empty list, not null
-    assert override.count("ports: !reset []") == 2
+    assert override.count("ports: !reset []") == 3
 
 
 @pytest.mark.asyncio
@@ -197,8 +222,49 @@ async def test_smoke_404_health_is_ready_pass(monkeypatch, tmp_path) -> None:
     ok, detail = await orchestrator._run_app_starts_smoke("v1health", "v0.7.9")
 
     assert (ok, detail) == (True, "app booted + responds")
-    assert rec.count("python") == 1, "a 404 (server up) is READY on the first poll — no looping"
+    # 1 backend self-probe + 1 frontend cross-probe, each READY on the first poll (no looping).
+    assert rec.count("python") == 2, "BE + FE each ready on the first poll — no looping"
     assert not rec.ran("pytest"), "v0.7.9: ready ⇒ PASS without any acceptance pytest run"
+
+
+@pytest.mark.asyncio
+async def test_smoke_fails_when_backend_present_no_frontend(monkeypatch, tmp_path) -> None:
+    """icc-deploy §5.6 #1: a compose with a backend web app but NO frontend service → FAIL (the
+    nex-asistent "no FE service emitted" bug), BEFORE any ``up`` is attempted."""
+    monkeypatch.setattr(orchestrator.claude_agent, "PROJECTS_ROOT", tmp_path)
+    _make_project(tmp_path, "nofe", compose_yml=COMPOSE_YML_NO_FRONTEND)
+    rec = _StepRecorder({})
+    monkeypatch.setattr(orchestrator, "_compose_smoke_step", rec)
+
+    ok, detail = await orchestrator._run_app_starts_smoke("nofe", "v0.9.0")
+
+    assert ok is False
+    assert detail == "compose has a backend web app but no frontend service"
+    assert rec.calls == [], "the missing-frontend FAIL must short-circuit before spawning docker"
+
+
+@pytest.mark.asyncio
+async def test_smoke_fails_when_frontend_unreachable(monkeypatch, tmp_path) -> None:
+    """BE boots + responds but the frontend never serves within the budget → a CLEAR FAIL naming the
+    frontend, and teardown still runs."""
+    monkeypatch.setattr(orchestrator.claude_agent, "PROJECTS_ROOT", tmp_path)
+    _make_project(tmp_path, "fedown")
+
+    async def _no_sleep(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(orchestrator.asyncio, "sleep", _no_sleep)
+    rec = _StepRecorder(
+        {"up": (0, ""), "ready": (0, "status 200"), "ready_fe": (1, "URLError: connection refused"), "down": (0, "")}
+    )
+    monkeypatch.setattr(orchestrator, "_compose_smoke_step", rec)
+
+    ok, detail = await orchestrator._run_app_starts_smoke("fedown", "v0.9.0")
+
+    assert ok is False
+    assert detail.startswith("frontend 'frontend' not serving within 120s:")
+    assert "connection refused" in detail
+    assert rec.ran("down"), "the isolated stack must be torn down even when the frontend probe fails"
 
 
 # ---------------------------------------------------------------------------
@@ -280,6 +346,22 @@ def test_compose_backend_port_extraction(tmp_path) -> None:
     noports = tmp_path / "noports.yml"
     noports.write_text("services:\n  backend:\n    image: x\n")
     assert orchestrator._compose_backend_port(noports) is None
+
+
+def test_compose_frontend_port_extraction(tmp_path) -> None:
+    """The frontend reachability target = the ``frontend`` service's CONTAINER port (nginx analog of the
+    backend-port helper); ``None`` when undeterminable so the caller falls back to nginx 80."""
+    short = tmp_path / "short.yml"
+    short.write_text(COMPOSE_YML)  # frontend ports "10181:80" → container port 80
+    assert orchestrator._compose_frontend_port(short) == 80
+
+    longform = tmp_path / "long.yml"
+    longform.write_text("services:\n  frontend:\n    ports:\n      - target: 80\n        published: 18081\n")
+    assert orchestrator._compose_frontend_port(longform) == 80
+
+    nofe = tmp_path / "nofe.yml"
+    nofe.write_text(COMPOSE_YML_NO_FRONTEND)
+    assert orchestrator._compose_frontend_port(nofe) is None
 
 
 # ---------------------------------------------------------------------------

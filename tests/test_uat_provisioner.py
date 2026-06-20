@@ -1,11 +1,12 @@
 """Tests for backend/services/uat_provisioner.py (v0.9.0 Phase 2, CR-1 + CR-2 + CR-3).
 
 Derived from the spec's Self-verify (docs/specs/versions/v0.9.0/spec/phase-2-provisioner.md §Self-verify):
-given nex-asistent's source compose (qdrant + BE + FE + external nex-network + Ollama extra_hosts),
+given nex-asistent's source compose (qdrant + BE + FE + internal nets + Ollama extra_hosts),
 the provisioner renders a UAT compose that (a) includes ALL services incl. qdrant, (b) preserves
-extra_hosts + the external network, (c) adds nex-proxy-net + the exact Traefik labels to FE+BE with
-the right internal ports, (d) routes by Traefik not host ports. Plus derive_uat_slug cases and a
-3-service render.
+extra_hosts, (c) adds nex-proxy-net + the exact Traefik labels to FE+BE with the right internal ports,
+(d) routes by Traefik not host ports. Plus derive_uat_slug cases, a 3-service render, and the
+external-network guard (icc-deploy §5.3: only nex-proxy-net may be external — any other external
+network is a hard provisioning error).
 """
 
 from __future__ import annotations
@@ -20,7 +21,10 @@ from backend.services import uat_provisioner as P
 
 # A fixture shaped like nex-asistent's source compose, AUGMENTED with the frontend service the
 # spec's self-verify describes (the live nex-asistent compose omits its buildable FE — see the DONE
-# report gap note). qdrant + external nex-network + Ollama extra_hosts are the real nex-asistent shape.
+# report gap note). qdrant + Ollama extra_hosts are the real nex-asistent shape. The real compose ALSO
+# carries an external ``nex-network`` — but that is the prod-network-collision bug the §5.3 guard now
+# rejects, so the happy-path fixture keeps only the internal ``nex-asistent-net``; the external-net bug
+# lives in ``ASISTENT_COMPOSE_EXTERNAL_NET`` (the rejection test).
 ASISTENT_COMPOSE = textwrap.dedent(
     """
     services:
@@ -44,7 +48,7 @@ ASISTENT_COMPOSE = textwrap.dedent(
             condition: service_healthy
           qdrant:
             condition: service_healthy
-        networks: [nex-asistent-net, nex-network]
+        networks: [nex-asistent-net]
       frontend:
         build:
           context: ./frontend
@@ -79,9 +83,17 @@ ASISTENT_COMPOSE = textwrap.dedent(
     networks:
       nex-asistent-net:
         driver: bridge
-      nex-network:
-        external: true
     """
+)
+
+# The real nex-asistent shape WITH the disallowed external ``nex-network`` (DB_HOST/container collision +
+# cross-environment leak vector) — the §5.3 guard must reject this for ALL archetypes.
+ASISTENT_COMPOSE_EXTERNAL_NET = ASISTENT_COMPOSE.replace(
+    "    networks: [nex-asistent-net]\n  frontend:",
+    "    networks: [nex-asistent-net, nex-network]\n  frontend:",
+).replace(
+    "networks:\n  nex-asistent-net:\n    driver: bridge\n",
+    "networks:\n  nex-asistent-net:\n    driver: bridge\n  nex-network:\n    external: true\n",
 )
 
 THREE_SERVICE_COMPOSE = textwrap.dedent(
@@ -172,15 +184,33 @@ def test_provision_includes_all_services_incl_qdrant(tmp_path):
     assert res.services == ["backend", "frontend", "postgres", "qdrant"]
 
 
-def test_provision_preserves_extra_hosts_and_external_network(tmp_path):
+def test_provision_preserves_extra_hosts(tmp_path):
     res = _provision(tmp_path, "nex-asistent", "asistent", ASISTENT_COMPOSE)
     data = yaml.safe_load(res.compose_path.read_text())
     # Ollama host-gateway survives.
     assert "host.docker.internal:host-gateway" in data["services"]["backend"]["extra_hosts"]
-    # External nex-network preserved verbatim.
-    assert data["networks"]["nex-network"] == {"external": True}
-    # Backend stays attached to the external net.
-    assert "nex-network" in data["services"]["backend"]["networks"]
+    # The internal net is kept (name stripped so it cannot collide with the source project).
+    assert "nex-asistent-net" in data["networks"]
+    assert "nex-asistent-net" in data["services"]["backend"]["networks"]
+
+
+def test_provision_rejects_disallowed_external_network(tmp_path):
+    """icc-deploy §5.3: an external network other than nex-proxy-net (nex-asistent's ``nex-network``) is a
+    hard provisioning error for ALL archetypes — the prod-network collision/leak fix. Catch, don't strip."""
+    with pytest.raises(ValueError, match="nex-network"):
+        _provision(tmp_path, "nex-asistent", "asistent", ASISTENT_COMPOSE_EXTERNAL_NET)
+
+
+def test_provision_allows_nex_proxy_net_external_in_source(tmp_path):
+    """A source that already declares ``nex-proxy-net`` external is allowed and produces exactly ONE
+    external nex-proxy-net entry (no duplication, no error)."""
+    compose = ASISTENT_COMPOSE.replace(
+        "networks:\n  nex-asistent-net:\n    driver: bridge\n",
+        "networks:\n  nex-asistent-net:\n    driver: bridge\n  nex-proxy-net:\n    external: true\n",
+    )
+    res = _provision(tmp_path, "nex-asistent", "asistent", compose)
+    data = yaml.safe_load(res.compose_path.read_text())
+    assert data["networks"]["nex-proxy-net"] == {"external": True}
 
 
 def test_provision_adds_proxy_network_and_exact_traefik_labels(tmp_path):

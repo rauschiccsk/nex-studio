@@ -100,6 +100,64 @@ def test_smoke_full_runs_up_and_down(tmp_path: Path) -> None:
     assert ["docker", "compose", "down", "-v"] in cmds
 
 
+def test_compose_backend_published_port_extraction(tmp_path: Path) -> None:
+    """The host-side health probe targets the DERIVED published port (short + long syntax); ``None`` for a
+    missing backend / no ports / a bare container-only port (no deterministic host port)."""
+    short = tmp_path / "short.yml"
+    short.write_text("services:\n  backend:\n    ports:\n      - '9110:8000'\n")
+    assert mod._compose_backend_published_port(short) == 9110
+
+    ip = tmp_path / "ip.yml"
+    ip.write_text("services:\n  backend:\n    ports:\n      - '127.0.0.1:9110:8000'\n")
+    assert mod._compose_backend_published_port(ip) == 9110
+
+    longform = tmp_path / "long.yml"
+    longform.write_text("services:\n  backend:\n    ports:\n      - target: 8000\n        published: 9110\n")
+    assert mod._compose_backend_published_port(longform) == 9110
+
+    bare = tmp_path / "bare.yml"  # container-only port → no host publish → None
+    bare.write_text("services:\n  backend:\n    ports:\n      - '8000'\n")
+    assert mod._compose_backend_published_port(bare) is None
+
+    nobe = tmp_path / "nobe.yml"
+    nobe.write_text("services: {}\n")
+    assert mod._compose_backend_published_port(nobe) is None
+
+
+def test_smoke_full_health_probe_uses_ipv4_and_derived_port(tmp_path: Path) -> None:
+    """K-004 §5.6 #3: the health probe hits ``127.0.0.1`` + the DERIVED backend port — NEVER the hardcoded
+    ``localhost:8000`` (IPv6 localhost + a guessed port both false-fail)."""
+    target = tmp_path / "project"
+    target.mkdir()
+    (target / "docker-compose.yml").write_text("services:\n  backend:\n    ports:\n      - '9110:8000'\n")
+
+    with patch.object(mod, "subprocess") as ps:
+        ps.run.return_value = subprocess.CompletedProcess(args=["x"], returncode=0, stdout="", stderr="")
+        mod._run_smoke_test(target, "test-proj", full=True)
+
+    curl_cmds = [c.args[0] for c in ps.run.call_args_list if c.args[0][0] == "curl"]
+    assert curl_cmds, "the full smoke must run a curl health probe"
+    assert curl_cmds[0] == ["curl", "-sf", "http://127.0.0.1:9110/health"]
+    assert all("localhost:8000" not in " ".join(cmd) for cmd in curl_cmds), "never the hardcoded localhost:8000"
+
+
+def test_smoke_full_skips_health_probe_when_port_undeterminable(tmp_path: Path, caplog) -> None:
+    """No derivable backend host port → the probe is SKIPPED (best-effort), up + down still run."""
+    target = tmp_path / "project"
+    target.mkdir()
+    (target / "docker-compose.yml").write_text("services: {}\n")
+
+    with patch.object(mod, "subprocess") as ps:
+        ps.run.return_value = subprocess.CompletedProcess(args=["x"], returncode=0, stdout="", stderr="")
+        with caplog.at_level("INFO", logger="backend.services.create_project_postscaffold"):
+            mod._run_smoke_test(target, "test-proj", full=True)
+
+    cmds = [c.args[0] for c in ps.run.call_args_list]
+    assert not any(cmd[0] == "curl" for cmd in cmds), "no port → no curl probe"
+    assert ["docker", "compose", "up", "-d"] in cmds and ["docker", "compose", "down", "-v"] in cmds
+    assert any("probe SKIPPED" in r.message for r in caplog.records)
+
+
 def test_smoke_full_cleanup_runs_even_on_up_failure(tmp_path: Path) -> None:
     """If up fails, down -v still runs (finally block) — no resource leak."""
     target = tmp_path / "project"

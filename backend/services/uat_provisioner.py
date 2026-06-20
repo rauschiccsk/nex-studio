@@ -11,10 +11,11 @@ Design (per ``docs/specs/versions/v0.9.0/spec/phase-2-provisioner.md``):
 CR-1 — Generalize the compose. Pass through **ALL** source-project services
     (``/opt/projects/<slug>/docker-compose.yml``): qdrant, redis, workers … preserving their
     image/build, environment, volumes, healthchecks, ``extra_hosts`` (Ollama
-    ``host.docker.internal:host-gateway``) and any networks they declare (e.g. the external
-    ``nex-network``). Routing is via **Traefik** (Phase-1 infra), NOT host ports — the FE +
-    BE services join the external ``nex-proxy-net`` and carry the exact Traefik labels copied
-    from the live ledger migration.
+    ``host.docker.internal:host-gateway``) and any *internal* networks they declare. Routing is
+    via **Traefik** (Phase-1 infra), NOT host ports — the FE + BE services join the external
+    ``nex-proxy-net`` and carry the exact Traefik labels copied from the live ledger migration.
+    The ONLY external network a UAT may join is ``nex-proxy-net``; any other external network
+    (e.g. a project's ``nex-network: external: true``) is a hard provisioning error (§5.3).
 
 CR-2 — Importable service. :func:`provision_uat` renders compose + ``.env`` + creates dirs
     and **does NOT build/up** (that is the engine's ``_run_uat_deploy`` in Phase 3). Secrets
@@ -28,7 +29,8 @@ CR-3 — :func:`derive_uat_slug` = ``project.slug`` with a leading ``nex-`` stri
 Isolation: the rendered compose sets a top-level ``name: uat-<slug>`` so Docker namespaces
 every otherwise-unnamed network/volume with that project prefix — the UAT cannot clobber the
 source project's running containers/volumes. Container names + built-image tags are renamed to
-``uat-<slug>-<service>``; external networks (``external: true``) pass through verbatim.
+``uat-<slug>-<service>``; the only external network allowed is ``nex-proxy-net`` (any other
+external network is rejected as a hard provisioning error).
 """
 
 from __future__ import annotations
@@ -553,7 +555,8 @@ def build_uat_compose(
     depends_on/extra_hosts/networks, and force the DB password to the synthetic
     ``${POSTGRES_PASSWORD}``. The FE + BE services additionally join ``nex-proxy-net`` and get the
     exact Traefik labels. Top-level ``name: uat-<slug>`` namespaces all unnamed networks/volumes;
-    ``nex-proxy-net`` is added as an external network. Host ports are dropped for routing — only if
+    ``nex-proxy-net`` is added as the (only) external network. A source external network other than
+    ``nex-proxy-net`` raises ``ValueError`` (§5.3). Host ports are dropped for routing — only if
     ``loopback_base_port`` is given are FE/BE/DB bound to loopback debug ports (FE base, BE base+100,
     DB base+200).
     """
@@ -630,12 +633,24 @@ def build_uat_compose(
             services[db_name_svc]["ports"] = [f"127.0.0.1:{loopback_base_port + 200}:{db_port}"]
 
     # Networks: keep source nets (project name namespaces unnamed ones), drop explicit names on
-    # internal nets so they cannot collide with the source project, preserve external nets, add proxy.
+    # internal nets so they cannot collide with the source project, add proxy. The ONLY external
+    # network a UAT may join is ``nex-proxy-net`` (the Traefik bus); any OTHER external network
+    # (e.g. nex-asistent's ``nex-network: external: true``) is a hard provisioning error — it would
+    # attach the UAT to a PROD network, risking DNS/container collisions + a cross-environment leak
+    # (icc-deploy §5.3, ALL archetypes). Catch the misconfig here rather than silently stripping it.
     networks: dict[str, Any] = {}
     for net_name, net_def in (source.get("networks") or {}).items():
         net = copy.deepcopy(net_def) if isinstance(net_def, dict) else {}
-        if not net.get("external"):
-            net.pop("name", None)
+        if net.get("external"):
+            external_name = net.get("name") or net_name  # the real docker network name
+            if external_name != PROXY_NETWORK:
+                raise ValueError(
+                    f"external network {external_name!r} is not allowed in a UAT compose "
+                    f"(only {PROXY_NETWORK!r} may be external) — declare it as an internal "
+                    f"network or remove it before provisioning"
+                )
+            continue  # the canonical nex-proxy-net is added below; never duplicate the source's
+        net.pop("name", None)
         networks[net_name] = net or None
     networks[PROXY_NETWORK] = {"external": True}
 

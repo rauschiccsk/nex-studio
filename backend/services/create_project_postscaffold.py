@@ -13,6 +13,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import yaml
+
 logger = logging.getLogger(__name__)
 
 NEX_STUDIO_TEMPLATES = Path("/opt/projects/nex-studio/templates")
@@ -49,6 +51,38 @@ def run_post_scaffold_steps(
 
     if enable_branch_protection and repo_url:
         _enable_branch_protection(repo_url, slug)
+
+
+def _compose_backend_published_port(compose_file: Path) -> int | None:
+    """The HOST-published port of the ``backend`` service (first ``ports`` entry) — the target for
+    the host-side ``curl`` health probe (which hits the *published* port, not the container port).
+
+    Handles the short forms (``"host:container"`` / ``"ip:host:container"``, optional ``/proto``) and
+    the long form (``{published: …}``). Returns ``None`` when undeterminable (no ``backend`` service /
+    no ``ports`` / a bare ``"container"`` entry with no host publish / unparseable) so the caller
+    SKIPS the probe rather than hit a wrong hardcoded port (the K-004 ``localhost:8000`` bug — IPv6
+    localhost + a guessed port both false-fail; nginx/uvicorn bind IPv4 on the derived port)."""
+    try:
+        data = yaml.safe_load(compose_file.read_text()) or {}
+    except (OSError, yaml.YAMLError):
+        return None
+    backend = (data.get("services") or {}).get("backend") or {}
+    ports = backend.get("ports") or []
+    if not ports:
+        return None
+    entry = ports[0]
+    if isinstance(entry, dict):  # long syntax: {target: 8000, published: 9110}
+        published = entry.get("published")
+        if isinstance(published, int):
+            return published
+        return int(published) if isinstance(published, str) and published.isdigit() else None
+    # short syntax: "9110:8000" / "127.0.0.1:9110:8000" / "8000" — the host port is the
+    # second-to-last colon segment; a bare "8000" (no host publish) has no deterministic host port.
+    segments = str(entry).split("/", 1)[0].split(":")
+    if len(segments) < 2:
+        return None
+    host = segments[-2]
+    return int(host) if host.isdigit() else None
 
 
 def _run_smoke_test(target: Path, slug: str, *, full: bool) -> None:
@@ -103,26 +137,36 @@ def _run_smoke_test(target: Path, slug: str, *, full: bool) -> None:
             logger.warning("K-004 full smoke 'up' FAIL (slug=%s): %s", slug, stderr_tail)
             return
 
-        # Best-effort health check — try common ports; non-fatal
-        # (Implementer notes: real health check would parse compose ports;
-        # simplified default port 8000 here.)
-        for _attempt in range(6):
-            health = subprocess.run(
-                ["curl", "-sf", "http://localhost:8000/health"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-                check=False,
-            )
-            if health.returncode == 0:
-                logger.info("K-004 full smoke /health endpoint OK (slug=%s)", slug)
-                break
-            subprocess.run(["sleep", "5"], check=False)
-        else:
-            logger.warning(
-                "K-004 full smoke /health endpoint not reachable in 30s (slug=%s)",
+        # Best-effort health check against the DERIVED backend host port on 127.0.0.1 (IPv4) — never
+        # the hardcoded ``localhost:8000`` (IPv6 ``localhost`` + a guessed port both false-fail;
+        # nginx/uvicorn bind IPv4 on the published port). If the port is undeterminable, skip the
+        # probe (best-effort) rather than hit a wrong port.
+        backend_port = _compose_backend_published_port(compose_file)
+        if backend_port is None:
+            logger.info(
+                "K-004 full smoke /health probe SKIPPED — no derivable backend host port (slug=%s)",
                 slug,
             )
+        else:
+            health_url = f"http://127.0.0.1:{backend_port}/health"
+            for _attempt in range(6):
+                health = subprocess.run(
+                    ["curl", "-sf", health_url],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                )
+                if health.returncode == 0:
+                    logger.info("K-004 full smoke /health endpoint OK (slug=%s, port=%d)", slug, backend_port)
+                    break
+                subprocess.run(["sleep", "5"], check=False)
+            else:
+                logger.warning(
+                    "K-004 full smoke /health endpoint not reachable in 30s (slug=%s, url=%s)",
+                    slug,
+                    health_url,
+                )
     finally:
         # Cleanup — always run docker compose down -v even if up failed
         subprocess.run(

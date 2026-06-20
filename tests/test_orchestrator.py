@@ -5366,8 +5366,12 @@ async def test_run_uat_deploy_redeploys_existing_compose_with_version(monkeypatc
         captured["env"] = env
         return _FakeProc(0, b"deploy log tail")
 
+    async def _serves_ok(project_slug, uat_slug):
+        return True, "OK"
+
     monkeypatch.setattr(orchestrator.asyncio, "create_subprocess_exec", _fake_exec)
     monkeypatch.setattr(orchestrator, "_fe_app_version", lambda slug: "0.1.42")
+    monkeypatch.setattr(orchestrator, "_verify_uat_serves", _serves_ok)  # serve-verify is its own unit
     ok, detail = await orchestrator._run_uat_deploy("nex-ledger", "ledger")
 
     assert ok is True and detail == "OK"
@@ -5403,6 +5407,128 @@ async def test_run_uat_deploy_spawn_failure_returns_failure(monkeypatch):
     ok, detail = await orchestrator._run_uat_deploy("nex-ledger", "ledger")
 
     assert ok is False and "nepodarilo spustiť" in detail
+
+
+async def test_run_uat_deploy_blocks_when_serve_verify_fails(monkeypatch):
+    # icc-deploy §5.6 #2: ``up`` exit 0 is NOT success — a failed post-up serve-verify settles the deploy
+    # to (False, reason) so the caller blocks rather than reporting a false success.
+    async def _fake_exec(*cmd, stdout=None, stderr=None, env=None):
+        return _FakeProc(0, b"Started")
+
+    async def _serves_fail(project_slug, uat_slug):
+        return False, "backend 'backend' /api not responding within 120s: connection refused"
+
+    monkeypatch.setattr(orchestrator.asyncio, "create_subprocess_exec", _fake_exec)
+    monkeypatch.setattr(orchestrator, "_fe_app_version", lambda slug: "0.1.0")
+    monkeypatch.setattr(orchestrator, "_verify_uat_serves", _serves_fail)
+    ok, detail = await orchestrator._run_uat_deploy("nex-ledger", "ledger")
+
+    assert ok is False and "not responding" in detail
+
+
+# --- _verify_uat_serves (post-up readiness gate) ---------------------------------------------------
+
+_VERIFY_SRC_COMPOSE = """\
+services:
+  backend:
+    build: .
+    ports:
+      - "10200:8000"
+  frontend:
+    build: ./frontend
+    ports:
+      - "10202:80"
+  db:
+    image: postgres:16-alpine
+"""
+
+
+class _ProbeRecorder:
+    """Fake for ``orchestrator._compose_smoke_step`` scripting the BE self-probe (targets localhost) vs
+    the FE cross-probe (targets the FE container name) results, recording every command."""
+
+    def __init__(self, be: tuple[int, str], fe: tuple[int, str]) -> None:
+        self._be, self._fe = be, fe
+        self.calls: list[list[str]] = []
+
+    async def __call__(self, cmd: list[str], timeout: int) -> tuple[int, str]:
+        self.calls.append(cmd)
+        if "python" in cmd:
+            return self._be if "localhost" in " ".join(cmd) else self._fe
+        return (0, "ok")
+
+    def ran(self, token: str) -> bool:
+        return any(token in cmd for cmd in self.calls)
+
+
+def _setup_verify(monkeypatch, tmp_path, *, uat_compose: bool = True) -> None:
+    """Point UAT_ROOT + PROJECTS_ROOT at tmp dirs with a source compose (BE+FE) and (optionally) a UAT
+    compose (presence-only — its ports are stripped in reality, so the source compose drives detection)."""
+    uat_root = tmp_path / "uat"
+    projects_root = tmp_path / "projects"
+    led_uat = uat_root / "ledger"
+    led_uat.mkdir(parents=True)
+    if uat_compose:
+        (led_uat / "docker-compose.yml").write_text("services: {}\n")
+    src = projects_root / "nex-ledger"
+    src.mkdir(parents=True)
+    (src / "docker-compose.yml").write_text(_VERIFY_SRC_COMPOSE)
+    monkeypatch.setattr(orchestrator, "UAT_ROOT", uat_root)
+    monkeypatch.setattr(orchestrator.claude_agent, "PROJECTS_ROOT", projects_root)
+
+    async def _no_sleep(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(orchestrator.asyncio, "sleep", _no_sleep)
+
+
+async def test_verify_uat_serves_pass_when_be_and_fe_respond(monkeypatch, tmp_path):
+    _setup_verify(monkeypatch, tmp_path)
+    rec = _ProbeRecorder(be=(0, "status 404"), fe=(0, "status 200"))
+    monkeypatch.setattr(orchestrator, "_compose_smoke_step", rec)
+
+    ok, detail = await orchestrator._verify_uat_serves("nex-ledger", "ledger")
+
+    assert (ok, detail) == (True, "OK")
+    # Both the backend (localhost) and the frontend (by its unique UAT container name) were probed.
+    assert any("localhost:8000/api" in " ".join(c) for c in rec.calls), "backend /api probed on localhost"
+    assert any("uat-ledger-frontend:80/" in " ".join(c) for c in rec.calls), "frontend probed by container name"
+
+
+async def test_verify_uat_serves_fails_when_backend_silent(monkeypatch, tmp_path):
+    _setup_verify(monkeypatch, tmp_path)
+    rec = _ProbeRecorder(be=(1, "URLError: connection refused"), fe=(0, "status 200"))
+    monkeypatch.setattr(orchestrator, "_compose_smoke_step", rec)
+
+    ok, detail = await orchestrator._verify_uat_serves("nex-ledger", "ledger")
+
+    assert ok is False
+    assert detail.startswith("backend 'backend' /api not responding within 120s:")
+    # A backend FAIL short-circuits the FE probe.
+    assert not any("uat-ledger-frontend" in " ".join(c) for c in rec.calls)
+
+
+async def test_verify_uat_serves_fails_when_frontend_silent(monkeypatch, tmp_path):
+    _setup_verify(monkeypatch, tmp_path)
+    rec = _ProbeRecorder(be=(0, "status 200"), fe=(1, "URLError: connection refused"))
+    monkeypatch.setattr(orchestrator, "_compose_smoke_step", rec)
+
+    ok, detail = await orchestrator._verify_uat_serves("nex-ledger", "ledger")
+
+    assert ok is False
+    assert detail.startswith("frontend 'frontend' not serving within 120s:")
+
+
+async def test_verify_uat_serves_skips_when_no_uat_compose(monkeypatch, tmp_path):
+    # Defensive skip (caller already guards existence) — never a NEW false FAIL.
+    _setup_verify(monkeypatch, tmp_path, uat_compose=False)
+    rec = _ProbeRecorder(be=(0, ""), fe=(0, ""))
+    monkeypatch.setattr(orchestrator, "_compose_smoke_step", rec)
+
+    ok, detail = await orchestrator._verify_uat_serves("nex-ledger", "ledger")
+
+    assert (ok, detail) == (True, "OK")
+    assert rec.calls == [], "a skip never spawns a probe"
 
 
 def test_fe_app_version_from_git_count(monkeypatch):

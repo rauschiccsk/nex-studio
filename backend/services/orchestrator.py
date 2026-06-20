@@ -2246,10 +2246,12 @@ async def _run_uat_deploy(project_slug: str, uat_slug: str) -> tuple[bool, str]:
     nginx rewrite (unlike the uat-deploy.py provisioner) — and stamps the FE build-arg via
     ``VITE_APP_VERSION`` (post-commit version scheme).
 
-    Returns ``(ok, detail)``: ``ok`` is True on exit 0; ``detail`` is ``"OK"`` on success, else a short
-    tail of the combined output (the deploy error to surface to the Director). Never raises — a spawn
-    failure / timeout becomes ``(False, reason)`` so the caller settles to ``blocked`` rather than hanging.
-    Async (``create_subprocess_exec`` + ``await``) so the ~1–2 min docker build never blocks the event loop.
+    Returns ``(ok, detail)``: ``ok`` is True only when ``up`` exits 0 AND the deployed app actually
+    SERVES (icc-deploy §5.6 #2 — "exit 0" is not "serves"); ``detail`` is ``"OK"`` on success, else a
+    short tail of the deploy error / the serve-verify reason. Never raises — a spawn failure / timeout /
+    serve-verify failure becomes ``(False, reason)`` so the caller settles to ``blocked`` rather than a
+    false success. Async (``create_subprocess_exec`` + ``await``) so the ~1–2 min docker build never
+    blocks the event loop.
     """
     compose = _uat_compose_path(uat_slug)
     cmd = ["docker", "compose", "-f", str(compose), "up", "-d", "--build", "--force-recreate"]
@@ -2265,10 +2267,62 @@ async def _run_uat_deploy(project_slug: str, uat_slug: str) -> tuple[bool, str]:
     except asyncio.TimeoutError:
         proc.kill()
         return False, f"deploy prekročil časový limit ({UAT_DEPLOY_TIMEOUT}s)"
-    if proc.returncode == 0:
+    if proc.returncode != 0:
+        tail = (stdout or b"").decode("utf-8", "replace").strip()[-300:]
+        return False, (f"exit {proc.returncode}: {tail}" if tail else f"exit {proc.returncode}")
+    # ``up`` exit 0 only means the containers were created — NOT that the app serves (the nex-asistent
+    # false-success bug). Verify the app actually responds before reporting success.
+    return await _verify_uat_serves(project_slug, uat_slug)
+
+
+async def _verify_uat_serves(project_slug: str, uat_slug: str) -> tuple[bool, str]:
+    """Post-``up`` readiness gate for a UAT deploy (icc-deploy §5.6 #2): confirm the deployed app actually
+    SERVES before :func:`_run_uat_deploy` reports success — every backend ``/api`` responds AND every
+    frontend serves (HTTP ``< 500``). Returns ``(True, "OK")`` once verified, else ``(False, reason)`` so
+    the caller settles to ``blocked`` rather than a false success.
+
+    The UAT compose strips host ports (Traefik routes by network), so this probes IN-network via
+    ``docker compose exec``: the backend probes itself at ``localhost`` and probes the frontend (nginx, no
+    Python) over the network by its unique UAT container name. Service keys + container ports are read from
+    the SOURCE compose (the UAT compose's stripped ports can't reveal the container port); ``up --build``
+    rebuilds the UAT from that same source, so the ports match the live containers.
+
+    Defensive skips return ``(True, "OK")`` (the app deployed; we just can't probe it) — NEVER a new false
+    FAIL: no UAT compose (the caller already guards existence), an unreadable source compose, or no backend
+    service (no Python container to probe from). The real serve check runs whenever a backend exists."""
+    uat_compose = _uat_compose_path(uat_slug)
+    if not uat_compose.is_file():
+        logger.warning("UAT serve-verify skipped (uat=%s) — no UAT compose to probe", uat_slug)
         return True, "OK"
-    tail = (stdout or b"").decode("utf-8", "replace").strip()[-300:]
-    return False, (f"exit {proc.returncode}: {tail}" if tail else f"exit {proc.returncode}")
+    src_compose = claude_agent.PROJECTS_ROOT / project_slug / "docker-compose.yml"
+    try:
+        services = (yaml.safe_load(src_compose.read_text()) or {}).get("services") or {}
+    except (OSError, yaml.YAMLError):
+        logger.warning("UAT serve-verify skipped (slug=%s) — source compose unreadable", project_slug)
+        return True, "OK"
+    roles = uat_provisioner.identify_service_roles(services)
+    be_role = roles["backend"]
+    if be_role is None:
+        logger.warning("UAT serve-verify skipped (slug=%s) — no backend service to probe from", project_slug)
+        return True, "OK"
+
+    base = ["docker", "compose", "-f", str(uat_compose)]
+    # Backend: probe /api on localhost inside the backend container (any <500 = "responds").
+    be_port = uat_provisioner.detect_internal_port(services[be_role], 8000)
+    be_ready, be_last = await _await_http_ready(base, be_role, be_port, host="localhost", path="/api")
+    if not be_ready:
+        return False, f"backend '{be_role}' /api not responding within {ACCEPTANCE_SMOKE_READY_TIMEOUT}s: {be_last}"
+    # Frontend: probe / on the frontend nginx FROM the backend, addressing it by its unique UAT container
+    # name (the service-name alias collides across UATs on the shared nex-proxy-net; the container name
+    # does not). nginx ships no Python, so it cannot probe itself.
+    fe_role = roles["frontend"]
+    if fe_role is not None:
+        fe_port = uat_provisioner.detect_internal_port(services[fe_role], 80)
+        fe_host = f"uat-{uat_slug}-{fe_role}"
+        fe_ready, fe_last = await _await_http_ready(base, be_role, fe_port, host=fe_host, path="/")
+        if not fe_ready:
+            return False, f"frontend '{fe_role}' not serving within {ACCEPTANCE_SMOKE_READY_TIMEOUT}s: {fe_last}"
+    return True, "OK"
 
 
 # Engine-owned GitHub release publish (v0.8.0 CR-1). ``RELEASE_PUBLISH_TIMEOUT`` bounds the CI WATCH —
@@ -2472,27 +2526,63 @@ def _compose_backend_port(compose_path: Path) -> Optional[int]:
     return int(container) if container.isdigit() else None
 
 
-def _readiness_probe_src(port: int) -> str:
-    """In-container stdlib Python probe (the same interpreter that runs the acceptance suite — no curl
-    dependency; slim Python images like asistent's ``python:3.12-slim`` ship no curl).
+def _readiness_probe_src(port: int, *, host: str = "localhost", path: str = "/health") -> str:
+    """In-container stdlib Python probe (the same interpreter that runs the app — no curl dependency;
+    slim Python images like asistent's ``python:3.12-slim`` ship no curl). Probes
+    ``http://{host}:{port}{path}`` — ``host`` defaults to ``localhost`` (probe the own container) but can
+    target a SIBLING service over the compose network (e.g. the frontend nginx, which has no Python of its
+    own) by passing its service/container name.
 
     Exit ``0`` = **READY**: the server returned an HTTP response with status ``< 500`` — a 2xx/3xx success
-    OR a 4xx (e.g. 404, where the probe path simply isn't a declared route — irrelevant; the acceptance
-    suite uses the app's real routes). Exit ``1`` = **keep polling**: status ``>= 500`` (server up but
+    OR a 4xx (e.g. 404, where the probe path simply isn't a declared route — irrelevant; the app's real
+    routes are exercised separately). Exit ``1`` = **keep polling**: status ``>= 500`` (server up but
     signalling starting/unavailable) OR no HTTP response at all (connection refused / reset / DNS /
     timeout). Path-agnostic (v0.7.7) — a 404 at the probe path now means "up", so a versioned health route
     (nex-asistent's ``/api/v1/health``) no longer false-FAILs the gate. Prints ``status <code>`` / ``err
     <e>`` so the caller can surface the last observation."""
+    url = f"http://{host}:{port}{path}"
     return (
         "import sys, urllib.request, urllib.error\n"
         "try:\n"
-        f"    r = urllib.request.urlopen('http://localhost:{port}/health', timeout=5)\n"
+        f"    r = urllib.request.urlopen('{url}', timeout=5)\n"
         "    print('status', getattr(r, 'status', 200)); sys.exit(0)\n"
         "except urllib.error.HTTPError as e:\n"
         "    print('status', e.code); sys.exit(0 if e.code < 500 else 1)\n"
         "except Exception as e:\n"
         "    print('err', e); sys.exit(1)\n"
     )
+
+
+async def _await_http_ready(
+    base: list[str],
+    exec_service: str,
+    port: int,
+    *,
+    host: str = "localhost",
+    path: str = "/health",
+    timeout: int = ACCEPTANCE_SMOKE_READY_TIMEOUT,
+    interval: int = ACCEPTANCE_SMOKE_READY_INTERVAL,
+) -> tuple[bool, str]:
+    """Poll an in-container HTTP endpoint (run the stdlib probe inside ``exec_service`` via
+    ``docker compose exec``) until the server RESPONDS (any status ``< 500``) or ``timeout`` elapses.
+
+    ``exec_service`` is the compose service whose container runs the probe (it must have Python — a
+    backend); ``host``/``port``/``path`` are the probe TARGET. With ``host=localhost`` the service probes
+    itself; with ``host=<sibling>`` it probes another service over the compose network (used to reach the
+    frontend nginx, which ships no Python). Returns ``(True, last)`` once the server responds, else
+    ``(False, last)`` on timeout. The status ``< 500`` classification lives in :func:`_readiness_probe_src`
+    (it runs in-container); here exit 0 is READY and a non-zero exit keeps polling."""
+    cmd = base + ["exec", "-T", exec_service, "python", "-c", _readiness_probe_src(port, host=host, path=path)]
+    attempts = max(1, timeout // interval)
+    last = "no response"
+    for i in range(attempts):
+        rc, out = await _compose_smoke_step(cmd, 30)
+        if rc == 0:
+            return True, out.strip()[-200:] or "ready"
+        last = out.strip()[-200:] or f"exit {rc}"
+        if i < attempts - 1:
+            await asyncio.sleep(interval)
+    return False, last
 
 
 async def _await_acceptance_app_ready(base: list[str], port: int) -> tuple[bool, str]:
@@ -2505,20 +2595,29 @@ async def _await_acceptance_app_ready(base: list[str], port: int) -> tuple[bool,
 
     Readiness = "the server is accepting + handling HTTP requests", NOT "this exact path returns 2xx"
     (v0.7.7, LIVE-confirmed: nex-asistent serves health at the versioned ``/api/v1/health``, so a probe to
-    ``/health`` gets 404 — which now correctly means "up"). The status``<500`` classification lives in
-    :func:`_readiness_probe_src` (it runs in-container); here we treat the probe's exit 0 as READY and
-    keep polling on exit ``!= 0`` (status ``>= 500`` / connection error / timeout)."""
-    cmd = base + ["exec", "-T", "backend", "python", "-c", _readiness_probe_src(port)]
-    attempts = max(1, ACCEPTANCE_SMOKE_READY_TIMEOUT // ACCEPTANCE_SMOKE_READY_INTERVAL)
-    last = "no response"
-    for i in range(attempts):
-        rc, out = await _compose_smoke_step(cmd, 30)
-        if rc == 0:
-            return True, out.strip()[-200:] or "ready"
-        last = out.strip()[-200:] or f"exit {rc}"
-        if i < attempts - 1:
-            await asyncio.sleep(ACCEPTANCE_SMOKE_READY_INTERVAL)
-    return False, last
+    ``/health`` gets 404 — which now correctly means "up"). Thin wrapper over :func:`_await_http_ready`
+    (the ``backend``-probes-itself case): probe ``http://localhost:<port>/health`` from the backend."""
+    return await _await_http_ready(base, "backend", port, host="localhost", path="/health")
+
+
+def _compose_frontend_port(compose_path: Path) -> Optional[int]:
+    """The CONTAINER port the ``frontend`` service listens on, from its first ``ports`` entry — the
+    target for the in-network frontend reachability probe (the nginx analog of
+    :func:`_compose_backend_port`). Handles the short forms (``"port"`` / ``"host:port"`` /
+    ``"ip:host:port"``, optional ``/proto``) and the long form (``{target: …}``). Returns ``None`` when
+    undeterminable (no ``frontend`` service / no ``ports`` / unparseable) → the caller falls back to the
+    nginx default (80) rather than guess a wrong port."""
+    data = yaml.safe_load(compose_path.read_text()) or {}
+    frontend = (data.get("services") or {}).get("frontend") or {}
+    ports = frontend.get("ports") or []
+    if not ports:
+        return None
+    entry = ports[0]
+    if isinstance(entry, dict):  # long syntax: {target: 80, published: …}
+        target = entry.get("target")
+        return int(target) if isinstance(target, int) or (isinstance(target, str) and target.isdigit()) else None
+    container = str(entry).split("/", 1)[0].split(":")[-1]  # short syntax: container port is last colon segment
+    return int(container) if container.isdigit() else None
 
 
 async def _run_app_starts_smoke(project_slug: str, version_label: str) -> tuple[bool, str]:
@@ -2533,11 +2632,13 @@ async def _run_app_starts_smoke(project_slug: str, version_label: str) -> tuple[
     validation, not a runtime pytest run.
 
     Returns ``(ok, detail)`` and NEVER raises (modelled on :func:`_run_uat_deploy`): a spawn failure /
-    timeout / ``up`` failure / app-not-responding → ``(False, reason)`` so the caller settles ``gate_g``
-    to FAIL rather than hanging. Graceful SKIP → ``(True, "SKIPPED …")`` when the project has no
-    ``docker-compose.yml`` (same shape as the postscaffold "SKIPPED — no docker-compose.yml" /
-    ``_fast_fix_auto_deploy`` NULL-slug skip). The caller records the pass/fail/skip evidence as a
-    ``system→director`` message.
+    timeout / ``up`` failure / backend-not-responding / frontend-not-serving → ``(False, reason)`` so the
+    caller settles ``gate_g`` to FAIL rather than hanging. Also FAILs a compose that serves a backend web
+    app but emits NO frontend service (icc-deploy §5.6 #1 — the nex-asistent "no FE emitted" bug), and
+    verifies the frontend actually serves (probed from the backend over the network — nginx has no
+    Python). Graceful SKIP → ``(True, "SKIPPED …")`` when the project has no ``docker-compose.yml`` (same
+    shape as the postscaffold "SKIPPED — no docker-compose.yml" / ``_fast_fix_auto_deploy`` NULL-slug
+    skip). The caller records the pass/fail/skip evidence as a ``system→director`` message.
     """
     root = claude_agent.PROJECTS_ROOT / project_slug
     compose = root / "docker-compose.yml"
@@ -2548,31 +2649,51 @@ async def _run_app_starts_smoke(project_slug: str, version_label: str) -> tuple[
         )
         return True, "SKIPPED — no docker-compose.yml"
 
+    # 2. Frontend-service assertion (icc-deploy §5.6 #1): a compose that serves a backend web app MUST
+    #    also emit a frontend service. A backend present + NO frontend = the nex-asistent "no FE service
+    #    emitted" bug (Traefik then has no default route → 404). FAIL here. (A compose with no backend at
+    #    all — a pure worker/lib stack — is NOT a web app; don't FAIL it on a missing frontend. The
+    #    archetype-conditional must-have-a-compose FAIL is P2; for now no-compose still SKIPs above.)
+    services = (yaml.safe_load(compose.read_text()) or {}).get("services") or {}
+    roles = uat_provisioner.identify_service_roles(services)
+    if roles["backend"] is not None and roles["frontend"] is None:
+        logger.warning("app-starts smoke FAIL (slug=%s) — backend web app has no frontend service", project_slug)
+        return False, "compose has a backend web app but no frontend service"
+
     logger.info("app-starts smoke starting (slug=%s, version=%s)", project_slug, version_label)
     project = f"{project_slug}-smoke"
     tmpdir = Path(tempfile.mkdtemp(prefix=f"{project_slug}-smoke-"))
     override = tmpdir / "smoke.override.yml"
     base = ["docker", "compose", "-p", project, "-f", str(compose), "-f", str(override)]
     try:
-        # 2. Isolate — ephemeral override stripping container_name + host ports.
+        # 3. Isolate — ephemeral override stripping container_name + host ports.
         override.write_text(_acceptance_smoke_override(compose))
-        # 3. Up — build + boot; ``--wait`` blocks until healthchecks pass (Ollama reached via the app's
+        # 4. Up — build + boot; ``--wait`` blocks until healthchecks pass (Ollama reached via the app's
         #    own ``extra_hosts: host-gateway`` + ``OLLAMA_URL``).
         rc, out = await _compose_smoke_step(base + ["up", "-d", "--build", "--wait"], ACCEPTANCE_SMOKE_TIMEOUT)
         if rc != 0:
             return False, f"up exit {rc}: {out.strip()[-400:]}"
-        # 4. Ready (the boot check) — ``up --wait`` returns once the container RUNS; a backend without a
-        #    healthcheck may still be booting/migrating. Poll /health until the server RESPONDS (status
-        #    <500; v0.7.7 path-agnostic). READY ⇒ PASS ("app booted + responds"). Undeterminable port →
-        #    skip the poll (no NEW false FAIL — ``up --wait`` already succeeded).
+        # 5. Backend ready (the boot check) — ``up --wait`` returns once the container RUNS; a backend
+        #    without a healthcheck may still be booting/migrating. Poll /health until the server RESPONDS
+        #    (status <500; v0.7.7 path-agnostic). READY ⇒ continue. Undeterminable port → skip the poll (no
+        #    NEW false FAIL — ``up --wait`` already succeeded).
         port = _compose_backend_port(compose)
         if port is not None:
             ready, last = await _await_acceptance_app_ready(base, port)
             if not ready:
                 return False, f"app did not boot / not responding within {ACCEPTANCE_SMOKE_READY_TIMEOUT}s: {last}"
+        # 6. Frontend reachable — the frontend nginx has no Python, so probe it FROM the backend over the
+        #    isolated project network by service name (no host ports; the override stripped them). A 404 at
+        #    ``/`` still means "serving" (<500). This catches a frontend that built but never serves.
+        fe_role = roles["frontend"]
+        if fe_role is not None and roles["backend"] is not None:
+            fe_port = _compose_frontend_port(compose) or 80
+            fe_ready, fe_last = await _await_http_ready(base, roles["backend"], fe_port, host=fe_role, path="/")
+            if not fe_ready:
+                return False, (f"frontend '{fe_role}' not serving within {ACCEPTANCE_SMOKE_READY_TIMEOUT}s: {fe_last}")
         return True, "app booted + responds"
     finally:
-        # 5. Teardown — ALWAYS: tear the isolated stack (+ its volumes) down and drop the temp override.
+        # 7. Teardown — ALWAYS: tear the isolated stack (+ its volumes) down and drop the temp override.
         await _compose_smoke_step(base + ["down", "-v"], 120)
         shutil.rmtree(tmpdir, ignore_errors=True)
 
