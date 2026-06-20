@@ -789,6 +789,95 @@ def _gate_e_open_findings(db: Session, version_id: uuid.UUID) -> int:
     return max(0, raised - resolved)
 
 
+# PIPELINE-AUTONOMY Phase 3 (design docs/architecture/pipeline-autonomy.md §2.1): the Gate E question
+# budget scales with the version's SPEC footprint — the only artifact that exists at gate_e (task_plan is
+# the NEXT stage, so it CANNOT drive the depth — adversarial Issue 8). A small tweak → a few questions to
+# the touched spots; a greenfield → a full walk, capped by the ceiling. floor = the MINIMUM review depth
+# (Gate E exists to catch spec gaps — under-review is the opposite failure); ceiling = the upper bound on
+# the AUTONOMOUS Branch-A run — reaching it ESCALATES to the Director (extend or close), NEVER silent-closes
+# (§2.1, the threshold-downgrade anti-pattern). Both clamp to absolute floors/caps, so a missing/unreadable
+# spec tree (tests / no repo) degrades to a sane small budget — never 0, never unbounded.
+_GATE_E_SPEC_LINES_PER_FLOOR_Q = 500  # one floor question per ~500 lines of spec footprint
+_GATE_E_FLOOR_MIN = 3
+_GATE_E_FLOOR_MAX = 10
+_GATE_E_CEILING_MULTIPLE = 3  # ceiling = floor × 3 — headroom for legitimate deep review before escalating
+_GATE_E_CEILING_MIN = 6
+_GATE_E_CEILING_MAX = 30
+# Topic-boundary slack for the runner's auto-chain backstop (:func:`auto_chain_limit`): the Customer also
+# auto-continues across clean topic boundaries (not just questions), and a boundary is not a question, so it
+# does not consume the question budget. This bounds how many boundary continues the backstop tolerates above
+# the question ceiling before it trips — a degenerate boundary-only loop (no questions, no coverage_complete)
+# is an agent bug, caught here exactly as a runaway chain is today.
+_GATE_E_TOPIC_SLACK = 12
+
+
+def _gate_e_spec_footprint_lines(db: Session, version_id: uuid.UUID) -> int:
+    """Total line count of the version's spec markdown tree — a DETERMINISTIC scope proxy for the Gate E
+    question budget (§2.1). Reads ``docs/specs/versions/v<X>/**/*.md`` in the orchestrated repo (the Gate A
+    ``development-spec.md`` + the BE/FE spec package + ``customer-requirements.md``). Returns 0 when the repo
+    or the spec dir is absent (tests / fresh project) — the caller clamps that to the floor, never crashes."""
+    slug = _project_slug_for_version(db, version_id)
+    version_number = db.execute(select(Version.version_number).where(Version.id == version_id)).scalar_one_or_none()
+    if version_number is None:
+        return 0
+    spec_dir = claude_agent.PROJECTS_ROOT / slug / "docs" / "specs" / "versions" / f"v{version_number}"
+    if not spec_dir.exists():
+        return 0
+    total = 0
+    for path in sorted(spec_dir.rglob("*.md")):
+        try:
+            with path.open("r", encoding="utf-8", errors="ignore") as fh:
+                total += sum(1 for _ in fh)
+        except OSError:  # an unreadable file degrades to skip, never crashes the budget
+            continue
+    return total
+
+
+def _gate_e_question_budget(db: Session, version_id: uuid.UUID) -> tuple[int, int]:
+    """``(floor, ceiling)`` for the Gate E question budget, scaled to the version's spec footprint (§2.1).
+
+    floor = the minimum questions a healthy review asks (clamped to ``[_GATE_E_FLOOR_MIN, _GATE_E_FLOOR_MAX]``);
+    ceiling = the upper bound on the autonomous Branch-A run (``floor × _GATE_E_CEILING_MULTIPLE``, clamped to
+    ``[_GATE_E_CEILING_MIN, _GATE_E_CEILING_MAX]`` and never below ``floor``). A small spec → small floor + small
+    ceiling (few questions); a large spec → larger budget, still bounded. Reaching the ceiling ESCALATES to the
+    Director, it never silent-closes (the floor/ceiling-with-escalation semantics, design §2.1)."""
+    lines = _gate_e_spec_footprint_lines(db, version_id)
+    floor = min(_GATE_E_FLOOR_MAX, max(_GATE_E_FLOOR_MIN, lines // _GATE_E_SPEC_LINES_PER_FLOOR_Q))
+    ceiling = min(_GATE_E_CEILING_MAX, max(_GATE_E_CEILING_MIN, floor * _GATE_E_CEILING_MULTIPLE))
+    return floor, max(ceiling, floor)
+
+
+def _gate_e_question_count(db: Session, version_id: uuid.UUID) -> int:
+    """How many Customer questions Gate E has asked so far — the budget unit (§2.1). A Customer ``question``
+    turn is recorded ``author='customer'`` ∧ ``kind='question'`` (a ``blocked`` Customer block maps to
+    ``question`` too, :func:`invoke_agent`); topic boundaries (``gate_report``) are NOT questions and never
+    count. Deterministic from the message log, like :func:`_gate_e_open_findings`."""
+    return db.execute(
+        select(func.count())
+        .select_from(PipelineMessage)
+        .where(
+            PipelineMessage.version_id == version_id,
+            PipelineMessage.stage == "gate_e",
+            PipelineMessage.author == "customer",
+            PipelineMessage.kind == "question",
+        )
+    ).scalar_one()
+
+
+def auto_chain_limit(db: Session, version_id: uuid.UUID) -> int:
+    """Upper bound for the runner's auto-chain backstop (:mod:`backend.services.pipeline_runner`).
+
+    The auto-chain advances monotonically across :data:`STAGE_ORDER` EXCEPT Gate E, which self-loops one
+    Customer turn per autonomous continue (Phase 3) until ``coverage_complete`` / the budget ceiling escalates.
+    So the backstop must clear the full waterfall PLUS the version's Gate E question ceiling PLUS topic-boundary
+    slack — otherwise a legitimately deep (but bounded) Gate E review would strand the pipeline at
+    ``agent_working`` mid-loop. A pure runaway backstop: every real path settles well before it (gate_e escalates
+    at the ceiling; ``coverage_complete`` closes; gates a–d + build are monotonic). fast_fix is unaffected — its
+    chain is ≤3, far under any bound."""
+    _, ceiling = _gate_e_question_budget(db, version_id)
+    return len(STAGE_ORDER) + ceiling + _GATE_E_TOPIC_SLACK
+
+
 def _gate_e_coverage_complete(report: Optional[PipelineMessage]) -> bool:
     """Whether the latest Customer boundary signalled all 7 okruhy covered (§4)."""
     return bool(report and report.payload and report.payload.get("coverage_complete"))
@@ -3339,6 +3428,44 @@ async def _coordinator_review_gap(
         )
 
 
+def _gate_e_scope_directive(db: Session, version_id: uuid.UUID) -> str:
+    """The scope/budget prefix injected on EVERY Customer Gate E turn (design §2.1, Phase 3 — orchestrator
+    side; the per-project Customer charter carries the matching depth rules). Tells the Customer to walk ONLY
+    the okruhy/screens this version actually touches (small change → a few targeted questions, greenfield →
+    a full walk) and the scope-scaled question budget (floor target + ceiling). Derived deterministically from
+    the version's spec footprint (:func:`_gate_e_question_budget`)."""
+    floor, ceiling = _gate_e_question_budget(db, version_id)
+    asked = _gate_e_question_count(db, version_id)
+    return (
+        "ROZSAH PREVIERKY (Gate E, škálovaný podľa footprintu špecifikácie tejto verzie): choď LEN cez "
+        "okruhy/obrazovky, ktoré táto verzia REÁLNE dotýka — malá zmena = pár cielených otázok k dotknutým "
+        "miestam, greenfield = plná previerka. Rozpočet otázok: aspoň "
+        f"{floor} (Gate E existuje na chytenie spec medzier — pod-previerka je opačné zlyhanie), strop {ceiling}. "
+        f"Doteraz položených: {asked}. Keď je dotknutý rozsah pokrytý, signalizuj coverage_complete. "
+    )
+
+
+def _gate_e_continue_prompt(db: Session, version_id: uuid.UUID) -> str:
+    """The Customer's next-turn base prompt when re-dispatched WITHOUT a Director directive — the FIRST gate_e
+    turn OR an autonomous Branch-A / topic-boundary continue (Phase 3, §5.2). Mirrors the manual approve@gate_e
+    relay (:func:`dispatch_directive`) so the Customer (a separate session) SEES the Designer's reply and never
+    re-asks a covered point as a false finding — the relay the auto-chain loop cannot carry (it dispatches with
+    ``directive=None``). The scope/budget prefix is added by the caller, so this returns only the relay base."""
+    milestone = _latest_gate_e_milestone(db, version_id)
+    if milestone is not None and milestone.author == "designer":  # auto-continued past a Branch-A answer
+        return (
+            f"Návrhár odpovedal na tvoju otázku: «{milestone.content}». Odpoveď je bez medzery "
+            "(Koordinátor ju auto-ratifikoval). Pokračuj ďalšou otázkou previerky Gate E. "
+            "Ukonči <<<PIPELINE_STATUS>>> blokom (F-007-orchestration-cockpit.md §5.3)."
+        )
+    if milestone is not None:  # auto-continued past a clean topic boundary (latest = Customer gate_report)
+        return (
+            "Okruh je uzavretý bez otvorených nálezov — pokračuj v previerke Gate E ďalším okruhom "
+            "(alebo ďalšou otázkou). Ukonči <<<PIPELINE_STATUS>>> blokom (F-007-orchestration-cockpit.md §5.3)."
+        )
+    return _directive_for("gate_e")  # first gate_e turn — no prior milestone to relay
+
+
 async def _run_gate_e_round(
     db: Session,
     state: PipelineState,
@@ -3406,7 +3533,12 @@ async def _run_gate_e_round(
             "blokom (F-007-orchestration-cockpit.md §5.3)."
         )
     else:
-        customer_prompt = directive if directive is not None else _directive_for("gate_e")
+        # directive set = a Director-framed relay (manual approve/leave); None = the first turn OR an
+        # autonomous continue (Phase 3) — reconstruct the Designer-answer relay the auto-chain can't carry.
+        customer_prompt = directive if directive is not None else _gate_e_continue_prompt(db, state.version_id)
+
+    # §2.1 (Phase 3): every Customer turn carries the scope/budget context (touched okruhy + floor/ceiling).
+    customer_prompt = _gate_e_scope_directive(db, state.version_id) + customer_prompt
 
     cust = await invoke_agent_with_parse_retry(
         db,
@@ -3422,14 +3554,28 @@ async def _run_gate_e_round(
         return await _block_failed(state, db, cust.reason, failed=cust, on_message=on_message)
 
     if cust.kind == "gate_report" and cust.topic_done:  # round boundary
-        # §A.2 site 3 (Gate E topic boundary): Coordinator synthesis before settling.
+        # §A.2 site 3 (Gate E topic boundary): Coordinator synthesis before settling. The per-topic report is
+        # ALWAYS recorded (durable on the board, §2.3) — even when we auto-continue and don't use it as the
+        # next_action.
         synthesis = await _coordinator_synthesis(
             db, state, trigger=f"okruh '{cust.topic or 'okruh'}'", on_message=on_message
         )
+        # Phase 3 (§2.3): a CLEAN intermediate topic boundary (NOT coverage_complete) auto-continues to the
+        # next okruh — the per-topic report stays durable above. coverage_complete is the FINAL close: the ONE
+        # bounded Director sign-off (KEY), never auto-continued.
+        if not cust.coverage_complete and await _maybe_autonomous_gate_e_continue(
+            db, state, boundary="topic", on_message=on_message
+        ):
+            return state  # agent_working — the runner auto-chain runs the next okruh
         state.status = "awaiting_director"
-        state.next_action = (
-            synthesis or f"Director: posúď okruh '{cust.topic or 'okruh'}' (nálezy + riešenia Návrhára)."
-        )
+        if cust.coverage_complete:
+            state.next_action = synthesis or "Director: Gate E pokrytá — posúď a uzavri previerku (jeden podpis)."
+        elif _gate_e_budget_reached(db, state.version_id):
+            state.next_action = "Director: Gate E dosiahol strop otázok — predĺž previerku alebo ju uzavri."
+        else:
+            state.next_action = (
+                synthesis or f"Director: posúď okruh '{cust.topic or 'okruh'}' (nálezy + riešenia Návrhára)."
+            )
         db.flush()
         return state
 
@@ -3449,11 +3595,22 @@ async def _run_gate_e_round(
         )
         if isinstance(designer, ParseFailure):
             return await _block_failed(state, db, designer.reason, failed=designer, on_message=on_message)
-        state.status = "awaiting_director"
-        if designer.gap_found:  # Branch B upward leg — Coordinator reviews before the Director
+        if designer.gap_found:  # Branch B upward leg — Coordinator reviews; a gap is ALWAYS the Director (§2.4)
+            state.status = "awaiting_director"
             await _coordinator_review_gap(db, state, designer, on_message)
             state.next_action = "Director: Návrhár našiel medzeru a navrhol opravu — rozhodni Opraviť/Ponechať."
-        else:  # Branch A — routine answer
+            db.flush()
+            return state
+        # Branch A — routine answer, no gap: AUTO-CONTINUE to the next question (Phase 3, §2.2) when
+        # deterministically clean (0 open findings) and under the scope-scaled budget; else settle.
+        if await _maybe_autonomous_gate_e_continue(db, state, boundary="question", on_message=on_message):
+            return state  # agent_working — the runner auto-chain runs the next Customer question
+        state.status = "awaiting_director"
+        if _gate_e_budget_reached(db, state.version_id):
+            state.next_action = (
+                "Director: Gate E dosiahol strop otázok — predĺž previerku (schváliť → ďalšia otázka) alebo ju uzavri."
+            )
+        else:
             state.next_action = "Director: posúď odpoveď Návrhára (schváliť → ďalšia otázka)."
         db.flush()
         return state
@@ -4702,6 +4859,74 @@ async def _maybe_autonomous_build_ratify(
         state.version_id,
         stage="build",
         action="auto_ratify_build",
+        rationale=rationale,
+        on_message=on_message,
+    )
+    return True
+
+
+def _gate_e_budget_reached(db: Session, version_id: uuid.UUID) -> bool:
+    """True when Gate E has asked at least the ceiling number of questions (§2.1) — the signal the caller
+    uses to ESCALATE to the Director with an extend-or-close ``next_action`` (never a silent close)."""
+    _, ceiling = _gate_e_question_budget(db, version_id)
+    return _gate_e_question_count(db, version_id) >= ceiling
+
+
+async def _maybe_autonomous_gate_e_continue(
+    db: Session,
+    state: PipelineState,
+    *,
+    boundary: str,
+    on_message: Optional[MessageCallback] = None,
+) -> bool:
+    """PIPELINE-AUTONOMY Phase 3 (design §2.2/§5.2) — at a Gate E per-question (Branch A) or a CLEAN topic
+    boundary, AUTO-CONTINUE to the next Customer turn with NO Director click: self-issue ``_begin_dispatch``
+    (status=agent_working at gate_e, so the runner auto-chain runs the next Customer turn) instead of settling
+    ``awaiting_director``. Returns ``True`` when it continued (the caller returns the now-``agent_working``
+    state), ``False`` → the caller takes the existing ``awaiting_director`` settle.
+
+    Sibling of :func:`_maybe_autonomous_gate_ratify`, with the SAME purely DETERMINISTIC discipline (design
+    §0.1 — there is NO confidence on the Designer status block; the guard reads only real booleans/counts):
+
+    * ``flow_type == 'new_version'`` — fast_fix / cr / bug never reach Gate E this way, byte-for-byte;
+    * 0 open Gate E findings (deterministic :func:`_gate_e_open_findings`, never the Customer's self-report) —
+      an open gap blocks any continue, mirroring the close gate;
+    * the question count is UNDER the scope-scaled ceiling (§2.1) — reaching the ceiling makes this return
+      ``False`` so the caller ESCALATES to the Director (extend or close), it NEVER silent-closes;
+    * the kickoff autonomy toggle is ON (:func:`_autonomy_enabled`, default).
+
+    The CALLER gates the two KEY exclusions BEFORE calling this (so they are unmistakable at the settle site):
+    ``gap_found`` (Branch B — a genuine spec decision, always the Director, design §2.4) and
+    ``coverage_complete`` (the FINAL close — the ONE bounded Director sign-off, design §2.3). A ParseFailure
+    can never reach here (it already settled ``blocked`` upstream). Every continue is recorded
+    Director-visibly via :func:`_record_autonomous_gate` (``is_autonomous=true`` + ``stage='gate_e'`` + a
+    deterministic rationale), so the board roll-up shows the Gate E questions/topics that auto-continued."""
+    if state.flow_type != "new_version":
+        return False
+    if _gate_e_open_findings(db, state.version_id) > 0:
+        return False  # an open finding blocks any continue (mirror the deterministic close gate)
+    asked = _gate_e_question_count(db, state.version_id)
+    _, ceiling = _gate_e_question_budget(db, state.version_id)
+    if asked >= ceiling:
+        return False  # budget ceiling → the caller escalates to the Director (never silent-close, §2.1)
+    if not _autonomy_enabled(db, state.version_id):
+        return False  # kickoff opt-out → the Director wants per-question / per-topic sign-off
+    if boundary == "topic":
+        rationale = (
+            f"Okruh Gate E uzavretý bez otvorených nálezov (0 medzier, {asked}/{ceiling} otázok) — "
+            "auto-pokračovanie na ďalší okruh previerky."
+        )
+    else:  # "question" — Branch A
+        rationale = (
+            f"Odpoveď Návrhára bez medzery ({asked}/{ceiling} otázok, 0 otvorených nálezov) — "
+            "auto-pokračovanie na ďalšiu otázku Gate E."
+        )
+    _begin_dispatch(db, state)  # status=agent_working at gate_e → the runner continues the chain
+    await _record_autonomous_gate(
+        db,
+        state.version_id,
+        stage="gate_e",
+        action=f"auto_continue_gate_e_{boundary}",
         rationale=rationale,
         on_message=on_message,
     )

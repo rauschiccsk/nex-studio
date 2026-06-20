@@ -158,19 +158,35 @@ async def _run(version_id: uuid.UUID, directive: str | None = None, gate_e_dispa
             #     chain then settles at gate_e — Gate E bounding is Phase 3, not yet auto-ratified);
             #   • new_version Phase 2: a clean build (build_readiness clean — 0 todo ∧ 0 failed) auto-ratifies
             #     build→gate_g (the release verdict at gate_g stays a KEY Director click, never auto).
+            #   • new_version Phase 3: Gate E auto-continues each clean Branch-A question / topic boundary
+            #     (gap_found False, under the scope-scaled budget) — the gate_e stage SELF-LOOPS one Customer
+            #     turn per iteration until coverage_complete / the ceiling escalates.
             # Continue dispatching with a stage-correct activity callback, broadcasting each intermediate state
             # so the board steps through the auto-advanced stages live, until it settles. Bounded as a backstop
-            # by len(STAGE_ORDER) — the full waterfall, the longest possible auto-chain (stages advance
-            # monotonically, so no chain can exceed it). The old len(FAST_FIX_STAGE_ORDER)=4 fit the a→d chain
-            # EXACTLY (zero headroom) and is too tight now that build→gate_g can also chain. Every real path
-            # settles (status != agent_working) well before the bound, so it only stops a hypothetical runaway.
+            # by orchestrator.auto_chain_limit — the full waterfall PLUS the version's Gate E question ceiling +
+            # topic slack (Phase 3 made the chain non-monotonic: gate_e self-loops, so len(STAGE_ORDER) alone
+            # would strand a legitimately deep but bounded Gate E review). Every real path settles (status !=
+            # agent_working) well before the bound, so it only stops a hypothetical runaway. fast_fix is
+            # unaffected (its chain is ≤3, far under any bound — the one-touch outcome is byte-identical).
             guard = 0
-            while state is not None and state.status == "agent_working" and guard < len(orchestrator.STAGE_ORDER):
+            # Compute the backstop ONLY when we're actually about to auto-chain — avoids the spec-tree read on
+            # a plain settle and the version-vanished (state is None) edge.
+            chain_limit = (
+                orchestrator.auto_chain_limit(db, version_id)
+                if state is not None and state.status == "agent_working"
+                else 0
+            )
+            while state is not None and state.status == "agent_working" and guard < chain_limit:
                 guard += 1
                 await _broadcast_state(version_id, state)
                 on_event = _activity_callback(version_id, state.current_stage, state.current_actor)
+                # gate_e_dispatch=None for EVERY auto-chained turn: the route's sub-flow (designer_edit /
+                # coordinator_consult) is one-shot — it applies only to the FIRST dispatch. An auto-continued
+                # Gate E turn (Phase 3) is always a FRESH Customer turn; carrying a stale "designer_edit" here
+                # would re-run the edit path with a None prompt. (Pre-Phase-3 chains never set it, so this is a
+                # no-op for fast_fix / gates a–d / build — the one-touch outcomes stay byte-identical.)
                 state = await orchestrator.run_dispatch(
-                    db, version_id, on_event, gate_e_dispatch=gate_e_dispatch, on_message=on_message
+                    db, version_id, on_event, gate_e_dispatch=None, on_message=on_message
                 )
                 db.commit()
         except Exception as exc:  # noqa: BLE001 — unexpected; degrade to blocked, don't hang UI.

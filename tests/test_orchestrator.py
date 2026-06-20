@@ -1961,7 +1961,9 @@ def _at_gate_e_gap(db_session, version, proposed_fix="Pridať tok reset hesla do
 
 
 async def test_gate_e_branch_a_one_question_then_stops(db_session, monkeypatch):
-    """Per-question gating: Customer Q → Designer answer (no gap) → STOP. No chaining."""
+    """Per-question gating (autonomy OFF path): Customer Q → Designer answer (no gap) → STOP. No chaining.
+    With autonomy ON a clean Branch A auto-continues (Phase 3, covered separately); the kickoff opt-out keeps
+    the per-question Director sign-off this test exercises."""
     seq = SequenceClaude(
         [
             _block(stage="gate_e", kind="question", summary="?", question="Ako sa rieši reset hesla?"),
@@ -1973,7 +1975,9 @@ async def test_gate_e_branch_a_one_question_then_stops(db_session, monkeypatch):
     monkeypatch.setattr(orchestrator, "verify_mechanical", lambda slug, block: None)
 
     version, _ = _make_version(db_session)
-    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    await orchestrator.apply_action(
+        db_session, version_id=version.id, action="start", payload={"autonomy_enabled": False}
+    )
     _to_gate_e(db_session, version)
     state = await orchestrator.run_dispatch(db_session, version.id)
 
@@ -2017,6 +2021,8 @@ async def test_gate_e_branch_b_coordinator_reviews_gap(db_session, monkeypatch):
 
 
 async def test_gate_e_topic_boundary_stops(db_session, monkeypatch):
+    """Topic boundary settle (autonomy OFF path): a clean intermediate topic boundary settles for the
+    Director's sign-off. With autonomy ON a clean boundary auto-continues (Phase 3, covered separately)."""
     seq = SequenceClaude(
         [
             _block(
@@ -2036,7 +2042,9 @@ async def test_gate_e_topic_boundary_stops(db_session, monkeypatch):
     monkeypatch.setattr(orchestrator, "verify_mechanical", lambda slug, block: None)
 
     version, _ = _make_version(db_session)
-    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    await orchestrator.apply_action(
+        db_session, version_id=version.id, action="start", payload={"autonomy_enabled": False}
+    )
     _to_gate_e(db_session, version)
     state = await orchestrator.run_dispatch(db_session, version.id)
 
@@ -2051,8 +2059,9 @@ async def test_gate_e_topic_boundary_stops(db_session, monkeypatch):
 
 
 async def test_gate_e_fix_edits_then_next_question(db_session, monkeypatch):
-    """designer_edit (Branch B fix): Designer edits per the relayed directive, then the
-    round continues to the next Customer question → Designer answer → STOP."""
+    """designer_edit (Branch B fix, autonomy OFF path): Designer edits per the relayed directive, then the
+    round continues to the next Customer question → Designer answer → STOP. With autonomy ON the final no-gap
+    answer would auto-continue (Phase 3); the opt-out keeps the per-question settle this test exercises."""
     seq = SequenceClaude(
         [
             _block(stage="gate_e", kind="answer", summary="opravené podľa návrhu", awaiting="none"),  # designer edit
@@ -2064,7 +2073,9 @@ async def test_gate_e_fix_edits_then_next_question(db_session, monkeypatch):
     monkeypatch.setattr(orchestrator, "verify_mechanical", lambda slug, block: None)
 
     version, _ = _make_version(db_session)
-    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    await orchestrator.apply_action(
+        db_session, version_id=version.id, action="start", payload={"autonomy_enabled": False}
+    )
     _to_gate_e(db_session, version)
     state = await orchestrator.run_dispatch(
         db_session,
@@ -2098,6 +2109,278 @@ async def test_gate_e_designer_parse_failure_blocks(db_session, monkeypatch):
     state = await orchestrator.run_dispatch(db_session, version.id)
 
     assert state.status == "blocked"  # unparseable Designer turn → escalate, never guess
+
+
+# ── PIPELINE-AUTONOMY Phase 3: Gate E bounding (scope-scaled depth + Branch-A auto-continue) ──────
+
+
+async def test_gate_e_question_budget_scales_with_spec_footprint(db_session, monkeypatch):
+    """§2.1: the question budget scales with the version's spec footprint — a SMALL footprint yields a
+    strictly smaller floor AND ceiling than a LARGE one, and both clamp to the absolute floors/caps (a
+    missing spec tree → the minimum budget, never 0 / never unbounded)."""
+    version, _ = _make_version(db_session)
+    monkeypatch.setattr(orchestrator, "_gate_e_spec_footprint_lines", lambda db, vid: 120)
+    small_floor, small_ceiling = orchestrator._gate_e_question_budget(db_session, version.id)
+    monkeypatch.setattr(orchestrator, "_gate_e_spec_footprint_lines", lambda db, vid: 6000)
+    large_floor, large_ceiling = orchestrator._gate_e_question_budget(db_session, version.id)
+
+    assert small_floor < large_floor and small_ceiling < large_ceiling  # scope-scaled depth
+    assert small_floor == orchestrator._GATE_E_FLOOR_MIN  # tiny spec clamps to the floor minimum
+    assert large_floor == orchestrator._GATE_E_FLOOR_MAX  # huge spec clamps to the floor maximum
+    assert large_ceiling == orchestrator._GATE_E_CEILING_MAX  # ceiling never exceeds the absolute cap
+    # a missing spec tree (no repo, footprint 0) degrades to the minimum budget — never 0, never unbounded
+    monkeypatch.setattr(orchestrator, "_gate_e_spec_footprint_lines", lambda db, vid: 0)
+    zero_floor, zero_ceiling = orchestrator._gate_e_question_budget(db_session, version.id)
+    assert zero_floor == orchestrator._GATE_E_FLOOR_MIN and zero_ceiling >= zero_floor
+
+
+async def test_gate_e_branch_a_auto_continues_under_budget(db_session, monkeypatch):
+    """§2.2: a no-gap Branch-A answer, autonomy ON + under budget, AUTO-CONTINUES to the next Customer
+    question (agent_working at gate_e, so the runner chains it) with NO Director click — and records a
+    Director-visible is_autonomous note carrying stage=gate_e + NO task_id."""
+    seq = SequenceClaude(
+        [
+            _block(stage="gate_e", kind="question", summary="?", question="Ako sa rieši reset hesla?"),
+            _block(stage="gate_e", kind="answer", summary="Reset cez email, pokryté v §4.2", awaiting="none"),
+        ]
+    )
+    monkeypatch.setattr(orchestrator, "invoke_claude", seq)
+    monkeypatch.setattr(orchestrator, "verify_mechanical", lambda slug, block: None)
+
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")  # autonomy ON (default)
+    _to_gate_e(db_session, version)
+    state = await orchestrator.run_dispatch(db_session, version.id)
+
+    assert state.status == "agent_working"  # auto-continued — NOT settled awaiting_director
+    assert state.current_stage == "gate_e"  # gate_e self-loops to the next question
+    assert len(seq.prompts) == 2  # customer Q → designer A; the next turn is the runner's, not this round
+    autos = _autos(db_session, version.id)
+    assert len(autos) == 1
+    assert autos[0].payload["stage"] == "gate_e"
+    assert autos[0].payload["action"] == "auto_continue_gate_e_question"
+    assert "task_id" not in autos[0].payload  # gate-level record → per-task caps exclude it
+    assert autos[0].payload.get("confidence") is None  # no confidence on the Designer status block (§0.1)
+    summary = orchestrator.autonomous_decisions_summary(db_session, version.id)
+    assert summary["count"] == 1 and summary["recent"][0]["stage"] == "gate_e"
+
+
+async def test_gate_e_gap_found_escalates_to_director_no_auto(db_session, monkeypatch):
+    """§2.4 (KEY): a Branch-B gap_found ALWAYS settles awaiting_director (a spec decision is the Director's),
+    even with autonomy ON — the Coordinator reviews the proposal and NO auto-continue note is written."""
+    seq = SequenceClaude(
+        [
+            _block(stage="gate_e", kind="question", summary="?", question="Je reset hesla pokrytý?"),
+            _block(
+                stage="gate_e",
+                kind="answer",
+                summary="medzera",
+                awaiting="none",
+                gap_found=True,
+                proposed_fix="Pridať tok reset hesla do §4.2",
+            ),
+        ]
+    )
+    monkeypatch.setattr(orchestrator, "invoke_claude", seq)
+    monkeypatch.setattr(orchestrator, "verify_mechanical", lambda slug, block: None)
+
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")  # autonomy ON
+    _to_gate_e(db_session, version)
+    state = await orchestrator.run_dispatch(db_session, version.id)
+
+    assert state.status == "awaiting_director"  # a gap stops for the Director, never auto-continues
+    assert "medzeru" in state.next_action
+    assert any(m.author == "coordinator" for m in _msgs(db_session, version.id))  # Coordinator reviewed the gap
+    assert _autos(db_session, version.id) == []  # NO autonomous gate_e record on a gap
+
+
+async def test_gate_e_budget_ceiling_escalates_not_silent_close(db_session, monkeypatch):
+    """§2.1 (the threshold-downgrade guard): reaching the question ceiling ESCALATES to the Director with an
+    extend-or-close next_action — it does NOT auto-continue and does NOT silently close. A clean no-gap answer
+    at the ceiling settles awaiting_director with no autonomous note."""
+    monkeypatch.setattr(orchestrator, "_gate_e_question_budget", lambda db, vid: (1, 1))  # ceiling = 1
+    seq = SequenceClaude(
+        [
+            _block(stage="gate_e", kind="question", summary="?", question="Posledná otázka v rozpočte?"),
+            _block(stage="gate_e", kind="answer", summary="pokryté", awaiting="none"),
+        ]
+    )
+    monkeypatch.setattr(orchestrator, "invoke_claude", seq)
+    monkeypatch.setattr(orchestrator, "verify_mechanical", lambda slug, block: None)
+
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")  # autonomy ON
+    _to_gate_e(db_session, version)
+    state = await orchestrator.run_dispatch(db_session, version.id)
+
+    assert state.status == "awaiting_director" and state.current_stage == "gate_e"  # escalated, NOT closed
+    assert "strop" in state.next_action  # extend-or-close, never a silent close
+    assert _autos(db_session, version.id) == []  # ceiling reached → no auto-continue note
+
+
+async def test_gate_e_clean_topic_boundary_auto_continues(db_session, monkeypatch):
+    """§2.3: a CLEAN intermediate topic boundary (topic_done, NOT coverage_complete, 0 open findings) auto-
+    continues to the next okruh — and the per-topic Coordinator synthesis stays a durable board message."""
+    seq = SequenceClaude(
+        [
+            _block(
+                stage="gate_e",
+                kind="gate_report",
+                summary="okruh prihlásenie hotový",
+                awaiting="director",
+                topic="prihlasenie",
+                topic_done=True,
+            ),
+            _block(stage="gate_e", kind="done", summary="Okruh prihlásenie uzavretý.", awaiting="director"),  # synth
+        ]
+    )
+    monkeypatch.setattr(orchestrator, "invoke_claude", seq)
+    monkeypatch.setattr(orchestrator, "verify_mechanical", lambda slug, block: None)
+
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")  # autonomy ON
+    _to_gate_e(db_session, version)
+    state = await orchestrator.run_dispatch(db_session, version.id)
+
+    assert state.status == "agent_working" and state.current_stage == "gate_e"  # auto-continued to next okruh
+    autos = _autos(db_session, version.id)
+    assert len(autos) == 1 and autos[0].payload["action"] == "auto_continue_gate_e_topic"
+    # the per-topic synthesis is STILL recorded durably on the board (§2.3 — never a silent skip)
+    syn = [m for m in _msgs(db_session, version.id) if (m.payload or {}).get("is_synthesis")]
+    assert len(syn) == 1 and syn[0].author == "coordinator"
+
+
+async def test_gate_e_coverage_complete_is_one_director_signoff(db_session, monkeypatch):
+    """§2.3: the FINAL boundary (coverage_complete) is NEVER auto-continued — it settles for the ONE bounded
+    Director sign-off, which closes Gate E → task_plan in a single approve."""
+    seq = SequenceClaude(
+        [
+            _block(
+                stage="gate_e",
+                kind="gate_report",
+                summary="celá previerka pokrytá",
+                awaiting="director",
+                topic="záver",
+                topic_done=True,
+                coverage_complete=True,
+            ),
+            _block(stage="gate_e", kind="done", summary="Gate E pokrytá — uzavri.", awaiting="director"),  # synth
+        ]
+    )
+    monkeypatch.setattr(orchestrator, "invoke_claude", seq)
+    monkeypatch.setattr(orchestrator, "verify_mechanical", lambda slug, block: None)
+
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")  # autonomy ON
+    _to_gate_e(db_session, version)
+    state = await orchestrator.run_dispatch(db_session, version.id)
+
+    assert state.status == "awaiting_director" and state.current_stage == "gate_e"  # NOT auto-closed
+    assert _autos(db_session, version.id) == []  # coverage_complete is KEY — never auto-continued
+    # the single Director sign-off closes Gate E → task_plan (0 open findings)
+    _settle(db_session, version.id)
+    state = await orchestrator.apply_action(db_session, version_id=version.id, action="approve")
+    assert state.current_stage == "task_plan"
+
+
+async def test_gate_e_toggle_off_no_auto_continue(db_session, monkeypatch):
+    """§4.1: with the kickoff autonomy toggle OFF, a clean no-gap Branch-A answer settles awaiting_director
+    (per-question Director sign-off) and writes NO autonomous note — the opt-out path."""
+    seq = SequenceClaude(
+        [
+            _block(stage="gate_e", kind="question", summary="?", question="Otázka?"),
+            _block(stage="gate_e", kind="answer", summary="pokryté", awaiting="none"),
+        ]
+    )
+    monkeypatch.setattr(orchestrator, "invoke_claude", seq)
+    monkeypatch.setattr(orchestrator, "verify_mechanical", lambda slug, block: None)
+
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(
+        db_session, version_id=version.id, action="start", payload={"autonomy_enabled": False}
+    )
+    _to_gate_e(db_session, version)
+    state = await orchestrator.run_dispatch(db_session, version.id)
+
+    assert state.status == "awaiting_director" and state.current_stage == "gate_e"  # opt-out → per-question stop
+    assert _autos(db_session, version.id) == []  # no auto-continue under the opt-out
+
+
+async def test_gate_e_multi_question_chain_then_single_close(db_session, monkeypatch):
+    """End-to-end (§6 worked example): autonomy ON, a 2-question clean walk auto-continues both questions
+    (2 is_autonomous gate_e notes), then a coverage_complete boundary settles for the ONE Director close →
+    task_plan. Mirrors the runner's auto-chain loop with the WIDENED bound (auto_chain_limit)."""
+    seq = SequenceClaude(
+        [
+            _block(stage="gate_e", kind="question", summary="?", question="Q1?"),
+            _block(stage="gate_e", kind="answer", summary="A1 pokryté", awaiting="none"),
+            _block(stage="gate_e", kind="question", summary="?", question="Q2?"),
+            _block(stage="gate_e", kind="answer", summary="A2 pokryté", awaiting="none"),
+            _block(
+                stage="gate_e",
+                kind="gate_report",
+                summary="všetko pokryté",
+                awaiting="director",
+                topic_done=True,
+                coverage_complete=True,
+            ),
+            _block(stage="gate_e", kind="done", summary="Gate E pokrytá — uzavri.", awaiting="director"),  # synth
+        ]
+    )
+    monkeypatch.setattr(orchestrator, "invoke_claude", seq)
+    monkeypatch.setattr(orchestrator, "verify_mechanical", lambda slug, block: None)
+
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")  # autonomy ON
+    _to_gate_e(db_session, version)
+    # drive the runner's auto-chain loop manually within the widened bound
+    state = await orchestrator.run_dispatch(db_session, version.id)
+    guard = 0
+    limit = orchestrator.auto_chain_limit(db_session, version.id)
+    assert limit > len(orchestrator.STAGE_ORDER)  # Phase 3 widened the backstop for the gate_e self-loop
+    while state is not None and state.status == "agent_working" and guard < limit:
+        guard += 1
+        state = await orchestrator.run_dispatch(db_session, version.id)
+
+    assert state.status == "awaiting_director" and state.current_stage == "gate_e"  # settled at coverage_complete
+    autos = _autos(db_session, version.id)
+    assert [a.payload["action"] for a in autos] == [  # exactly the two questions auto-continued, then STOP
+        "auto_continue_gate_e_question",
+        "auto_continue_gate_e_question",
+    ]
+    _settle(db_session, version.id)
+    state = await orchestrator.apply_action(db_session, version_id=version.id, action="approve")  # ONE close
+    assert state.current_stage == "task_plan"
+
+
+async def test_gate_e_fix_edit_then_clean_answer_auto_continues(db_session, monkeypatch):
+    """Phase 3 + Branch-B fix composition: a designer_edit round whose continued question gets a no-gap answer
+    AUTO-CONTINUES (autonomy ON) instead of settling — and the runner then re-dispatches with gate_e_dispatch
+    reset (covered in test_pipeline_runner). Here we assert the round returns agent_working + the auto note."""
+    seq = SequenceClaude(
+        [
+            _block(stage="gate_e", kind="answer", summary="opravené podľa návrhu", awaiting="none"),  # designer edit
+            _block(stage="gate_e", kind="question", summary="?", question="Ďalšia otázka?"),  # customer
+            _block(stage="gate_e", kind="answer", summary="pokryté", awaiting="none"),  # designer answer (no gap)
+        ]
+    )
+    monkeypatch.setattr(orchestrator, "invoke_claude", seq)
+    monkeypatch.setattr(orchestrator, "verify_mechanical", lambda slug, block: None)
+
+    version, _ = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")  # autonomy ON
+    _to_gate_e(db_session, version)
+    state = await orchestrator.run_dispatch(
+        db_session,
+        version.id,
+        directive="Koordinátor odovzdáva pokyn: uprav podľa návrhu",
+        gate_e_dispatch="designer_edit",
+    )
+
+    assert state.status == "agent_working" and state.current_stage == "gate_e"  # auto-continued, not settled
+    autos = _autos(db_session, version.id)
+    assert len(autos) == 1 and autos[0].payload["action"] == "auto_continue_gate_e_question"
 
 
 # ── Gate E Branch B actions: fix / leave (Coordinator-relayed) ──────────────────

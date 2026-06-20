@@ -237,6 +237,68 @@ async def test_run_new_version_build_to_gate_g_auto_chains_within_widened_bound(
     assert [s["status"] for s in state_evts] == ["agent_working", "awaiting_director"]
 
 
+async def test_run_gate_e_self_loop_chains_within_widened_bound(db_session, monkeypatch):
+    """PIPELINE-AUTONOMY Phase 3: Gate E auto-continue makes the chain NON-monotonic — gate_e self-loops one
+    Customer turn per iteration. The backstop is orchestrator.auto_chain_limit (full waterfall + the Gate E
+    ceiling + slack), so a deep-but-bounded review of MORE than len(STAGE_ORDER) turns chains to completion
+    instead of stranding at agent_working. Here 13 gate_e self-loop advances (> len(STAGE_ORDER)=11) chain,
+    then a coverage_complete-style settle ends it."""
+    version = _make_version(db_session)
+    state = _seed_working_state(db_session, version.id)  # flow_type=new_version
+    state.current_stage, state.current_actor = "gate_e", "customer"
+    db_session.flush()
+    fake_reg = _wire_runner(db_session, monkeypatch)
+
+    limit = orchestrator.auto_chain_limit(db_session, version.id)
+    assert limit > len(orchestrator.STAGE_ORDER)  # widened — the old len(STAGE_ORDER) bound would strand this
+    loops = len(orchestrator.STAGE_ORDER) + 2  # 13 > 11, within the widened bound
+    steps = iter([("gate_e", "agent_working")] * loops + [("gate_e", "awaiting_director")])
+
+    async def fake_run_dispatch(db, vid, on_event=None, directive=None, gate_e_dispatch=None, on_message=None):
+        st = db.execute(select(PipelineState).where(PipelineState.version_id == vid)).scalar_one()
+        st.current_stage, st.status = next(steps)
+        db.flush()
+        return st
+
+    monkeypatch.setattr(orchestrator, "run_dispatch", fake_run_dispatch)
+
+    await pipeline_runner._run(version.id)
+
+    settled = db_session.execute(select(PipelineState).where(PipelineState.version_id == version.id)).scalar_one()
+    assert settled.current_stage == "gate_e" and settled.status == "awaiting_director"  # chained, never stranded
+    state_evts = [p["state"] for _, p in fake_reg.events if p["type"] == "state_changed"]
+    assert len(state_evts) == loops + 1  # one per self-loop advance + the final settle (no early cutoff)
+    assert state_evts[-1]["status"] == "awaiting_director"
+
+
+async def test_run_auto_chain_resets_gate_e_dispatch_to_none(db_session, monkeypatch):
+    """PIPELINE-AUTONOMY Phase 3 regression: the route's one-shot gate_e_dispatch (e.g. "designer_edit" from a
+    Branch-B fix) must NOT leak into auto-chained turns. After the first dispatch auto-continues (agent_working),
+    every continuation runs as a FRESH Customer turn (gate_e_dispatch=None) — else the stale "designer_edit"
+    would re-run the edit path with a None prompt."""
+    version = _make_version(db_session)
+    state = _seed_working_state(db_session, version.id)
+    state.current_stage, state.current_actor = "gate_e", "customer"
+    db_session.flush()
+    _wire_runner(db_session, monkeypatch)
+    seen_dispatch: list = []
+    steps = iter([("gate_e", "agent_working"), ("gate_e", "awaiting_director")])
+
+    async def fake_run_dispatch(db, vid, on_event=None, directive=None, gate_e_dispatch=None, on_message=None):
+        seen_dispatch.append(gate_e_dispatch)
+        st = db.execute(select(PipelineState).where(PipelineState.version_id == vid)).scalar_one()
+        st.current_stage, st.status = next(steps)
+        db.flush()
+        return st
+
+    monkeypatch.setattr(orchestrator, "run_dispatch", fake_run_dispatch)
+
+    # _run called WITH the route's one-shot sub-flow (a Branch-B fix that then auto-continues)
+    await pipeline_runner._run(version.id, gate_e_dispatch="designer_edit")
+
+    assert seen_dispatch == ["designer_edit", None]  # first dispatch keeps it; the auto-chained turn resets it
+
+
 async def test_run_unexpected_exception_marks_blocked(db_session, monkeypatch):
     version = _make_version(db_session)
     _seed_working_state(db_session, version.id)
@@ -523,6 +585,10 @@ async def test_run_gate_e_round_streams_every_turn(db_session, monkeypatch):
     invoke sites (so dropping the end batch loses nothing on this path)."""
     version = _make_version(db_session)
     _seed_state(db_session, version.id, "gate_e", "customer")
+    # PIPELINE-AUTONOMY Phase 3: disable Gate E auto-continue so this stays a SINGLE round that settles (the
+    # streaming/parity behaviour under test); with autonomy on, a clean Branch-A answer auto-continues and the
+    # runner chains another Customer turn. Auto-continue itself is covered in test_orchestrator.
+    monkeypatch.setattr(orchestrator, "_autonomy_enabled", lambda db, version_id: False)
     fake_reg = _wire_runner(db_session, monkeypatch)
     seq = _SeqClaude(
         [
