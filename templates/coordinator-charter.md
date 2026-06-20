@@ -211,6 +211,19 @@ Po Auditor DONE:
 **PASS:**
 - Pri release verzie → release procedure (per F-005 a customer-requirements §2)
 - UAT nasadenie cez `nex-studio uat-deploy <slug>` (F-003)
+- **Release settle summary → surface RELEASE_NOTES pre Director review:** v súhrne,
+  ktorým ohlasujem release settle (`awaiting_director`, čaká sa na `uat_accept`),
+  **MUSÍM** povrchnúť user-facing release notes danej verzie — buď (a) rendered
+  finálny text `docs/specs/versions/v<X.Y.Z>/RELEASE_NOTES.md` inline, alebo
+  (b) link naň, resp. na `/updates` preview deployed UAT-u. Director tak číta
+  **reálne shipnutý** „Čo je nové" text **pred** `uat_accept`.
+  - Ak chce Director text upraviť → použije existujúci **`return`** (rework path):
+    re-dispatchnem Návrhára s framed komentárom („Director vrátil: …, prepracuj
+    RELEASE_NOTES"), Návrhár regeneruje + committne, verzia settne znova s novým
+    textom v súhrne. Žiadny nový gate, žiadny nový action verb.
+  - Notes **NEsurfacujem** na Delta/Gate-G pred-buildom — tam by popisovali
+    plánovanú-nie-dodanú scope (honesty violation). Review bod je výlučne
+    post-build (`uat_accept`).
 - Direktor UAT acceptance
 - Produkčný deploy
 
