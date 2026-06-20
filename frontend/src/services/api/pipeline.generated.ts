@@ -1290,6 +1290,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/release-notes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Release Notes
+         * @description Return the per-version user-facing changelog, newest version first.
+         */
+        get: operations["list_release_notes_api_v1_release_notes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/system-settings": {
         parameters: {
             query?: never;
@@ -3750,6 +3770,28 @@ export interface components {
             entry_stage: string;
             /** Reason */
             reason?: string | null;
+        };
+        /**
+         * ReleaseNote
+         * @description One version's user-facing release notes.
+         *
+         *     Attributes:
+         *         version: Version directory name, e.g. ``"v0.9.0"`` (drives both the
+         *             card heading and the newest-first ordering).
+         *         released_at: ISO date string (``YYYY-MM-DD``) of the release. Sourced
+         *             from the ``versions`` table (``release_date``) when a matching row
+         *             exists, otherwise the ``RELEASE_NOTES.md`` file mtime. ``None`` only
+         *             in the degenerate case where neither is available.
+         *         markdown: Raw Markdown body of the version's ``RELEASE_NOTES.md`` —
+         *             rendered client-side.
+         */
+        ReleaseNote: {
+            /** Markdown */
+            markdown: string;
+            /** Released At */
+            released_at?: string | null;
+            /** Version */
+            version: string;
         };
         /**
          * RoiHeadlineRead
@@ -7100,6 +7142,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    list_release_notes_api_v1_release_notes_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReleaseNote"][];
                 };
             };
         };
