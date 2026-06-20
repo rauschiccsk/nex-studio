@@ -35,10 +35,20 @@ function formatDate(iso: string | null): string {
   }).format(d);
 }
 
-/** Markdown body — the inline idiom shared with ProjectSpecsPage / KnowledgeBasePage. */
+/** Markdown body — the inline idiom shared with ProjectSpecsPage / KnowledgeBasePage,
+ *  with richer typography + coloured section headings for the changelog. */
 function MarkdownBody({ children }: { children: string }) {
+  // Strip a leading version H2 (e.g. "## v0.9.0") — the card header already shows it.
+  const body = children.replace(/^\s*##\s+\S.*(?:\r?\n)+/, "");
   return (
-    <div className="prose dark:prose-invert prose-sm max-w-none">
+    <div
+      className="prose prose-base dark:prose-invert max-w-none
+        prose-headings:font-semibold
+        prose-h3:text-primary-500 prose-h3:text-base prose-h3:mt-5 prose-h3:mb-1
+        prose-p:text-[var(--color-text-secondary)] prose-p:leading-relaxed
+        prose-strong:text-[var(--color-text-primary)]
+        prose-li:text-[var(--color-text-secondary)] prose-li:marker:text-primary-500"
+    >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
@@ -66,7 +76,7 @@ function MarkdownBody({ children }: { children: string }) {
           },
         }}
       >
-        {children}
+        {body}
       </ReactMarkdown>
     </div>
   );
@@ -83,12 +93,12 @@ function VersionCard({ note, defaultOpen }: VersionCardProps) {
     <Card className="p-0 overflow-hidden">
       <details open={defaultOpen} className="group">
         <summary className="flex items-center justify-between gap-3 px-4 py-3 cursor-pointer select-none list-none hover:bg-[var(--color-surface-hover)] transition-colors">
-          <span className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-[var(--color-text-primary)]">
+          <span className="flex items-baseline gap-2">
+            <span className="text-base font-bold text-primary-500">
               {note.version}
             </span>
             {date && (
-              <span className="text-xs text-[var(--color-text-muted)]">— {date}</span>
+              <span className="text-sm text-[var(--color-text-muted)]">— {date}</span>
             )}
           </span>
           <svg
@@ -132,7 +142,7 @@ export default function UpdatesPage() {
   }, [refresh]);
 
   return (
-    <div className="p-6 max-w-3xl mx-auto">
+    <div className="p-6 max-w-5xl mx-auto">
       <div className="mb-5">
         <h1 className="flex items-center gap-2 text-lg font-semibold text-[var(--color-text-primary)]">
           <Sparkles size={18} className="text-primary-500" />

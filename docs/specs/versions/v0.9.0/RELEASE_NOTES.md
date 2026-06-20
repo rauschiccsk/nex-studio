@@ -1,7 +1,5 @@
 ## v0.9.0
 
-Čo je nové v tejto verzii.
-
 ### Prehľadnejšie metriky podľa rolí
 Metriky projektu teraz ukazujú prácu rozdelenú podľa jednotlivých rolí a oddelene to, čo spravil AI agent a čo by stálo, keby to robil človek. Pri každej role vidíš spotrebu na strane AI prepočítanú na cenu, aj odhad ľudského času a nákladov — a na záver, o koľko je AI systém rýchlejší a lacnejší. Čísla vychádzajú priamo zo skutočne odvedenej práce.
 
