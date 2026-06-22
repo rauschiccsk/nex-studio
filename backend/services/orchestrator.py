@@ -1020,6 +1020,76 @@ def _write_gate_e_audit(db: Session, version_id: uuid.UUID) -> str:
     return rel
 
 
+def _render_task_plan_md(db: Session, version: Version, project: Project) -> str:
+    """Render the version's materialized Epic/Feat/Task rows to a reviewable
+    markdown plan. The plan otherwise lives ONLY as cockpit DB rows — the
+    Coordinator (separate session, reads the project disk) and the Director need
+    this doc to verify the plan against the design before the build. Re-queried
+    from the DB rows so the displayed hierarchical numbers match the cockpit."""
+    epics = db.execute(select(Epic).where(Epic.version_id == version.id).order_by(Epic.number)).scalars().all()
+    n_epics = n_feats = n_tasks = 0
+    total_min = 0
+    body: list[str] = []
+    for epic in epics:
+        n_epics += 1
+        body.append(f"## Epic {epic.number}: {epic.title}")
+        body.append("")
+        feats = db.execute(select(Feat).where(Feat.epic_id == epic.id).order_by(Feat.number)).scalars().all()
+        for feat in feats:
+            n_feats += 1
+            fest = f" — ~{feat.estimated_minutes} min" if feat.estimated_minutes else ""
+            body.append(f"### Feat {epic.number}.{feat.number}: {feat.title}{fest}")
+            if feat.description:
+                body.append(feat.description)
+            tasks = db.execute(select(Task).where(Task.feat_id == feat.id).order_by(Task.number)).scalars().all()
+            for task in tasks:
+                n_tasks += 1
+                total_min += task.estimated_minutes or 0
+                test = f" — ~{task.estimated_minutes} min" if task.estimated_minutes else ""
+                body.append(f"- **{epic.number}.{feat.number}.{task.number}** `[{task.task_type}]` {task.title}{test}")
+            body.append("")
+    hours = round(total_min / 60, 1)
+    header = [
+        f"# {project.slug} — Plán úloh v{version.version_number}",
+        "",
+        "> Generované automaticky z task_plan node (zdroj pravdy = cockpit DB rows). Slúži Koordinátorovi/"
+        "Directorovi na overenie plánu proti návrhu pred stavbou. Needituj ručne — pri ďalšom behu task_plan "
+        "sa prepíše.",
+        "",
+        f"**Súhrn:** {n_epics} epicov · {n_feats} featov · {n_tasks} úloh · odhad ~{total_min} min (~{hours} h).",
+        "",
+    ]
+    return "\n".join(header + body).rstrip() + "\n"
+
+
+def _write_task_plan_doc(db: Session, version: Version) -> Optional[str]:
+    """Write the materialized task plan to ``spec/task-plan.md`` in the project repo
+    so it is a reviewable artefact (not DB-only). Skips cleanly (``None``) when the
+    project has no ``source_path`` (no checkout to write into — tests / library
+    projects). Returns a failure reason (→ caller records ``blocked``) only when a
+    checkout exists but the write fails — a checked-out project's plan is not "done"
+    without its reviewable doc (2026-06-22 process-gap fix)."""
+    project = db.get(Project, version.project_id)
+    if project is None or not project.source_path:
+        return None
+    doc_path = (
+        Path(project.source_path)
+        / "docs"
+        / "specs"
+        / "versions"
+        / f"v{version.version_number}"
+        / "spec"
+        / "task-plan.md"
+    )
+    try:
+        md = _render_task_plan_md(db, version, project)
+        doc_path.parent.mkdir(parents=True, exist_ok=True)
+        doc_path.write_text(md, encoding="utf-8")
+    except OSError as exc:
+        return f"task-plan doc write failed: {exc}"
+    return None
+
+
 def _write_task_plan(db: Session, state: PipelineState, block: PipelineStatusBlock) -> Optional[str]:
     """Materialize the Designer's task_plan decomposition into Epic/Feat/Task rows.
 
@@ -1087,6 +1157,12 @@ def _write_task_plan(db: Session, state: PipelineState, block: PipelineStatusBlo
     except (ValueError, ValidationError, IntegrityError) as exc:
         return f"plan write failed: {exc}"
 
+    # Materialize the plan as a reviewable doc (spec/task-plan.md) — not DB-only —
+    # so the Coordinator (separate session) can verify it before the build.
+    doc_err = _write_task_plan_doc(db, version)
+    if doc_err is not None:
+        return doc_err
+
     _record_message(
         db,
         version_id=state.version_id,
@@ -1094,7 +1170,7 @@ def _write_task_plan(db: Session, state: PipelineState, block: PipelineStatusBlo
         author="system",
         recipient="director",
         kind="notification",
-        content=f"Plán úloh zapísaný: {n_epics} epicov, {n_feats} featov, {n_tasks} taskov.",
+        content=f"Plán úloh zapísaný: {n_epics} epicov, {n_feats} featov, {n_tasks} taskov. Doc: spec/task-plan.md.",
         payload={"task_plan_summary": {"epics": n_epics, "feats": n_feats, "tasks": n_tasks}},
     )
     return None

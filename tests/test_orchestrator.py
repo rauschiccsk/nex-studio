@@ -3135,6 +3135,48 @@ async def test_task_plan_write_path_materializes_hierarchy(db_session, fake_clau
     )
 
 
+async def test_task_plan_writes_reviewable_doc(db_session, fake_claude, tmp_path):
+    """task_plan materializes a reviewable spec/task-plan.md in the project checkout
+    (not DB-only) so the Coordinator (separate session) can verify the plan before the
+    build — 2026-06-22 process-gap fix. Skips silently when the project has no checkout."""
+    version, project = _make_version(db_session)
+    project.source_path = str(tmp_path)
+    db_session.flush()
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _to_task_plan(db_session, version)
+    fake_claude.response = _plan_fake(
+        [("Foundation", [("Schema", [("users table", "migration", 60), ("audit_log", "migration", 30)])])],
+        cross="## Invarianty\n- spoločná transakčná hranica",
+    )
+    state = await orchestrator.run_dispatch(db_session, version.id)
+    assert state.status == "awaiting_director" and state.current_stage == "task_plan"
+
+    doc = tmp_path / "docs" / "specs" / "versions" / f"v{version.version_number}" / "spec" / "task-plan.md"
+    assert doc.is_file(), "task_plan must materialize a reviewable spec/task-plan.md"
+    md = doc.read_text(encoding="utf-8")
+    assert "## Epic 1: Foundation" in md
+    assert "### Feat 1.1: Schema" in md
+    assert "users table" in md and "audit_log" in md
+    assert "`[migration]`" in md
+    assert "Súhrn:" in md and "2 úloh" in md  # epics · feats · tasks summary line
+
+
+async def test_task_plan_doc_skipped_without_checkout(db_session, fake_claude):
+    """No source_path (e.g. a library project / test) → doc write skips cleanly, plan still
+    materializes to DB and the gate settles (never blocked on a missing checkout)."""
+    version, project = _make_version(db_session)
+    assert not project.source_path  # _make_version leaves it null
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _to_task_plan(db_session, version)
+    fake_claude.response = _plan_fake(
+        [("Foundation", [("Schema", [("users table", "migration", 60)])])],
+        cross="## Invarianty\n- x",
+    )
+    state = await orchestrator.run_dispatch(db_session, version.id)
+    assert state.status == "awaiting_director" and state.current_stage == "task_plan"
+    assert len(_epics_of(db_session, version)) == 1  # DB plan written despite no doc
+
+
 async def test_task_plan_skeleton_exhaustion_blocks(db_session, fake_claude):
     # v0.7.3 CR-1: the skeleton pass that never yields a valid skeleton (here: no epics → fails
     # TaskPlanSkeleton min_length) exhausts its per-pass parse-retries → blocked (parse_exhaustion),
