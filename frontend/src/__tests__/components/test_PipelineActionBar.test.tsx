@@ -770,6 +770,56 @@ describe("PipelineActionBar — gate_g FAIL re-gate (CR-NS-057 §F2.4)", () => {
   });
 });
 
+describe("PipelineActionBar — gate_g release-acceptance PASS gate (gate-g-hardening GAP 1 A4)", () => {
+  it("disables 'Verdikt PASS' while release acceptance is not satisfied (false)", () => {
+    const onAction = vi.fn();
+    render(
+      <PipelineActionBar
+        state={mkState("gate_g", "awaiting_director")}
+        availableActions={["verdict", "rerun_release_audit"]}
+        releaseAcceptanceSatisfied={false}
+        inFlight={false}
+        onAction={onAction}
+      />,
+    );
+    const pass = screen.getByText("Verdikt PASS").closest("button");
+    expect(pass).toBeDisabled();
+    pass!.click();
+    expect(onAction).not.toHaveBeenCalledWith("verdict", { verdict: "PASS" });
+    // FAIL stays available even when PASS is blocked (the Director can still return the version).
+    expect(screen.getByText("Verdikt FAIL").closest("button")).not.toBeDisabled();
+  });
+
+  it("enables 'Verdikt PASS' once release acceptance is satisfied (true), firing the PASS verdict", () => {
+    const onAction = vi.fn();
+    render(
+      <PipelineActionBar
+        state={mkState("gate_g", "awaiting_director")}
+        availableActions={["verdict"]}
+        releaseAcceptanceSatisfied={true}
+        inFlight={false}
+        onAction={onAction}
+      />,
+    );
+    const pass = screen.getByText("Verdikt PASS").closest("button");
+    expect(pass).not.toBeDisabled();
+    pass!.click();
+    expect(onAction).toHaveBeenCalledWith("verdict", { verdict: "PASS" });
+  });
+
+  it("absent releaseAcceptanceSatisfied → permissive (PASS enabled), for backward-compat", () => {
+    render(
+      <PipelineActionBar
+        state={mkState("gate_g", "awaiting_director")}
+        availableActions={["verdict"]}
+        inFlight={false}
+        onAction={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("Verdikt PASS").closest("button")).not.toBeDisabled();
+  });
+});
+
 // v0.8.0 CR-3: the engine-owned GitHub publish recovery button at a release/blocked (publish failed).
 describe("PipelineActionBar — retry_publish (release publish)", () => {
   it("at (release, blocked) with retry_publish allowed shows 'Publikovať na GitHub' and fires retry_publish", () => {

@@ -79,6 +79,13 @@ def _board(db: Session, version_id: uuid.UUID, limit: int = _DEFAULT_RECENT) -> 
     all_tasks_done, build_open_findings = (
         orchestrator.build_readiness(db, version_id) if state is not None else (True, 0)
     )
+    # gate-g-hardening GAP 1 (A4): the gate_g PASS-button gate — True (permissive) everywhere except a
+    # gate_g where the engine release acceptance has not yet reached exit-0 / a legit SKIP this iteration.
+    release_acceptance_satisfied = (
+        orchestrator._release_acceptance_satisfied(db, version_id)
+        if (state is not None and state.current_stage == "gate_g")
+        else True
+    )
     # WS-C2 (CR-NS-035): the build task in focus for the "kto je na rade" board (only at build).
     ct = (
         orchestrator.current_build_task(db, version_id)
@@ -105,6 +112,7 @@ def _board(db: Session, version_id: uuid.UUID, limit: int = _DEFAULT_RECENT) -> 
         available_actions=sorted(orchestrator.determine_available_actions(state)) if state is not None else [],
         all_tasks_done=all_tasks_done,
         build_open_findings=build_open_findings,
+        release_acceptance_satisfied=release_acceptance_satisfied,
         current_task=BoardTask(number=ct.number, title=ct.title) if ct is not None else None,
         regate_proposal=regate_proposal,
         coordinator_triage=CoordinatorTriage(**triage) if triage is not None else None,

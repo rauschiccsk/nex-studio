@@ -210,6 +210,7 @@ export function ExchangePanel({ board, inFlight, activity, onAction }: Props) {
           availableActions={board.available_actions}
           allTasksDone={board.all_tasks_done}
           buildOpenFindings={board.build_open_findings}
+          releaseAcceptanceSatisfied={board.release_acceptance_satisfied}
           coordinatorProposal={coordinatorProposal}
           regateProposal={board.regate_proposal}
           inFlight={inFlight}

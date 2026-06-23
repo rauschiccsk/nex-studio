@@ -117,6 +117,10 @@ export interface PipelineBoard {
   // failed/unverified task). Absent → permissive (don't disable). Mirrors gate_e_open_findings.
   all_tasks_done?: boolean;
   build_open_findings?: number;
+  // gate-g-hardening GAP 1 (A4): the gate_g "Verdikt PASS" button is DISABLED while this is false — the
+  // engine release acceptance (release_smoke_test.sh) has not reached exit-0 / a legit non-web SKIP this
+  // iteration, so the verdict would 400. Absent → permissive (don't disable). Mirrors build_open_findings.
+  release_acceptance_satisfied?: boolean;
   // The build task currently in focus (WS-C2, CR-NS-035) — the "kto je na rade" board shows "#N: title".
   current_task?: { number: number; title: string } | null;
   // gate_g FAIL re-gate proposal (CR-NS-057 §F2.4) — the inferred target + rationale, present only at

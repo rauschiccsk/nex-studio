@@ -3083,6 +3083,11 @@ export interface components {
             /** Recent Messages */
             recent_messages?: components["schemas"]["PipelineMessageRead"][];
             regate_proposal?: components["schemas"]["RegateProposal"] | null;
+            /**
+             * Release Acceptance Satisfied
+             * @default true
+             */
+            release_acceptance_satisfied: boolean;
             state?: components["schemas"]["PipelineStateRead"] | null;
         };
         /**

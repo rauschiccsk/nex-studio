@@ -155,6 +155,11 @@ class PipelineBoardRead(BaseModel):
     #: blocked). Defaults are the permissive "ready" values so an absent field never disables.
     all_tasks_done: bool = True
     build_open_findings: int = 0
+    #: gate-g-hardening GAP 1 (A4): the FE DISABLES the gate_g "Verdikt PASS" button while this is False —
+    #: the engine release acceptance (release_smoke_test.sh) has not reached exit-0 (or a legit non-web SKIP)
+    #: this iteration, so the verdict handler would 400 the PASS. Computed only at gate_g; True (permissive)
+    #: elsewhere / when absent, so it never disables a non-gate_g control. Mirrors ``build_open_findings``.
+    release_acceptance_satisfied: bool = True
     #: The build task currently in focus (WS-C2, CR-NS-035) — in_progress while building, else the held
     #: failed task at a HALT; the "kto je na rade" board shows "#N: title". ``None`` outside build.
     current_task: Optional[BoardTask] = None

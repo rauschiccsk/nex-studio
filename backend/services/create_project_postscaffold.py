@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 
 NEX_STUDIO_TEMPLATES = Path("/opt/projects/nex-studio/templates")
 CICD_TEMPLATE = NEX_STUDIO_TEMPLATES / "github-actions-workflow.yml"
+# gate-g-hardening GAP 1 (CR-B): the behavioural release-acceptance script the engine runs at gate_g.
+RELEASE_SMOKE_TEMPLATE = NEX_STUDIO_TEMPLATES / "release_smoke_test.sh"
 SMOKE_BUILD_TIMEOUT = 300  # 5 min — minimal smoke is docker compose build only
 SMOKE_FULL_TIMEOUT = 600  # 10 min — full smoke incl up + health
 CICD_TIMEOUT = 60
@@ -43,6 +45,7 @@ def run_post_scaffold_steps(
 
     if target_path and target_path.is_dir():
         _run_smoke_test(target_path, slug, full=full_smoke)
+        _seed_release_smoke_test(target_path, slug)
     else:
         logger.warning("Skipping K-004 smoke test — target %r not a directory", target)
 
@@ -178,6 +181,31 @@ def _run_smoke_test(target: Path, slug: str, *, full: bool) -> None:
         )
 
     logger.info("K-004 full smoke test PASS (slug=%s)", slug)
+
+
+def _seed_release_smoke_test(target: Path, slug: str) -> None:
+    """gate-g-hardening GAP 1 (CR-B): seed ``release_smoke_test.sh`` into the new project (mirrors the
+    K-005 CI copy-pattern). The engine runs it at full-flow gate_g as the behavioural release-acceptance
+    gate; a web app without it FAILs the gate ("required but missing"). Best-effort — a missing template or
+    a copy error is logged as a warning, never raised (the Director can add the script manually). Idempotent:
+    an existing project script is preserved (never clobber a hand-tuned acceptance suite)."""
+    if not RELEASE_SMOKE_TEMPLATE.is_file():
+        logger.warning("release_smoke_test.sh seed SKIPPED — template missing at %s", RELEASE_SMOKE_TEMPLATE)
+        return
+
+    dest = target / "release_smoke_test.sh"
+    if dest.is_file():
+        logger.info("release_smoke_test.sh seed SKIPPED — already exists (slug=%s)", slug)
+        return
+
+    try:
+        shutil.copy2(RELEASE_SMOKE_TEMPLATE, dest)
+        dest.chmod(dest.stat().st_mode | 0o111)  # ensure +x (the engine runs it via ``bash``, but keep it executable)
+    except OSError as exc:
+        logger.warning("release_smoke_test.sh seed failed (slug=%s): %s", slug, exc)
+        return
+
+    logger.info("release_smoke_test.sh seeded (slug=%s)", slug)
 
 
 def _wire_cicd_workflow(target: Path, slug: str) -> None:

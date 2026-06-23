@@ -19,9 +19,11 @@ convention (Phase 3).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -2176,7 +2178,8 @@ async def verify_done(
     smoke_verdict_block = ""
     if block.stage == "gate_g":
         version_label = db.execute(select(Version.version_number).where(Version.id == version_id)).scalar_one()
-        smoke_ok, smoke_detail = await _run_app_starts_smoke(slug, version_label)
+        # gate-g-hardening GAP 1 (A2): boot leg + release-acceptance leg in ONE up/down cycle.
+        (smoke_ok, smoke_detail), acceptance = await _run_release_smoke(slug, version_label)
         smoke_msg = _record_message(
             db,
             version_id=version_id,
@@ -2194,13 +2197,47 @@ async def verify_done(
         if not smoke_ok:
             # HARD gate: the non-None reason renders as a ``gate_g`` FAIL via the mechanical-block settle.
             return f"App-starts smoke FAIL: {smoke_detail}", None, False
-        # PASS/SKIP → feed a one-line smoke verdict into the Auditor's verdict so the synthesis reflects
-        # the deterministic runtime floor (app boots + responds), not only spec-compliance. Behavioural
-        # acceptance depth is the Auditor's own release oracle, not this engine boot check (v0.7.9).
+        # gate-g-hardening GAP 1 (A1/A3): record the release-acceptance outcome as its OWN system→director
+        # notification (``release_acceptance`` payload) — the boundary-anchored ``_release_acceptance_satisfied``
+        # reads it to GATE the PASS verdict. Acceptance does NOT short-circuit verify_done like the boot check:
+        # the gate_report still completes so the Director sees the result, but a non-pass/non-skip blocks the
+        # PASS (the verdict guard + the disabled FE button) — the §6 "acceptance fails 2/28 → PASS blocked" flow.
+        acc_ok, acc_detail, acc_skipped = acceptance  # never None here — the boot leg passed
+        acc_msg = _record_message(
+            db,
+            version_id=version_id,
+            stage="gate_g",
+            author="system",
+            recipient="director",
+            kind="notification",
+            content=(
+                f"Release acceptance PASS — {acc_detail}."
+                if acc_ok
+                else (
+                    f"Release acceptance SKIP — {acc_detail}."
+                    if acc_skipped
+                    else f"Release acceptance FAIL — {acc_detail}."
+                )
+            ),
+            payload={"release_acceptance": {"pass": acc_ok, "detail": acc_detail, "skipped": acc_skipped}},
+        )
+        if on_message is not None:
+            await on_message(acc_msg)
+        # PASS/SKIP → feed both engine verdicts into the Auditor's prompt so the synthesis reflects the
+        # deterministic runtime floor (app boots + responds) AND the behavioural acceptance result — not only
+        # spec-compliance. An acceptance FAIL is fed HONESTLY (the engine guard, not the Auditor, blocks PASS).
+        acc_line = (
+            f"release acceptance PASS ({acc_detail})"
+            if acc_ok
+            else (
+                f"release acceptance SKIP ({acc_detail})" if acc_skipped else f"release acceptance FAIL ({acc_detail})"
+            )
+        )
         smoke_verdict_block = (
             f"Engine-overený app-starts smoke (deterministický boot check, pred týmto verdiktom): {smoke_detail}. "
-            "Zohľadni to v synthéze — aplikácia reálne nabootovala a odpovedá na HTTP; behaviorálnu "
-            "acceptance hĺbku drží tvoj release oracle, nie runtime pytest. "
+            f"Engine-overená release acceptance (release_smoke_test.sh proti bežiacej stacke): {acc_line}. "
+            "Zohľadni oboje v synthéze — aplikácia reálne nabootovala a odpovedá na HTTP a engine spustil "
+            "behaviorálnu acceptance sadu; ak acceptance neprešla do exit-0, PASS je engine-om zablokovaný. "
         )
 
     # §F1.6 (CR-NS-056): feed the Director's already-answered scope Q&A this iteration into the prompt so the
@@ -2650,6 +2687,9 @@ async def _run_release_publish(project_slug: str, repo_full_name: str) -> tuple[
 
 # App-starts acceptance smoke (v0.7.5 CR-1) — the deterministic HARD gate behind full-flow ``gate_g``.
 ACCEPTANCE_SMOKE_TIMEOUT = 900  # matches UAT_DEPLOY_TIMEOUT — covers ``up --build`` + the acceptance suite.
+# gate-g-hardening GAP 1 (A1): bounds the host-run ``release_smoke_test.sh`` against the already-booted
+# isolated stack — a SEPARATE budget from the build/boot above (the script's own assertions, no rebuild).
+RELEASE_ACCEPTANCE_TIMEOUT = 900
 # Readiness gate (v0.7.5 CR-1 robustness, Director Obs-2): ``up --wait`` only guarantees the container is
 # RUNNING — a backend WITHOUT a healthcheck may still be booting/migrating. Poll ``/health`` up to this
 # budget BEFORE the suite so the first acceptance request never races the boot into a false FAIL.
@@ -2817,82 +2857,223 @@ def _compose_frontend_port(compose_path: Path) -> Optional[int]:
     return int(container) if container.isdigit() else None
 
 
-async def _run_app_starts_smoke(project_slug: str, version_label: str) -> tuple[bool, str]:
-    """App-starts smoke (v0.7.5 CR-1, narrowed v0.7.9): build + boot the project's compose under an
-    ISOLATED compose project (``-p <slug>-smoke``) and verify the deployed app actually BOOTS and
-    RESPONDS to HTTP (the v0.7.7 path-agnostic readiness poll) — the deterministic runtime floor behind
-    full-flow ``gate_g`` (unfakeable, no test env needed).
+@dataclass
+class _SmokeStack:
+    """A live, isolated smoke stack shared by the boot leg + the release-acceptance leg of ONE up/down
+    cycle (gate-g-hardening GAP 1 A2). ``base`` is the ``docker compose -p <slug>-smoke -f … -f …``
+    prefix; ``compose``/``override`` are the file paths (the override path is handed to the host
+    acceptance script so it can ``docker compose exec`` into the running stack — host ports were stripped,
+    so there is no host-published port to curl); ``roles`` is the FE/BE/DB role→service map; ``up_rc`` /
+    ``up_detail`` carry the ``up --build --wait`` outcome so the driver settles a build failure."""
 
-    It does NOT run the acceptance suite (v0.7.9): the app's PRODUCTION image (``python:3.12-slim``)
-    carries no pytest / test deps, so an in-container ``pytest`` run can never work there and produced a
-    false FAIL. Behavioural acceptance depth stays with the Auditor's release oracle + build-time
-    validation, not a runtime pytest run.
+    base: list[str]
+    compose: Path
+    override: Path
+    project: str
+    roles: dict[str, Optional[str]]
+    up_rc: int
+    up_detail: str
 
-    Returns ``(ok, detail)`` and NEVER raises (modelled on :func:`_run_uat_deploy`): a spawn failure /
-    timeout / ``up`` failure / backend-not-responding / frontend-not-serving → ``(False, reason)`` so the
-    caller settles ``gate_g`` to FAIL rather than hanging. Also FAILs a compose that serves a backend web
-    app but emits NO frontend service (icc-deploy §5.6 #1 — the nex-asistent "no FE emitted" bug), and
-    verifies the frontend actually serves (probed from the backend over the network — nginx has no
-    Python). Graceful SKIP → ``(True, "SKIPPED …")`` when the project has no ``docker-compose.yml`` (same
-    shape as the postscaffold "SKIPPED — no docker-compose.yml" / ``_fast_fix_auto_deploy`` NULL-slug
-    skip). The caller records the pass/fail/skip evidence as a ``system→director`` message.
-    """
-    root = claude_agent.PROJECTS_ROOT / project_slug
-    compose = root / "docker-compose.yml"
-    # 1. Discover — graceful SKIP when the project has no compose (a boot check needs a compose to boot).
-    if not compose.is_file():
-        logger.info(
-            "app-starts smoke SKIPPED (slug=%s, version=%s) — no docker-compose.yml", project_slug, version_label
-        )
-        return True, "SKIPPED — no docker-compose.yml"
+    @property
+    def up_ok(self) -> bool:
+        return self.up_rc == 0
 
-    # 2. Frontend-service assertion (icc-deploy §5.6 #1): a compose that serves a backend web app MUST
-    #    also emit a frontend service. A backend present + NO frontend = the nex-asistent "no FE service
-    #    emitted" bug (Traefik then has no default route → 404). FAIL here. (A compose with no backend at
-    #    all — a pure worker/lib stack — is NOT a web app; don't FAIL it on a missing frontend. The
-    #    archetype-conditional must-have-a-compose FAIL is P2; for now no-compose still SKIPs above.)
-    services = (yaml.safe_load(compose.read_text()) or {}).get("services") or {}
-    roles = uat_provisioner.identify_service_roles(services)
-    if roles["backend"] is not None and roles["frontend"] is None:
-        logger.warning("app-starts smoke FAIL (slug=%s) — backend web app has no frontend service", project_slug)
-        return False, "compose has a backend web app but no frontend service"
 
-    logger.info("app-starts smoke starting (slug=%s, version=%s)", project_slug, version_label)
+@contextlib.asynccontextmanager
+async def _boot_smoke_stack(project_slug: str, compose: Path, roles: dict[str, Optional[str]]):
+    """gate-g-hardening GAP 1 (A2): bring the project's compose UP ONCE under an isolated ``-p
+    <slug>-smoke`` project, yield a :class:`_SmokeStack` for the boot + release-acceptance legs to SHARE,
+    then tear it down ONCE (``down -v`` + drop the temp override). Was two functions each with its own
+    ``up``/``down`` — a double build + a teardown race; this is the single cycle. Never raises; the
+    ``finally`` always tears down (modelled on the old ``_run_app_starts_smoke`` try/finally)."""
+    logger.info("smoke stack starting (slug=%s)", project_slug)
     project = f"{project_slug}-smoke"
     tmpdir = Path(tempfile.mkdtemp(prefix=f"{project_slug}-smoke-"))
     override = tmpdir / "smoke.override.yml"
     base = ["docker", "compose", "-p", project, "-f", str(compose), "-f", str(override)]
+    stack = _SmokeStack(
+        base=base, compose=compose, override=override, project=project, roles=roles, up_rc=-1, up_detail=""
+    )
     try:
-        # 3. Isolate — ephemeral override stripping container_name + host ports.
+        # Isolate — ephemeral override stripping container_name + host ports — then up (build + boot;
+        # ``--wait`` blocks until healthchecks pass; Ollama reached via the app's own extra_hosts).
         override.write_text(_acceptance_smoke_override(compose))
-        # 4. Up — build + boot; ``--wait`` blocks until healthchecks pass (Ollama reached via the app's
-        #    own ``extra_hosts: host-gateway`` + ``OLLAMA_URL``).
-        rc, out = await _compose_smoke_step(base + ["up", "-d", "--build", "--wait"], ACCEPTANCE_SMOKE_TIMEOUT)
-        if rc != 0:
-            return False, f"up exit {rc}: {out.strip()[-400:]}"
-        # 5. Backend ready (the boot check) — ``up --wait`` returns once the container RUNS; a backend
-        #    without a healthcheck may still be booting/migrating. Poll /health until the server RESPONDS
-        #    (status <500; v0.7.7 path-agnostic). READY ⇒ continue. Undeterminable port → skip the poll (no
-        #    NEW false FAIL — ``up --wait`` already succeeded).
-        port = _compose_backend_port(compose)
-        if port is not None:
-            ready, last = await _await_acceptance_app_ready(base, port)
-            if not ready:
-                return False, f"app did not boot / not responding within {ACCEPTANCE_SMOKE_READY_TIMEOUT}s: {last}"
-        # 6. Frontend reachable — the frontend nginx has no Python, so probe it FROM the backend over the
-        #    isolated project network by service name (no host ports; the override stripped them). A 404 at
-        #    ``/`` still means "serving" (<500). This catches a frontend that built but never serves.
-        fe_role = roles["frontend"]
-        if fe_role is not None and roles["backend"] is not None:
-            fe_port = _compose_frontend_port(compose) or 80
-            fe_ready, fe_last = await _await_http_ready(base, roles["backend"], fe_port, host=fe_role, path="/")
-            if not fe_ready:
-                return False, (f"frontend '{fe_role}' not serving within {ACCEPTANCE_SMOKE_READY_TIMEOUT}s: {fe_last}")
-        return True, "app booted + responds"
+        stack.up_rc, stack.up_detail = await _compose_smoke_step(
+            base + ["up", "-d", "--build", "--wait"], ACCEPTANCE_SMOKE_TIMEOUT
+        )
+        yield stack
     finally:
-        # 7. Teardown — ALWAYS: tear the isolated stack (+ its volumes) down and drop the temp override.
+        # Teardown — ALWAYS: tear the isolated stack (+ its volumes) down and drop the temp override.
         await _compose_smoke_step(base + ["down", "-v"], 120)
         shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+async def _run_app_starts_smoke(stack: _SmokeStack) -> tuple[bool, str]:
+    """Boot leg (v0.7.5 CR-1, narrowed v0.7.9): against the already-UP isolated stack, verify the deployed
+    app actually BOOTS and RESPONDS to HTTP (the v0.7.7 path-agnostic readiness poll) — the deterministic
+    runtime floor behind full-flow ``gate_g`` (unfakeable, no test env needed).
+
+    It does NOT run the acceptance suite IN the prod image (v0.7.9: ``python:3.12-slim`` carries no pytest);
+    behavioural depth is the host-run ``release_smoke_test.sh`` (:func:`_run_release_acceptance`), a sibling
+    leg of the SAME up/down cycle. Returns ``(ok, detail)`` and never raises: backend-not-responding /
+    frontend-not-serving → ``(False, reason)``. The compose-structure pre-checks (no compose / a backend web
+    app with no frontend) and the ``up`` itself are the driver's job (:func:`_run_release_smoke`); this leg
+    only probes the running stack."""
+    base, compose, roles = stack.base, stack.compose, stack.roles
+    # Backend ready (the boot check) — ``up --wait`` returns once the container RUNS; a backend without a
+    # healthcheck may still be booting/migrating. Poll /health until the server RESPONDS (status <500;
+    # v0.7.7 path-agnostic). Undeterminable port → skip the poll (no NEW false FAIL — ``up`` succeeded).
+    port = _compose_backend_port(compose)
+    if port is not None:
+        ready, last = await _await_acceptance_app_ready(base, port)
+        if not ready:
+            return False, f"app did not boot / not responding within {ACCEPTANCE_SMOKE_READY_TIMEOUT}s: {last}"
+    # Frontend reachable — the frontend nginx has no Python, so probe it FROM the backend over the isolated
+    # project network by service name (no host ports; the override stripped them). A 404 at ``/`` still
+    # means "serving" (<500). This catches a frontend that built but never serves.
+    fe_role = roles["frontend"]
+    if fe_role is not None and roles["backend"] is not None:
+        fe_port = _compose_frontend_port(compose) or 80
+        fe_ready, fe_last = await _await_http_ready(base, roles["backend"], fe_port, host=fe_role, path="/")
+        if not fe_ready:
+            return False, (f"frontend '{fe_role}' not serving within {ACCEPTANCE_SMOKE_READY_TIMEOUT}s: {fe_last}")
+    return True, "app booted + responds"
+
+
+# gate-g-hardening GAP 1 (B): the anti-empty-floor sentinel ``release_smoke_test.sh`` MUST print —
+# ``ASSERTIONS_RUN=<n>``. An empty ``set -e`` script that exit-0's without running anything is a FALSE
+# green; the absence of the sentinel (or ``n==0``) is a FAIL, not a pass (parsed by the engine, below).
+_ASSERTIONS_RUN_RE = re.compile(r"ASSERTIONS_RUN=(\d+)")
+
+
+def _parse_assertions_run(output: str) -> Optional[int]:
+    """The LAST ``ASSERTIONS_RUN=<n>`` count printed by ``release_smoke_test.sh`` (anti-empty floor), or
+    ``None`` when the script printed no sentinel at all. ``None`` / ``0`` ⇒ the script asserted nothing
+    (a false exit-0) → the caller FAILs it."""
+    matches = _ASSERTIONS_RUN_RE.findall(output)
+    return int(matches[-1]) if matches else None
+
+
+async def _run_acceptance_script(script: Path, env: dict[str, str]) -> tuple[int, str]:
+    """Run the host-executable ``release_smoke_test.sh`` (against the already-booted isolated stack) with
+    the smoke-stack addressing env, bounded by :data:`RELEASE_ACCEPTANCE_TIMEOUT`; never raises. Mirrors
+    :func:`_compose_smoke_step`: a spawn failure → ``(127, reason)``, a timeout → ``(124, reason)``
+    (sentinel non-zero codes the caller treats as a FAIL). The script reaches the app via ``docker compose
+    exec`` (host ports are stripped), so the compose project/files are passed through ``env``."""
+    full_env = {**os.environ, **env}
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "bash", str(script), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, env=full_env
+        )
+    except OSError as exc:
+        return 127, f"spawn failed: {exc}"
+    try:
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=RELEASE_ACCEPTANCE_TIMEOUT)
+    except asyncio.TimeoutError:
+        proc.kill()
+        return 124, f"timeout ({RELEASE_ACCEPTANCE_TIMEOUT}s)"
+    return proc.returncode, (stdout or b"").decode("utf-8", "replace")
+
+
+async def _run_release_acceptance(stack: _SmokeStack, project_slug: str) -> tuple[bool, str, bool]:
+    """Release-acceptance leg (gate-g-hardening GAP 1 A1): run the project's black-box host-executable
+    ``release_smoke_test.sh`` against the ALREADY-BOOTED isolated *stack* (NOT pytest in the prod image),
+    requiring exit-0 AND a non-zero ``ASSERTIONS_RUN`` (anti-empty floor). Returns ``(ok, detail,
+    skipped)``.
+
+    **Archetype-conditional** (the key honesty fix): a web app (a ``backend`` service is present in the
+    compose) with NO ``release_smoke_test.sh`` is a **FAIL** ("required but missing") — never a silent SKIP
+    that would let the PASS through unchecked. A SKIP is legit ONLY for a pure lib/worker stack (no
+    ``backend`` role); the no-compose case is SKIPped one level up in the driver."""
+    script = claude_agent.PROJECTS_ROOT / project_slug / "release_smoke_test.sh"
+    is_web_app = stack.roles["backend"] is not None
+    if not script.is_file():
+        if is_web_app:
+            logger.warning(
+                "release acceptance FAIL (slug=%s) — release_smoke_test.sh required but missing", project_slug
+            )
+            return False, "release_smoke_test.sh required but missing (web app — acceptance is mandatory)", False
+        return True, "SKIPPED — no release_smoke_test.sh (pure lib/worker, no backend service)", True
+    env = {
+        "SMOKE_PROJECT": stack.project,
+        "SMOKE_COMPOSE": str(stack.compose),
+        "SMOKE_OVERRIDE": str(stack.override),
+        "SMOKE_BACKEND": stack.roles["backend"] or "",
+        "SMOKE_FRONTEND": stack.roles["frontend"] or "",
+        "SMOKE_BACKEND_PORT": str(_compose_backend_port(stack.compose) or ""),
+    }
+    rc, out = await _run_acceptance_script(script, env)
+    if rc != 0:
+        return False, f"release_smoke_test.sh exit {rc}: {out.strip()[-400:]}", False
+    assertions = _parse_assertions_run(out)
+    if not assertions:  # None (no sentinel) or 0 — a false exit-0 that asserted nothing.
+        return False, f"anti-empty floor: ASSERTIONS_RUN={assertions} — the acceptance script ran no assertions", False
+    return True, f"release acceptance PASS — {assertions} assertions", False
+
+
+async def _run_release_smoke(
+    project_slug: str, version_label: str
+) -> tuple[tuple[bool, str], Optional[tuple[bool, str, bool]]]:
+    """gate-g-hardening GAP 1: the boot leg + the release-acceptance leg in ONE up/down cycle (A2). Returns
+    ``((boot_ok, boot_detail), acceptance)`` where ``acceptance`` is ``(ok, detail, skipped)`` — or ``None``
+    when the boot leg failed/short-circuited so acceptance never ran (the caller settles on the boot FAIL).
+
+    Graceful SKIP when the project has no ``docker-compose.yml`` (a boot check needs a compose to boot): both
+    legs SKIP (legit non-web). A backend web app with NO frontend service short-circuits to a structural FAIL
+    BEFORE any build (icc-deploy §5.6 #1 — the nex-asistent "no FE emitted" bug; no point building a broken
+    compose). Never raises."""
+    root = claude_agent.PROJECTS_ROOT / project_slug
+    compose = root / "docker-compose.yml"
+    if not compose.is_file():
+        logger.info("smoke SKIPPED (slug=%s, version=%s) — no docker-compose.yml", project_slug, version_label)
+        skip = "SKIPPED — no docker-compose.yml"
+        return (True, skip), (True, skip, True)
+    services = (yaml.safe_load(compose.read_text()) or {}).get("services") or {}
+    roles = uat_provisioner.identify_service_roles(services)
+    if roles["backend"] is not None and roles["frontend"] is None:
+        logger.warning("smoke FAIL (slug=%s) — backend web app has no frontend service", project_slug)
+        return (False, "compose has a backend web app but no frontend service"), None
+    async with _boot_smoke_stack(project_slug, compose, roles) as stack:
+        if not stack.up_ok:
+            return (False, f"up exit {stack.up_rc}: {stack.up_detail.strip()[-400:]}"), None
+        boot_ok, boot_detail = await _run_app_starts_smoke(stack)
+        if not boot_ok:
+            return (boot_ok, boot_detail), None
+        acceptance = await _run_release_acceptance(stack, project_slug)
+        return (boot_ok, boot_detail), acceptance
+
+
+def _release_acceptance_satisfied(db: Session, version_id: uuid.UUID) -> bool:
+    """gate-g-hardening GAP 1 (A3): the engine release-acceptance gate behind a gate_g PASS.
+
+    ``True`` only when the LATEST ``release_acceptance`` notification of THIS iteration reports a real
+    exit-0 (``pass==True``) or a legit non-web SKIP (``skipped==True`` — a pure lib/worker / no-compose
+    project with no running app to assert against). A recorded FAIL (``pass==False`` and not skipped) or NO
+    acceptance notification at all ⇒ ``False`` ⇒ the verdict handler refuses the PASS.
+
+    Freshness is anchored on the iteration boundary — :func:`_iteration_boundary_seq` (the latest
+    ``verdict`` seq) — NOT the gate_report: the acceptance notification is recorded BEFORE the Auditor's
+    gate_report, so an "after gate_report" anchor would never see it and a PASS could never unlock."""
+    boundary = _iteration_boundary_seq(db, version_id)
+    rows = (
+        db.execute(
+            select(PipelineMessage.payload)
+            .where(
+                PipelineMessage.version_id == version_id,
+                PipelineMessage.author == "system",
+                PipelineMessage.kind == "notification",
+                PipelineMessage.seq > boundary,
+            )
+            .order_by(PipelineMessage.seq.desc())
+        )
+        .scalars()
+        .all()
+    )
+    for payload in rows:
+        if isinstance(payload, dict) and isinstance(payload.get("release_acceptance"), dict):
+            acc = payload["release_acceptance"]
+            return acc.get("pass") is True or acc.get("skipped") is True
+    return False
 
 
 async def _fast_fix_auto_deploy(
@@ -6137,6 +6318,16 @@ async def apply_action(
         verdict = payload.get("verdict")
         if verdict not in ("PASS", "FAIL"):
             raise OrchestratorError("verdict requires payload.verdict in {PASS, FAIL}")
+        # gate-g-hardening GAP 1 (A3): the engine refuses a PASS until the release acceptance actually reached
+        # exit-0 (or a legit non-web SKIP) THIS iteration. Checked BEFORE recording the verdict message —
+        # _iteration_boundary_seq keys on the latest verdict seq, so recording first would move the freshness
+        # anchor PAST the acceptance notification and the guard could never read it. A FAIL is always allowed
+        # (it returns the version to fix); only the PASS is gated.
+        if verdict == "PASS" and not _release_acceptance_satisfied(db, version_id):
+            raise OrchestratorError(
+                "PASS nedovolený: acceptance nedobehla do exit-0 (release_smoke_test.sh) — spusti "
+                "rerun_release_audit po oprave, alebo vráť verdiktom FAIL."
+            )
         _record_message(
             db,
             version_id=version_id,

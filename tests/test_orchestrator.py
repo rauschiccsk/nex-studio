@@ -127,6 +127,22 @@ def _settle(db_session, version_id, status="awaiting_director"):
     return st
 
 
+def _satisfy_release_acceptance(db_session, version_id):
+    """gate-g-hardening GAP 1 (A3): record a passing ``release_acceptance`` notification so the verdict PASS
+    guard (:func:`orchestrator._release_acceptance_satisfied`) lets a gate_g PASS through — the real flow
+    records this during ``verify_done``; unit tests that drive a PASS directly seed it here."""
+    return orchestrator._record_message(
+        db_session,
+        version_id=version_id,
+        stage="gate_g",
+        author="system",
+        recipient="director",
+        kind="notification",
+        content="Release acceptance PASS — 1 assertions.",
+        payload={"release_acceptance": {"pass": True, "detail": "ok", "skipped": False}},
+    )
+
+
 # ── session resolution ────────────────────────────────────────────────────────
 
 
@@ -602,6 +618,7 @@ async def test_verdict_pass_to_release(db_session, fake_claude):
     version, _ = _make_version(db_session)
     await orchestrator.apply_action(db_session, version_id=version.id, action="start")
     _settle(db_session, version.id)
+    _satisfy_release_acceptance(db_session, version.id)  # GAP 1: a PASS needs the acceptance gate satisfied
     state = await orchestrator.apply_action(
         db_session, version_id=version.id, action="verdict", payload={"verdict": "PASS"}
     )
@@ -5936,6 +5953,7 @@ async def test_new_version_release_does_not_auto_deploy(db_session, fake_claude,
     db_session.flush()
     await orchestrator.apply_action(db_session, version_id=version.id, action="start")
     _settle(db_session, version.id)
+    _satisfy_release_acceptance(db_session, version.id)  # GAP 1: a PASS needs the acceptance gate satisfied
     await orchestrator.apply_action(db_session, version_id=version.id, action="verdict", payload={"verdict": "PASS"})
     fake_claude.response = _block(stage="release", kind="gate_report", summary="release ok", awaiting="director")
     state = await orchestrator.run_dispatch(db_session, version.id)

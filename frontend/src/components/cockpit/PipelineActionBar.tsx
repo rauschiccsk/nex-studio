@@ -36,6 +36,10 @@ interface Props {
   /** Build open findings (WS-C1, CR-NS-030): > 0 → a failed/unverified task (approve + end_build
    *  blocked). Mirrors gateEOpenFindings. */
   buildOpenFindings?: number;
+  /** gate-g-hardening GAP 1 (A4): false → the engine release acceptance hasn't reached exit-0 / a legit
+   *  non-web SKIP this iteration, so a PASS verdict would 400. DISABLE the "Verdikt PASS" button + show a
+   *  tooltip. Absent → permissive (don't disable), for backward-compat. Mirrors buildOpenFindings. */
+  releaseAcceptanceSatisfied?: boolean;
   /** The latest EXECUTABLE Coordinator proposal (E7, F-008 §9) or null. Drives the build "Schváliť
    *  Koordinátorov návrh (<effect>)" button — approve → apply_coordinator_recommendation executes it. */
   coordinatorProposal?: CoordinatorDirective | null;
@@ -85,6 +89,7 @@ export function PipelineActionBar({
   availableActions,
   allTasksDone,
   buildOpenFindings,
+  releaseAcceptanceSatisfied,
   coordinatorProposal,
   regateProposal,
   inFlight,
@@ -120,6 +125,11 @@ export function PipelineActionBar({
   const buildHasOpenFindings = (buildOpenFindings ?? 0) > 0;
   const buildEndReady = !buildHasOpenFindings; // end_build blocks only on open findings (todos are fine)
   const buildApproveReady = allTasksDone !== false && !buildHasOpenFindings; // final sign-off: all done + clean
+
+  // gate-g-hardening GAP 1 (A4): the gate_g "Verdikt PASS" is blocked until the engine release acceptance
+  // reached exit-0 (or a legit non-web SKIP) this iteration — else the verdict handler 400s. Absent field →
+  // permissive (don't disable), for backward-compat. Mirrors the build readiness gate above.
+  const releasePassBlocked = releaseAcceptanceSatisfied === false;
 
   // Gate E has its own boundary actions (Customer↔Designer loop) — kept out of the
   // generic ratify / question-block paths (CR-NS-018 Phase 3).
@@ -380,10 +390,16 @@ export function PipelineActionBar({
       {current_stage === "gate_g" && allowed("verdict") && (
         <>
           {awaiting && (
-            <ActionRow hint="Audit prešiel → pipeline pokračuje na vydanie.">
+            <ActionRow
+              hint={
+                releasePassBlocked
+                  ? "PASS zablokovaný — release acceptance (release_smoke_test.sh) ešte nedobehla do exit-0; spusti audit znova alebo vráť FAIL."
+                  : "Audit prešiel → pipeline pokračuje na vydanie."
+              }
+            >
               <button
                 onClick={() => onAction("verdict", { verdict: "PASS" })}
-                disabled={inFlight}
+                disabled={inFlight || releasePassBlocked}
                 className={`${btn} bg-emerald-600 text-white hover:bg-emerald-500`}
               >
                 Verdikt PASS
