@@ -170,6 +170,11 @@ ENV PATH="/home/andros/.local/bin:${PATH}"
 COPY --chown=andros:andros backend/ ./backend/
 COPY --chown=andros:andros alembic.ini ./alembic.ini
 COPY --chown=andros:andros migrations/ ./migrations/
+# Runtime templates (TEMPLATES_DIR = /app/templates): UAT provisioner's
+# uat/docker-compose.yml.j2 + the release_smoke_test.sh scaffold seed. Missing
+# from the image since the P2 provisioner (dec8a21) — never wired into the build,
+# so UAT auto-provisioning + smoke-seed failed in the container. (gate-g-hardening followup)
+COPY --chown=andros:andros templates/ ./templates/
 
 # Bake ONLY the per-version RELEASE_NOTES.md files (the "Aktualizácie"
 # changelog) from the pruned stage above — NEVER the full docs/specs tree.
