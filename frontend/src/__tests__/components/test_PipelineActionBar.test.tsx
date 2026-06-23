@@ -227,6 +227,47 @@ describe("PipelineActionBar — gate action clarity", () => {
     // §F1.7 #1b: the errorBlock "Skús znova" must NOT also render at gate_g (dual-render bug guard).
     expect(screen.queryByText("Skús znova")).not.toBeInTheDocument();
   });
+
+  // gate-g-hardening GAP 2 (CR-D): the surgical_fix button renders at a settled gate_g when the backend offers
+  // it, opens the TWO-field composer (required task ids + directive), and submitting posts a structured
+  // {fix_directive, target_task_numbers:string[]}. Gated on allowed("surgical_fix").
+  it("(gate_g, awaiting) shows the surgical_fix button only when offered, and posts a structured scope", () => {
+    const onAction = vi.fn();
+    const { rerender } = render(
+      <PipelineActionBar
+        state={mkState("gate_g", "awaiting_director")}
+        inFlight={false}
+        availableActions={["ask", "verdict"]} // NOT offered → button absent
+        releaseAcceptanceSatisfied
+        onAction={onAction}
+      />,
+    );
+    expect(screen.queryByText("Cielená oprava (bez prebuildu)")).not.toBeInTheDocument();
+
+    rerender(
+      <PipelineActionBar
+        state={mkState("gate_g", "awaiting_director")}
+        inFlight={false}
+        availableActions={["ask", "verdict", "surgical_fix"]}
+        releaseAcceptanceSatisfied
+        onAction={onAction}
+      />,
+    );
+    fireEvent.click(screen.getByText("Cielená oprava (bez prebuildu)"));
+    // Submit stays DISABLED until BOTH the task ids and the directive are filled (required scope).
+    const submit = screen.getByRole("button", { name: "Cielená oprava (bez prebuildu)" });
+    fireEvent.change(screen.getByPlaceholderText(/Čísla úloh/), { target: { value: "1.3.1, 10.2.2" } });
+    expect(submit).toBeDisabled(); // directive still empty
+    fireEvent.change(screen.getByPlaceholderText("Cielená oprava (bez prebuildu)"), {
+      target: { value: "Oprav smoke G.16" },
+    });
+    expect(submit).not.toBeDisabled();
+    fireEvent.click(submit);
+    expect(onAction).toHaveBeenCalledWith("surgical_fix", {
+      fix_directive: "Oprav smoke G.16",
+      target_task_numbers: ["1.3.1", "10.2.2"],
+    });
+  });
 });
 
 describe("PipelineActionBar — R4 block_reason authoritative (D1)", () => {

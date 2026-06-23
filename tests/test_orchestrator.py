@@ -744,6 +744,303 @@ def test_directive_for_action_rerun_release_audit():
     assert "<<<PIPELINE_STATUS>>>" in directive
 
 
+# ── surgical_fix (gate-g-hardening GAP 2: chirurgical post-audit fix) ─────────────
+
+
+def _seed_done_tasks(db_session, version, project, per_feat, *, feats=1):
+    """Seed `feats` feats (each its own done epic) with `per_feat` done tasks under the version. Task numbers
+    restart at 1 per feat (UNIQUE(feat_id, number)). Returns the flat list of created tasks."""
+    out = []
+    for f in range(1, feats + 1):
+        epic = Epic(project_id=project.id, version_id=version.id, number=f, title=f"E{f}", status="done")
+        db_session.add(epic)
+        db_session.flush()
+        feat = Feat(epic_id=epic.id, number=1, title=f"F{f}", description="", status="done")
+        db_session.add(feat)
+        db_session.flush()
+        for i in range(1, per_feat + 1):
+            task = Task(feat_id=feat.id, number=i, title=f"T{f}.{i}", task_type="backend", status="done")
+            db_session.add(task)
+            out.append(task)
+    db_session.flush()
+    return out
+
+
+def _settled_gate_g(db_session, version, status="awaiting_director"):
+    st = orchestrator._get_state(db_session, version.id)
+    st.current_stage = "gate_g"
+    st.current_actor = "auditor"
+    st.status = status
+    db_session.flush()
+    return st
+
+
+async def test_surgical_fix_resets_only_targeted_tasks(db_session, fake_claude):
+    # GAP 2 (CR-D): the surgical path resets ONLY the Director-scoped done task(s) → todo (NOT every done task),
+    # re-enters the build (is_regate, iteration++, stage=build, agent_working), and records the fix directive.
+    # Scope is the hierarchical '<epic>.<feat>.<task>' id (from spec/task-plan.md).
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    tasks = _seed_done_tasks(db_session, version, project, 3)  # epic 1, feat 1, tasks "1.1.1" "1.1.2" "1.1.3"
+    _settled_gate_g(db_session, version)
+    state = await orchestrator.apply_action(
+        db_session,
+        version_id=version.id,
+        action="surgical_fix",
+        payload={"fix_directive": "Oprav timing v B.4", "target_task_numbers": ["1.1.2"]},
+    )
+    assert state.is_regate is True
+    assert state.iteration == 1
+    assert state.current_stage == "build"
+    assert state.status == "agent_working"
+    db_session.refresh(tasks[0]), db_session.refresh(tasks[1]), db_session.refresh(tasks[2])
+    assert [t.status for t in tasks] == ["done", "todo", "done"]  # ONLY "1.1.2" reset
+    directives = [
+        m
+        for m in _msgs(db_session, version.id)
+        if m.kind == "directive" and m.author == "director" and m.recipient == "implementer"
+    ]
+    assert len(directives) == 1
+    assert directives[0].content == "Oprav timing v B.4"
+    assert directives[0].payload == {"surgical_fix": True, "target_task_numbers": ["1.1.2"]}
+
+
+async def test_surgical_fix_hierarchical_id_disambiguates_across_feats(db_session, fake_claude):
+    # GAP 2 (CR-D): Task.number is unique only WITHIN a feat (UNIQUE(feat_id, number)), so a flat number would
+    # hit a same-numbered task in every feat. The hierarchical '<epic>.<feat>.<task>' id pinpoints exactly one:
+    # "2.1.1" resets ONLY epic 2's task #1, leaving epic 1's task #1 (same flat number) untouched.
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    tasks = _seed_done_tasks(db_session, version, project, 1, feats=2)  # "1.1.1" and "2.1.1", both task #1
+    _settled_gate_g(db_session, version)
+    await orchestrator.apply_action(
+        db_session,
+        version_id=version.id,
+        action="surgical_fix",
+        payload={"fix_directive": "x", "target_task_numbers": ["2.1.1"]},
+    )
+    db_session.refresh(tasks[0]), db_session.refresh(tasks[1])
+    assert tasks[0].status == "done"  # epic 1's task #1 — NOT reset despite the same flat number
+    assert tasks[1].status == "todo"  # epic 2's task #1 — the targeted one
+
+
+async def test_surgical_fix_requires_target_task_numbers(db_session, fake_claude):
+    # GAP 2 (CR-D): target_task_numbers is REQUIRED — absent / empty / all-whitespace is REJECTED (NOT a full
+    # rebuild; that is Verdikt FAIL→Programovanie). Nothing is reset or recorded.
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    tasks = _seed_done_tasks(db_session, version, project, 2)
+    _settled_gate_g(db_session, version)
+    for bad in (
+        {"fix_directive": "x"},
+        {"fix_directive": "x", "target_task_numbers": []},
+        {"fix_directive": "x", "target_task_numbers": ["  "]},
+    ):
+        with pytest.raises(orchestrator.OrchestratorError, match="target_task_numbers"):
+            await orchestrator.apply_action(db_session, version_id=version.id, action="surgical_fix", payload=bad)
+    for t in tasks:
+        db_session.refresh(t)
+    assert all(t.status == "done" for t in tasks)  # untouched
+    directives = [m for m in _msgs(db_session, version.id) if m.kind == "directive" and m.recipient == "implementer"]
+    assert directives == []  # nothing recorded
+
+
+async def test_surgical_fix_malformed_id_rejected(db_session, fake_claude):
+    # GAP 2 (CR-D): a malformed id (not exactly three dot-separated ints) is rejected with clear feedback;
+    # nothing reset/recorded.
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    tasks = _seed_done_tasks(db_session, version, project, 2)
+    _settled_gate_g(db_session, version)
+    for bad_id in ("abc", "1.2", "1.1.1.1", "1.x.1"):
+        with pytest.raises(orchestrator.OrchestratorError, match="neznáme čísla úloh"):
+            await orchestrator.apply_action(
+                db_session,
+                version_id=version.id,
+                action="surgical_fix",
+                payload={"fix_directive": "x", "target_task_numbers": [bad_id]},
+            )
+    for t in tasks:
+        db_session.refresh(t)
+    assert all(t.status == "done" for t in tasks)
+
+
+async def test_surgical_fix_recomputes_feat_status(db_session, fake_claude):
+    # GAP 2 (board-drift guard): a partial reset must recompute the touched feat (done→todo) + epic
+    # (done→planned), else the board still shows the feat/epic "done" while a task is back in todo.
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    tasks = _seed_done_tasks(db_session, version, project, 3)
+    feat = db_session.get(Feat, tasks[0].feat_id)
+    epic = db_session.get(Epic, feat.epic_id)
+    assert feat.status == "done" and epic.status == "done"
+    _settled_gate_g(db_session, version)
+    await orchestrator.apply_action(
+        db_session,
+        version_id=version.id,
+        action="surgical_fix",
+        payload={"fix_directive": "x", "target_task_numbers": ["1.1.1"]},
+    )
+    db_session.refresh(feat), db_session.refresh(epic)
+    assert feat.status == "todo"  # {done, todo} → todo
+    assert epic.status == "planned"  # not all feats done → planned
+
+
+async def test_surgical_fix_empty_directive_rejected(db_session, fake_claude):
+    # GAP 2: an empty/whitespace fix_directive is rejected (even with a valid scope) — nothing reset/recorded.
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    tasks = _seed_done_tasks(db_session, version, project, 2)
+    _settled_gate_g(db_session, version)
+    with pytest.raises(orchestrator.OrchestratorError, match="fix_directive"):
+        await orchestrator.apply_action(
+            db_session,
+            version_id=version.id,
+            action="surgical_fix",
+            payload={"fix_directive": "   ", "target_task_numbers": ["1.1.1"]},
+        )
+    for t in tasks:
+        db_session.refresh(t)
+    assert all(t.status == "done" for t in tasks)  # untouched
+    st = orchestrator._get_state(db_session, version.id)
+    assert st.current_stage == "gate_g" and st.status == "awaiting_director"
+
+
+async def test_surgical_fix_rejected_off_gate_g(db_session, fake_claude):
+    # GAP 2: gated to gate_g — invalid at any other stage (mirrors rerun_release_audit).
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    st = orchestrator._get_state(db_session, version.id)
+    st.current_stage = "gate_a"
+    st.current_actor = "designer"
+    st.status = "awaiting_director"
+    db_session.flush()
+    with pytest.raises(orchestrator.OrchestratorError, match="gate_g"):
+        await orchestrator.apply_action(
+            db_session, version_id=version.id, action="surgical_fix", payload={"fix_directive": "x"}
+        )
+
+
+async def test_surgical_fix_unknown_id_rejected(db_session, fake_claude):
+    # GAP 2 (CR-D): a well-formed id that resolves to NO task under this version is rejected (clear feedback,
+    # never a silent empty re-build) — and leaves NO stray directive message.
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _seed_done_tasks(db_session, version, project, 2)  # only "1.1.1" / "1.1.2" exist
+    _settled_gate_g(db_session, version)
+    with pytest.raises(orchestrator.OrchestratorError, match="neznáme čísla úloh"):
+        await orchestrator.apply_action(
+            db_session,
+            version_id=version.id,
+            action="surgical_fix",
+            payload={"fix_directive": "x", "target_task_numbers": ["9.9.9"]},
+        )
+    directives = [m for m in _msgs(db_session, version.id) if m.kind == "directive" and m.recipient == "implementer"]
+    assert directives == []  # nothing recorded on the rejection path
+
+
+async def test_surgical_fix_rejected_while_auditor_working(db_session, fake_claude):
+    # Stale-board guard: surgical_fix is in _ADVANCING_ACTIONS, so a POST while the Auditor is mid-audit
+    # (agent_working) is rejected — never re-enters the build on top of a working agent.
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _seed_done_tasks(db_session, version, project, 2)
+    _settled_gate_g(db_session, version, status="agent_working")
+    with pytest.raises(orchestrator.OrchestratorError, match="ešte pracuje"):
+        await orchestrator.apply_action(
+            db_session, version_id=version.id, action="surgical_fix", payload={"fix_directive": "x"}
+        )
+
+
+def test_surgical_fix_offered_at_settled_gate_g():
+    # GAP 2: offered at gate_g when SETTLED (awaiting_director OR a blocked Auditor question) — never while
+    # the Auditor works and never at another stage. Mirrors rerun_release_audit's gating.
+    def acts(stage, status):
+        return orchestrator.determine_available_actions(PipelineState(current_stage=stage, status=status))
+
+    assert "surgical_fix" in acts("gate_g", "awaiting_director")
+    assert "surgical_fix" in acts("gate_g", "blocked")
+    assert "surgical_fix" not in acts("gate_g", "agent_working")
+    assert "surgical_fix" not in acts("release", "awaiting_director")
+    assert "surgical_fix" not in acts("build", "awaiting_director")
+
+
+def test_surgical_fix_absent_for_fast_fix():
+    # GAP 2 §3: gated to gate_g, which the fast-fix lane never reaches → never offered on that lane.
+    for stage in orchestrator.FAST_FIX_STAGE_ORDER:
+        for status in ("agent_working", "awaiting_director", "blocked", "paused", "done"):
+            assert "surgical_fix" not in orchestrator.determine_available_actions(
+                PipelineState(current_stage=stage, status=status)
+            )
+
+
+async def test_latest_surgical_fix_directive_boundary_anchored(db_session, fake_claude):
+    # GAP 2 (korekcia #1): the helper reads the fix directive of THIS iteration (seq > the latest verdict),
+    # then self-clears once a verdict moves the boundary past it (mirrors _release_acceptance_satisfied).
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _seed_done_tasks(db_session, version, project, 1)
+    _settled_gate_g(db_session, version)
+    await orchestrator.apply_action(
+        db_session,
+        version_id=version.id,
+        action="surgical_fix",
+        payload={"fix_directive": "Oprav health timing", "target_task_numbers": ["1.1.1"]},
+    )
+    threaded = orchestrator._latest_surgical_fix_directive(db_session, version.id)
+    assert threaded is not None
+    assert "Oprav health timing" in threaded
+    # A subsequent verdict moves the iteration boundary PAST the directive → it becomes stale.
+    orchestrator._record_message(
+        db_session,
+        version_id=version.id,
+        stage="gate_g",
+        author="director",
+        recipient="auditor",
+        kind="verdict",
+        content="FAIL",
+        payload={"verdict": "FAIL"},
+    )
+    assert orchestrator._latest_surgical_fix_directive(db_session, version.id) is None
+
+
+async def test_surgical_fix_directive_threaded_into_build_brief(db_session, fake_claude, monkeypatch):
+    # GAP 2 (korekcia #1): the surgical directive is PREPENDED ahead of cross_cutting in the re-run build
+    # brief, so the Programmer's per-task prompt carries the Director's explicit fix instruction. Captured at
+    # the real consumer (_directive_for_build_task), bailing out of the loop after the first brief is built.
+    version, project = _make_version(db_session)
+    await orchestrator.apply_action(db_session, version_id=version.id, action="start")
+    _seed_done_tasks(db_session, version, project, 1)
+    _seed_cross_cutting(db_session, version, "PRAVIDLO: pep8")
+    _settled_gate_g(db_session, version)
+    await orchestrator.apply_action(
+        db_session,
+        version_id=version.id,
+        action="surgical_fix",
+        payload={"fix_directive": "Oprav smoke G.16", "target_task_numbers": ["1.1.1"]},
+    )
+    captured = {}
+    real = orchestrator._directive_for_build_task
+
+    def _capture(task, cross_cutting_rules, prior_failures, flow_type="new_version"):
+        captured["cross_cutting"] = cross_cutting_rules
+        raise RuntimeError("stop after first brief")  # bail out of the loop once we've seen the brief
+
+    # Baseline capture (_repo_head) returns None for the non-existent test repo → the loop's fail-closed path
+    # would return BEFORE building the brief. Give it a sha so the loop reaches _directive_for_build_task.
+    monkeypatch.setattr(orchestrator, "_repo_head", lambda root: "deadbeef")
+    monkeypatch.setattr(orchestrator, "_directive_for_build_task", _capture)
+    try:
+        await orchestrator._run_build_round(db_session, orchestrator._get_state(db_session, version.id))
+    except RuntimeError:
+        pass
+    assert real is not None  # sanity: the real consumer exists (signature pinned by _capture)
+    brief = captured.get("cross_cutting") or ""
+    assert "Oprav smoke G.16" in brief
+    assert "pep8" in brief
+    assert brief.index("Oprav smoke G.16") < brief.index("pep8")  # directive prepended ahead of cross_cutting
+
+
 async def test_pause_at_build_sets_paused(db_session, fake_claude):
     # CR-NS-027: pause at build/agent_working sets a genuine 'paused' status (not just a next_action
     # label) so the build loop stops at its next task boundary; leaving agent_working also stops the

@@ -68,7 +68,17 @@ interface Props {
   onAction: (action: PipelineActionName, payload?: Record<string, unknown>) => void;
 }
 
-type Composer = { action: PipelineActionName; label: string; field: string } | null;
+type Composer = {
+  action: PipelineActionName;
+  label: string;
+  field: string;
+  // gate-g-hardening GAP 2 (CR-D): an optional SECOND, REQUIRED input collected alongside `field`. surgical_fix
+  // uses it to gather comma-separated hierarchical task ids ('1.3.1, 10.2.2') parsed into a string[] payload —
+  // what makes the fix CHIRURGICAL (only the named tasks re-run). Absent for every other composer (single-field
+  // — return/answer/ask unchanged).
+  tasksField?: string;
+  tasksLabel?: string;
+} | null;
 
 const btn =
   "inline-flex w-fit items-center gap-1.5 rounded px-3 py-1.5 text-xs font-medium disabled:opacity-50";
@@ -104,6 +114,7 @@ export function PipelineActionBar({
   const [composer, setComposer] = useState<Composer>(null);
   const [showRegateChips, setShowRegateChips] = useState(false); // CR-NS-057 §F2.4: "Iná fáza" override chips
   const [text, setText] = useState("");
+  const [tasksText, setTasksText] = useState(""); // GAP 2 (CR-D): surgical_fix's task-ids input
 
   if (!state) return null;
 
@@ -162,19 +173,43 @@ export function PipelineActionBar({
   const openComposer = (c: NonNullable<Composer>) => {
     setComposer(c);
     setText("");
+    setTasksText("");
   };
+  // GAP 2 (CR-D): a composer may collect a SECOND structured field (tasksField) — for surgical_fix the
+  // comma-separated hierarchical task ids parsed into a string[] payload. When present it is REQUIRED: the
+  // submit button stays disabled until at least one id is entered (mirrors the backend's required scope).
+  const taskIds = tasksText
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const composerReady = !!composer && !!text.trim() && (!composer.tasksField || taskIds.length > 0);
   const submitComposer = () => {
-    if (!composer || !text.trim()) return;
-    onAction(composer.action, { [composer.field]: text.trim() });
+    if (!composer || !composerReady) return;
+    const payload: Record<string, unknown> = { [composer.field]: text.trim() };
+    if (composer.tasksField) payload[composer.tasksField] = taskIds;
+    onAction(composer.action, payload);
     setComposer(null);
     setText("");
+    setTasksText("");
   };
 
   if (composer) {
     return (
       <div className="flex flex-col gap-2">
+        {/* GAP 2 (CR-D): surgical_fix's REQUIRED task-ids field. Comma-separated hierarchical ids
+            ('1.3.1, 10.2.2') from spec/task-plan.md → string[]. Rendered first (the scope) and autofocused;
+            absent (and the textarea keeps autofocus) for every other single-field composer. */}
+        {composer.tasksField && (
+          <input
+            autoFocus
+            value={tasksText}
+            onChange={(e) => setTasksText(e.target.value)}
+            placeholder={composer.tasksLabel}
+            className="w-full rounded border border-[var(--color-border-default)] bg-[var(--color-canvas)] px-2 py-1.5 text-xs text-[var(--color-text-primary)] focus:border-primary-500 focus:outline-none"
+          />
+        )}
         <textarea
-          autoFocus
+          autoFocus={!composer.tasksField}
           // CR-2 (v0.7.3): the single Director composer — return/answer/ask/return-with-comment all share it.
           // `lang="sk"` is the correct app-side declaration so the browser spell-checks Slovak (not English);
           // actual underlining depends on the browser having a SK dictionary installed.
@@ -189,7 +224,7 @@ export function PipelineActionBar({
         <div className="flex items-center gap-2">
           <button
             onClick={submitComposer}
-            disabled={inFlight || !text.trim()}
+            disabled={inFlight || !composerReady}
             className={`${btn} bg-primary-600 text-white hover:bg-primary-500`}
           >
             {inFlight ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
@@ -465,6 +500,33 @@ export function PipelineActionBar({
             className={`${btn} bg-indigo-600 text-white hover:bg-indigo-500`}
           >
             Znova spustiť release audit
+          </button>
+        </ActionRow>
+      )}
+
+      {/* surgical_fix (gate-g-hardening GAP 2, CR-D): a chirurgical post-audit fix — re-enter the build with
+          an EXPLICIT Director directive to correct targeted task(s), WITHOUT the full FAIL→build reset of every
+          done task. The re-built version still re-enters a FULL re-gate (Auditor + the GAP 1 acceptance gate),
+          so surgery never skips the release oracle. Amber to set it apart from indigo rerun / red FAIL. Backend
+          offers it only at a settled gate_g (awaiting_director OR a blocked Auditor question); fast_fix never
+          reaches gate_g, so it never shows it. Composer collects a REQUIRED scope (hierarchical task ids) +
+          the fix directive. */}
+      {current_stage === "gate_g" && allowed("surgical_fix") && (
+        <ActionRow hint="Zadaj čísla úloh (z spec/task-plan.md) + čo opraviť — prebuilduje LEN tie, nie celý build; potom prebehne plný re-audit (vrátane acceptance skúšok).">
+          <button
+            onClick={() =>
+              openComposer({
+                action: "surgical_fix",
+                label: "Cielená oprava (bez prebuildu)",
+                field: "fix_directive",
+                tasksField: "target_task_numbers",
+                tasksLabel: "Čísla úloh na opravu (napr. 1.3.1, 10.2.2)",
+              })
+            }
+            disabled={inFlight}
+            className={`${btn} bg-amber-600 text-white hover:bg-amber-500`}
+          >
+            Cielená oprava (bez prebuildu)
           </button>
         </ActionRow>
       )}

@@ -267,6 +267,7 @@ _ACTIONS = frozenset(
         "leave",
         "verdict",
         "rerun_release_audit",
+        "surgical_fix",
         "uat_accept",
         "retry_publish",
         "end_gate_e",
@@ -287,6 +288,9 @@ _ADVANCING_ACTIONS = frozenset(
         "leave",
         "verdict",
         "rerun_release_audit",
+        # gate-g-hardening GAP 2 (CR-D): the surgical post-audit fix re-enters the build → an advancing
+        # action (needs a settled gate_g — awaiting_director / blocked).
+        "surgical_fix",
         "uat_accept",
         "retry_publish",
         "return",
@@ -377,6 +381,13 @@ def determine_available_actions(state: PipelineState) -> set[str]:
             # (rerun_release_audit is in _ADVANCING_ACTIONS, whose guard treats awaiting_director/blocked/
             # paused as settled). Gated to gate_g, which fast_fix never reaches → byte-identical for fast-fix.
             actions.add("rerun_release_audit")
+            # surgical_fix (gate-g-hardening GAP 2, CR-D): the chirurgical post-audit fix path — re-enter the
+            # build to correct targeted task(s) per a Director directive, WITHOUT the full FAIL→build reset of
+            # every done task. Offered at the same SETTLED gate_g as rerun_release_audit (awaiting_director OR a
+            # blocked Auditor question). Gated to gate_g → fast_fix (no gate_g stage) never sees it. The re-built
+            # version still re-enters a FULL re-gate (Auditor + the GAP 1 acceptance gate), so surgery never
+            # bypasses the release oracle.
+            actions.add("surgical_fix")
     elif stage == "release":
         actions.add("uat_accept")
         # v0.8.0 CR-3: a FULL-FLOW (new_version) release whose ENGINE publish failed settles to blocked —
@@ -4209,6 +4220,75 @@ def _reset_done_tasks_for_regate(db: Session, version_id: uuid.UUID) -> None:
     db.flush()
 
 
+def _resolve_surgical_targets(
+    db: Session, version_id: uuid.UUID, identifiers: list[str]
+) -> tuple[list[Task], list[str]]:
+    """Resolve hierarchical ``<epic>.<feat>.<task>`` task ids (e.g. ``"1.3.1"`` — the exact format the Director
+    reads from ``spec/task-plan.md``, :func:`_render_task_plan_md`) to their version-scoped ``Task`` rows.
+
+    Returns ``(resolved_tasks, unresolved_identifiers)`` — an id is *unresolved* when malformed (not exactly
+    three dot-separated positive integers) OR no matching Task exists under this version. The hierarchical id
+    disambiguates ``Task.number`` (which is unique only WITHIN a feat — ``UNIQUE(feat_id, number)``), so a flat
+    number can't be used to pinpoint one task across the version."""
+    resolved: list[Task] = []
+    unresolved: list[str] = []
+    for ident in identifiers:
+        parts = ident.strip().split(".")
+        try:
+            if len(parts) != 3:
+                raise ValueError
+            epic_num, feat_num, task_num = (int(p) for p in parts)
+        except ValueError:
+            unresolved.append(ident)
+            continue
+        task = db.execute(
+            select(Task)
+            .join(Feat, Feat.id == Task.feat_id)
+            .join(Epic, Epic.id == Feat.epic_id)
+            .where(
+                Epic.version_id == version_id,
+                Epic.number == epic_num,
+                Feat.number == feat_num,
+                Task.number == task_num,
+            )
+        ).scalar_one_or_none()
+        if task is None:
+            unresolved.append(ident)
+        else:
+            resolved.append(task)
+    return resolved, unresolved
+
+
+def _reset_tasks_for_surgical_fix(db: Session, version_id: uuid.UUID, target_task_numbers: list[str]) -> int:
+    """gate-g-hardening GAP 2 (CR-D): the SELECTIVE reset behind a ``surgical_fix`` — flip ONLY the Director-
+    scoped ``done`` tasks back to ``todo`` so :func:`get_next_todo_task` re-runs ONLY those (not the whole
+    build — that is what a FAIL→build re-gate is for).
+
+    Scope = ``target_task_numbers``, a REQUIRED list of hierarchical ``<epic>.<feat>.<task>`` ids (the handler
+    rejects an empty scope upstream). Any id that does not resolve to an existing task → ``OrchestratorError``
+    (clear feedback, never a silent partial scope). Mirrors :func:`_coordinator_reset_task`'s per-row pattern
+    (NOT the bulk :func:`_reset_done_tasks_for_regate`, which skips the per-feat status recompute → board
+    drift); each touched feat is recomputed ONCE. Returns the count actually reset (resolved tasks already in
+    ``todo``/another state are left as-is) so the handler can reject a scope that matched no *resettable* task."""
+    resolved, unresolved = _resolve_surgical_targets(db, version_id, target_task_numbers)
+    if unresolved:
+        raise OrchestratorError(
+            "surgical_fix: neznáme čísla úloh (formát '<epic>.<feat>.<task>', napr. '1.3.1' — z spec/task-plan.md): "
+            + ", ".join(unresolved)
+        )
+    touched_feats: set[uuid.UUID] = set()
+    reset = 0
+    for task in resolved:
+        if task.status == "done":
+            task.status = "todo"  # ORM assignment keeps the in-memory object in sync
+            touched_feats.add(task.feat_id)
+            reset += 1
+    db.flush()
+    for feat_id in touched_feats:
+        task_service.recompute_feat_status(db, feat_id)
+    return reset
+
+
 def current_build_task(db: Session, version_id: uuid.UUID) -> Optional[Task]:
     """The build task currently in focus (WS-C2, CR-NS-035) for the "kto je na rade" board: the
     ``in_progress`` task while the Programmer works, else the ``failed`` (held) task at a HALT, else
@@ -4426,6 +4506,40 @@ def _latest_gate_g_findings(db: Session, version_id: uuid.UUID) -> Optional[str]
     if not parts:
         return None
     return "## Audit zistenia z gate_g (oprav v tomto buildu)\n" + "\n\n".join(parts)
+
+
+def _latest_surgical_fix_directive(db: Session, version_id: uuid.UUID) -> Optional[str]:
+    """gate-g-hardening GAP 2 (CR-D, korekcia #1): the Director's latest ``surgical_fix`` fix directive,
+    formatted as a Slovak block to PREPEND (ahead of :func:`_latest_gate_g_findings`) into the surgical re-run
+    brief — so the build loop carries the Director's EXPLICIT instruction, not just the Auditor's findings.
+
+    Reads the latest ``director→implementer`` ``directive`` message of THIS iteration — seq strictly past
+    :func:`_iteration_boundary_seq` (the latest ``verdict`` seq). ``surgical_fix`` records a ``directive`` (NOT
+    a verdict), so it never moves that boundary; the next PASS/FAIL verdict does, which is exactly when the
+    directive becomes stale → this returns ``None`` (mirrors the boundary-anchored freshness of
+    :func:`_release_acceptance_satisfied`). The ``surgical_fix`` payload marker disambiguates it from any other
+    Director→Implementer directive. ``None`` when there is no fresh surgical directive."""
+    boundary = _iteration_boundary_seq(db, version_id)
+    msg = db.execute(
+        select(PipelineMessage)
+        .where(
+            PipelineMessage.version_id == version_id,
+            PipelineMessage.author == "director",
+            PipelineMessage.recipient == "implementer",
+            PipelineMessage.kind == "directive",
+            PipelineMessage.seq > boundary,
+        )
+        .order_by(PipelineMessage.seq.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if msg is None:
+        return None
+    if not (msg.payload or {}).get("surgical_fix"):
+        return None
+    directive = (msg.content or "").strip()
+    if not directive:
+        return None
+    return "## Cielená oprava od Directora (vykonaj v tomto buildu)\n" + directive
 
 
 def _verify_reason_is_scope(directive: Optional[dict[str, Any]]) -> bool:
@@ -5648,6 +5762,12 @@ async def _run_build_round(
         _gg = _latest_gate_g_findings(db, version_id)
         if _gg:
             cross_cutting = _gg + ("\n\n" + cross_cutting if cross_cutting else "")
+        # gate-g-hardening GAP 2 (CR-D, korekcia #1): a surgical_fix re-run threads the Director's EXPLICIT fix
+        # directive AHEAD of the Auditor findings (prepended last → renders first). Boundary-anchored, so it
+        # self-clears once the next verdict lands. None ⇒ this is a plain FAIL→build re-gate, brief untouched.
+        _sfd = _latest_surgical_fix_directive(db, version_id)
+        if _sfd:
+            cross_cutting = _sfd + ("\n\n" + cross_cutting if cross_cutting else "")
     # The Director's framed return/answer (if this is a re-dispatch) seeds the first attempt
     # of whichever task runs first in THIS dispatch — i.e. the resumed/returned task, NOT
     # necessarily the globally-first task — then is consumed so later turns use briefs.
@@ -6312,6 +6432,64 @@ async def apply_action(
             payload={"rerun_release_audit": True},
         )
         _begin_dispatch(db, state)  # stage stays gate_g; current_actor→auditor; status→agent_working
+        return state
+
+    if action == "surgical_fix":
+        # gate-g-hardening GAP 2 (CR-D): the chirurgical post-audit fix path. Distinct from a FAIL→build
+        # re-gate (which resets EVERY done task via _reset_done_tasks_for_regate = full rebuild) and from the
+        # Fast-Fix Lane (a separate flow, Coordinator-verify + auto-deploy, no gate_g). A surgical_fix re-runs
+        # ONLY the Director-scoped task(s) with an EXPLICIT fix directive, then re-enters a FULL re-gate — so it
+        # never bypasses the GAP 1 release-acceptance oracle (the key intersection, design §3.6).
+        if state.current_stage != "gate_g":
+            raise OrchestratorError("surgical_fix je platné len vo fáze gate_g")
+        fix_directive = str(payload.get("fix_directive") or "").strip()
+        if not fix_directive:
+            raise OrchestratorError("surgical_fix requires a non-empty payload.fix_directive")
+        # Scope is the Director's EXPLICIT, REQUIRED target_task_numbers — hierarchical '<epic>.<feat>.<task>'
+        # ids (from spec/task-plan.md). This is what makes the path CHIRURGICAL: only the named tasks re-run.
+        # An empty/absent scope is REJECTED (NOT a full-build fallback — that is Verdikt FAIL→Programovanie).
+        raw_targets = payload.get("target_task_numbers")
+        if not isinstance(raw_targets, list) or not all(isinstance(n, str) for n in raw_targets):
+            raise OrchestratorError(
+                "surgical_fix payload.target_task_numbers must be a list of '<epic>.<feat>.<task>' strings"
+            )
+        target_task_numbers = [n.strip() for n in raw_targets if n.strip()]
+        if not target_task_numbers:
+            raise OrchestratorError(
+                "surgical_fix vyžaduje target_task_numbers — čísla úloh na opravu; pre full rebuild použi "
+                "Verdikt FAIL→Programovanie"
+            )
+        # Selective reset FIRST so a bad scope (unknown id, OR resolved tasks none of which are 'done') is
+        # rejected BEFORE anything is recorded/mutated — the raise leaves state pristine (resolve is read-only,
+        # the per-row reset only mutates after the unresolved check passes).
+        reset_count = _reset_tasks_for_surgical_fix(db, version_id, target_task_numbers)
+        if reset_count == 0:
+            raise OrchestratorError(
+                "surgical_fix: žiadna z cielených úloh nie je v stave 'done' — over čísla úloh "
+                f"({', '.join(target_task_numbers)})."
+            )
+        # Record the directive (audit trail + the source _latest_surgical_fix_directive reads). It is a
+        # `directive` (not a verdict), so _iteration_boundary_seq is unmoved and the helper can read it back in
+        # the build loop. Recorded after the reset so a rejected scope leaves NO stray directive.
+        _record_message(
+            db,
+            version_id=version_id,
+            stage="gate_g",
+            author="director",
+            recipient="implementer",
+            kind="directive",
+            content=fix_directive,
+            payload={"surgical_fix": True, "target_task_numbers": target_task_numbers},
+        )
+        # Re-enter the build (NOT ensure_build_task — its idempotency would return task #1; the selective
+        # reset already armed the todo set). is_regate routes _run_build_round's brief-threading + the post-
+        # build path lands at gate_g again (Auditor full re-gate + the acceptance gate). iteration++ marks the
+        # new cycle on the board.
+        state.is_regate = True
+        state.iteration += 1
+        state.current_stage = "build"
+        db.flush()
+        _begin_dispatch(db, state)
         return state
 
     if action == "verdict":
