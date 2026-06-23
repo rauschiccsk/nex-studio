@@ -899,3 +899,32 @@ async def test_fast_fix_redeploy_after_success_does_not_reprovision(db_session, 
 
     assert state.status == "awaiting_director"
     assert state.next_action == "Nasadené na UAT — over a akceptuj."
+
+
+@pytest.mark.asyncio
+async def test_fast_fix_provision_failure_blocks(db_session, monkeypatch) -> None:
+    """Fast-fix mirror of test_full_flow_uat_provision_failure_blocks: when the H2 self-heal re-provision
+    RAISES, the lane settles to blocked (system_error) + records a {ok:False, provisioned:False} note and the
+    redeploy NEVER runs (no silent re-`up`). compose present + a prior FAILED deploy arms the re-provision."""
+    version_id, state = _seed(db_session, repo_url=None, uat_slug="demo", flow_type="fast_fix")
+    _uat_note(db_session, version_id, {"uat_deploy": {"uat_slug": "demo", "ok": False, "detail": "boom"}})
+    monkeypatch.setattr(orchestrator, "_uat_compose_exists", lambda slug: True)
+
+    def _provision(project_slug, uat_slug, *, version):
+        raise RuntimeError("source docker-compose.yml not found")
+
+    monkeypatch.setattr(orchestrator.uat_provisioner, "provision_uat", _provision)
+
+    async def _deploy(project_slug, uat_slug):
+        raise AssertionError("a provision failure must NOT proceed to deploy")
+
+    monkeypatch.setattr(orchestrator, "_run_uat_deploy", _deploy)
+
+    await orchestrator._fast_fix_auto_deploy(db_session, state)
+
+    assert state.status == "blocked"
+    assert state.block_reason == "system_error"
+    assert "UAT provisioning zlyhal" in state.next_action and "not found" in state.next_action
+    note = _director_notes(db_session, version_id)[-1]
+    assert note.payload["uat_deploy"]["ok"] is False
+    assert note.payload["uat_deploy"]["provisioned"] is False

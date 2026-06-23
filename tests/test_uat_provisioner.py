@@ -742,3 +742,63 @@ def test_detect_sqlalchemy_pg_drivers_pep621(tmp_path):
         )
     )
     assert P.detect_sqlalchemy_pg_drivers(project) == {"pg8000"}
+
+
+def test_detect_sqlalchemy_pg_drivers_poetry_group_and_pep621_extra(tmp_path):
+    """Scope-widen (Director 2026-06-23): a pg driver declared in a Poetry GROUP, a PEP-621 optional-deps
+    EXTRA, or a PEP-735 dependency-group is detected too — else a real bare-URL + pg8000 bug would be
+    downgraded to a WARN. Both forms detect, and a bare DATABASE_URL with such a pyproject FAILs (not WARN)."""
+    _POETRY_GROUP = textwrap.dedent(
+        """
+        [tool.poetry.dependencies]
+        python = "^3.12"
+
+        [tool.poetry.group.db.dependencies]
+        pg8000 = "^1.31"
+        """
+    )
+    # (a) pg8000 declared ONLY in a Poetry 1.2+ group.
+    group_proj = tmp_path / "g"
+    group_proj.mkdir()
+    (group_proj / "pyproject.toml").write_text(_POETRY_GROUP)
+    assert P.detect_sqlalchemy_pg_drivers(group_proj) == {"pg8000"}
+
+    # (b) pg8000 declared ONLY in a PEP-621 [project.optional-dependencies] extra.
+    extra_proj = tmp_path / "e"
+    extra_proj.mkdir()
+    (extra_proj / "pyproject.toml").write_text(
+        textwrap.dedent(
+            """
+            [project]
+            name = "demo"
+            dependencies = ["fastapi"]
+            [project.optional-dependencies]
+            db = ["pg8000>=1.31; python_version >= '3.8'"]
+            """
+        )
+    )
+    assert P.detect_sqlalchemy_pg_drivers(extra_proj) == {"pg8000"}
+
+    # (c) pg8000 declared ONLY in a PEP-735 [dependency-groups] list.
+    pep735_proj = tmp_path / "p"
+    pep735_proj.mkdir()
+    (pep735_proj / "pyproject.toml").write_text(
+        textwrap.dedent(
+            """
+            [dependency-groups]
+            db = ["pg8000>=1.31"]
+            """
+        )
+    )
+    assert P.detect_sqlalchemy_pg_drivers(pep735_proj) == {"pg8000"}
+
+    # End-to-end: a bare DATABASE_URL with pg8000 in a group FAILs at provision time (not a WARN).
+    with pytest.raises(ValueError, match="pg8000"):
+        _provision(
+            tmp_path,
+            "nex-grp",
+            "grp",
+            THREE_SERVICE_COMPOSE,
+            env_example=_BARE_URL_ENV,
+            backend_pyproject=_POETRY_GROUP,
+        )

@@ -353,9 +353,15 @@ def detect_sqlalchemy_pg_drivers(project_path: Path) -> Optional[set[str]]:
     """The SQLAlchemy sync postgres driver tokens the source project DECLARES as dependencies (H1, CR-1).
 
     Reads ``<project>/backend/pyproject.toml`` first, else ``<project>/pyproject.toml`` (nex-asistent /
-    nex-studio keep it at root). Collects dependency names from BOTH ``[tool.poetry.dependencies]`` (dict
-    keys) AND ``[project].dependencies`` (PEP-621 list; the bare name is taken up to the first of
-    ``[<>=!~`` or a space), lowercases + extras-strips them, and maps via :data:`_PG_DEP_TO_DRIVER`.
+    nex-studio keep it at root). Collects dependency names from ALL of: ``[tool.poetry.dependencies]`` AND
+    every ``[tool.poetry.group.*.dependencies]`` (dict keys — Poetry 1.2+ groups); ``[project].dependencies``
+    AND every list in ``[project.optional-dependencies]`` (PEP-621 extras); AND every list in
+    ``[dependency-groups]`` (PEP-735). PEP-621/735 requirement strings are reduced to the bare name (up to the
+    first of ``[<>=!~;`` or a space). All names are lowercased + extras-stripped, then mapped via
+    :data:`_PG_DEP_TO_DRIVER`.
+
+    Scope widened per Director 2026-06-23: the original main-table-only scope would downgrade a real bare-URL
+    + pg8000 bug to a WARN whenever the driver is declared in a group/extra — a hole in the very guard.
 
     Returns the resolved set (possibly EMPTY — e.g. an asyncpg-only project with no SQLAlchemy pg driver) on
     success; returns ``None`` when NO pyproject was found / it failed to parse (→ the caller WARNs rather than
@@ -369,12 +375,27 @@ def detect_sqlalchemy_pg_drivers(project_path: Path) -> Optional[set[str]]:
         except (tomllib.TOMLDecodeError, OSError):
             return None
         names: list[str] = []
-        poetry_deps = (((data.get("tool") or {}).get("poetry") or {}).get("dependencies")) or {}
-        if isinstance(poetry_deps, dict):
-            names.extend(str(k) for k in poetry_deps)
-        pep621_deps = (data.get("project") or {}).get("dependencies") or []
-        if isinstance(pep621_deps, list):
-            names.extend(re.split(r"[\[<>=!~ ]", str(d))[0] for d in pep621_deps)
+
+        # Poetry dependency tables — names are dict KEYS (main table + every Poetry 1.2+ group).
+        poetry = (data.get("tool") or {}).get("poetry") or {}
+        poetry_tables: list[Any] = [poetry.get("dependencies")]
+        poetry_tables.extend(
+            grp.get("dependencies") for grp in (poetry.get("group") or {}).values() if isinstance(grp, dict)
+        )
+        for table in poetry_tables:
+            if isinstance(table, dict):
+                names.extend(str(k) for k in table)
+
+        # PEP-621 / PEP-735 requirement-string LISTS: main deps, every extra, every dependency-group.
+        project = data.get("project") or {}
+        req_lists: list[Any] = [project.get("dependencies")]
+        req_lists.extend((project.get("optional-dependencies") or {}).values())
+        req_lists.extend((data.get("dependency-groups") or {}).values())
+        for req_list in req_lists:
+            if isinstance(req_list, list):
+                # PEP-735 entries may be include-group tables (dicts) rather than strings — skip those.
+                names.extend(re.split(r"[\[<>=!~; ]", d)[0] for d in req_list if isinstance(d, str))
+
         drivers: set[str] = set()
         for name in names:
             norm = name.strip().lower()
