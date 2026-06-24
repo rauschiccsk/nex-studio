@@ -184,3 +184,87 @@ fixture, but NOT that the rendered/deployed `DATABASE_URL` carries the driver).
 - **PROD env-rendering coverage (follow-up).** The same bare-URL class of bug could reach a PROD deploy
   (`uat-deploy.py` PROD-retag / `onboard-customer.sh`). H3's CI gate blocks most of it pre-release; full PROD
   render-path coverage of H1's driver guard is a recorded known-uncovered follow-up.
+
+---
+
+# Round 2 — post-dogfood follow-ups (approved Director 2026-06-24)
+
+> Surfaced by the nex-manager v0.1.0 reopen: the app reached pipeline `done` WITHOUT a UAT because `uat_slug`
+> was unset at Create-Project → the release SILENTLY skipped UAT. Build order #1 → #2 → #3, then a trivial
+> cleanup (#4). **Redundancy already cut** (verified): the LAZY `uat_slug` derive at first-release is ALREADY
+> done by Phase-3 `_release_auto_uat_deploy` (orchestrator.py ~3367-3371) + the idempotent `set_uat_slug`
+> (services/project.py:276-314) — do NOT rebuild it.
+
+## CR-R2-1 (#1) — No silent "done without UAT" for a deployable app · effort M
+
+**(a) Early-visibility set at Create-Project.** In `create_project` (`backend/api/routes/projects.py`, in the
+existing try/transaction AFTER the v0.1.0 version is created, ~line 494, before the fs bootstrap): call the
+EXISTING `project_service.set_uat_slug(db, project)` (derive path), wrapped in `try/except ValueError` that LOGS
+a warning and continues (an underivable slug must not 500 the create; the Phase-3 lazy derive stays the safety
+net). So a deployable app carries its UAT target from creation. `set_uat_slug` already flushes; the route's
+existing `db.commit()` persists it.
+
+**(b) Completion guard — the real root fix.** `uat_accept` today ALWAYS sets `done`; `uat_deployed`
+(orchestrator.py ~6621 = `deploy is not None and deploy.get("ok") is True and not deploy.get("skipped")`) only
+switches the message text. Add a shared module-level helper `_project_is_deployable(db, version_id) -> bool`
+(near `_latest_uat_deploy`): resolve the project (`select(Project).join(Version,…)`), load the source compose
+via `uat_provisioner.load_source_compose(Path(project.source_path))` in `try/except → False`,
+`roles = uat_provisioner.identify_service_roles(compose["services"])`, return `roles["backend"] is not None and
+roles["db"] is not None`. **Call the guard on BOTH paths to `done`** (the critical review fix — else it is
+bypassable): in the `uat_accept` handler before `state.current_stage="done"` (~6622) AND in the generic
+`approve`→done advance (the handler that sets `done` ~6357). Guard: `if not uat_deployed and
+_project_is_deployable(db, version_id): raise OrchestratorError("Reálny UAT nebol nasadený — najprv provision +
+deploy (alebo retry). Bez živého UAT nemožno dokončiť nasaditeľný projekt.")`. **No override** (fail-loud;
+remediation = `retry_publish`/re-run that provisions+deploys). A pure-CLI/lib project (no backend+db) →
+`_project_is_deployable` False → completes normally (the existing honest "bez UAT testu" branch UNCHANGED).
+Deployability is STRUCTURAL (backend+db), NOT the `uat_slug` proxy — because after (a) every project has a
+`uat_slug`, so the proxy would over-block pure-lib projects.
+
+**Tests:** `_project_is_deployable` unit (backend+db→True; backend-only/no-db→False; no/unparseable compose→False);
+`uat_accept` blocks a deployable app with a skip/absent deploy note; `uat_accept` STILL completes a non-deployable
+(pure-lib) project; the existing `{ok:True}` happy-path accept STILL reaches done on BOTH paths (uat_accept + generic
+approve); Create-Project sets a derivable `uat_slug` + does not 500 on an underivable one. Full `pytest`.
+
+## CR-R2-2 (#2) — H2 self-heals a broken EXISTING render (not just ok:False) · effort S
+
+`_uat_render_needs_reprovision` (orchestrator.py ~772-810) keys ONLY on the latest `uat_deploy` note
+(None/skip→False). The nex-manager orphan was a render with a `skip` note but a NON-IMPORTABLE on-disk
+`DATABASE_URL` → it would be re-`up`-ed unchanged. **Add a 3rd trigger** after the note-based branches: if
+`_uat_compose_exists(uat_slug)` AND an `/opt/uat/<slug>/.env` exists, read its text and run the H1 pair —
+`detect_sqlalchemy_pg_drivers(<source project_path>)` + `validate_rendered_db_drivers(<env text>, drivers,
+project_slug=…)`; if it returns non-empty `fail_msgs` → return `True` (re-provision to self-heal the broken
+render). Reuses H1 verbatim (no new validation logic). A render that PASSES H1 (+ a working current-iteration
+deploy) is untouched (predicate stays False) — preserve-working-UAT holds. `provision_uat` keeps
+`rotate_secrets=False`.
+
+**Tests:** predicate returns True for an existing `.env` with bare `postgresql://` + a pg8000-only project (the
+orphan signature); False for an existing `.env` with `postgresql+pg8000://` (valid render, no needless
+re-provision); the existing note-based branches unchanged. Full `pytest`.
+
+## CR-R2-3 (#3, CR-4) — CI-migrate into the shared template + self-hosted `runs-on` (D-009) · effort S
+
+The CI workflow is scaffolded by NEX Studio's `create_project_postscaffold._wire_cicd_workflow(target, slug)`
+(NOT icc-claude-template). It currently `shutil.copy2`-flat-copies `templates/github-actions-workflow.yml`, whose
+`runs-on` is hardcoded `ubuntu-latest` (3 jobs: lint/test/build) — violating ICC **D-009** (all CI on self-hosted
+runners).
+- **Render, don't flat-copy:** `_wire_cicd_workflow` substitutes a `{{PROJECT_SLUG}}` token in `runs-on` →
+  `andros-ubuntu-<slug>` (the exact label registered via `--labels andros-ubuntu-<slug>`). Add `{{PROJECT_SLUG}}`
+  to the template's `runs-on` lines.
+- **Add the `migrate` job** to `templates/github-actions-workflow.yml` (port from nex-manager ci.yml): `needs:
+  build`, `runs-on: andros-ubuntu-{{PROJECT_SLUG}}`, guarded by `hashFiles('docker-compose.yml') != ''` **AND**
+  the compose actually defining a `migrate` service (e.g. `docker compose config --services | grep -qx migrate`
+  before `docker compose run --rm migrate`) — a scaffold stub may not ship one; skip cleanly, never false-red.
+- **Seed `scripts/ci_render_dotenv.py`** via a new `_seed_ci_render_helper` (clone the idempotent best-effort
+  `_seed_release_smoke_test` pattern, postscaffold ~186-208), copying the proven verbatim helper from
+  nex-manager.
+- **Scope:** forward-only (existing repos NOT retrofitted); `release-gate-workflow.yml` `runs-on` stays OUT
+  (it is a copy-paste, un-rendered deliverable — a token would ship unsubstituted).
+
+**Tests:** `test_create_project_postscaffold.py` — the rendered ci.yml has `runs-on: andros-ubuntu-<slug>` (no
+`ubuntu-latest`, no leftover `{{PROJECT_SLUG}}`); the `migrate` job is present + guarded; `ci_render_dotenv.py` is
+seeded + chmod-exec; `yaml.safe_load` parses the rendered output. Full `pytest`.
+
+## #4 — Cleanup (trivial, after #1-#3)
+
+`rm -rf /opt/uat/manager.broken-2026-06-23` (the renamed broken orphan render from the reopen; no real data —
+migrate never succeeded).
