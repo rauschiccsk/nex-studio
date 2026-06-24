@@ -765,11 +765,14 @@ def _verdict(db, version_id, verdict: str = "PASS"):
     )
 
 
-def test_prior_uat_deploy_failed_predicate(db_session) -> None:
+def test_prior_uat_deploy_failed_predicate(db_session, monkeypatch) -> None:
     """Unit the predicate across every branch: None→False, skipped→False, ok:False→True, ok:True (current
     iteration)→False, ok:True (prior iteration)→True. seq is DB-assigned (Identity), so recording order ⇒
     seq order: a verdict recorded AFTER a deploy note moves the iteration boundary PAST it (→ stale)."""
     R = orchestrator._uat_render_needs_reprovision
+    # The no-note / skipped branches fall through to the 3rd-trigger H1 disk check; with no render on disk
+    # they must stay False WITHOUT depending on /opt/uat/demo being absent — pin the compose check to False.
+    monkeypatch.setattr(orchestrator, "_uat_compose_exists", lambda slug: False)
 
     # (a) no deploy ever recorded → nothing to heal.
     v_none, _ = _seed(db_session, repo_url="https://github.com/x/y", uat_slug="demo")
@@ -975,6 +978,29 @@ def test_render_needs_reprovision_skip_note_unchanged_when_no_env_on_disk(db_ses
     assert orchestrator._uat_render_needs_reprovision(db_session, version_id) is False
 
 
+def test_render_needs_reprovision_resolves_real_source_pyproject(db_session, monkeypatch, tmp_path) -> None:
+    """3rd trigger end-to-end through the PRODUCTION source-path resolution — detect_sqlalchemy_pg_drivers is
+    NOT stubbed: a REAL backend/pyproject.toml (pg8000-only) under a tmp PROJECTS_ROOT + a bare-URL on-disk
+    render → H1 FAILs → re-provision (True). Exercises claude_agent.PROJECTS_ROOT/<slug> resolution verbatim."""
+    version_id, _ = _seed(db_session, repo_url="https://github.com/x/y", uat_slug="demo")
+    project = db_session.execute(
+        select(Project).join(Version, Version.project_id == Project.id).where(Version.id == version_id)
+    ).scalar_one()
+    # A real source project shipping pg8000-only, under a tmp PROJECTS_ROOT (backend/pyproject.toml first).
+    projects_root = tmp_path / "projects"
+    backend_dir = projects_root / project.slug / "backend"
+    backend_dir.mkdir(parents=True)
+    (backend_dir / "pyproject.toml").write_text('[tool.poetry.dependencies]\npg8000 = "^1.31"\n')
+    monkeypatch.setattr(orchestrator.claude_agent, "PROJECTS_ROOT", projects_root)
+    # A broken on-disk render (bare postgresql://) under a tmp UAT_ROOT.
+    uat_dir = tmp_path / "uat" / "demo"
+    uat_dir.mkdir(parents=True)
+    (uat_dir / ".env").write_text(_BROKEN_ENV)
+    monkeypatch.setattr(orchestrator, "UAT_ROOT", tmp_path / "uat")
+    monkeypatch.setattr(orchestrator, "_uat_compose_exists", lambda slug: True)
+    assert orchestrator._uat_render_needs_reprovision(db_session, version_id) is True
+
+
 # ---------------------------------------------------------------------------
 # CR-R2-1 (#1b): no silent "done without UAT" for a STRUCTURALLY-deployable app (backend+db). The guard is
 # applied on BOTH paths to done — uat_accept AND the generic approve→done advance.
@@ -984,9 +1010,13 @@ _DEPLOYABLE_COMPOSE = "services:\n  backend:\n    build: ./backend\n  db:\n    i
 _BACKEND_ONLY_COMPOSE = "services:\n  backend:\n    build: ./backend\n"
 
 
-def _seed_with_source(db, src_dir, *, compose, uat_slug="demo", stage="release", status="awaiting_director"):
+def _seed_with_source(
+    db, src_dir, *, compose, uat_slug="demo", flow_type="new_version", stage="release", status="awaiting_director"
+):
     """Seed a release-stage version whose project has a source_path (optionally with a docker-compose.yml)."""
-    version_id, state = _seed(db, repo_url="https://github.com/x/y", uat_slug=uat_slug, stage=stage, status=status)
+    version_id, state = _seed(
+        db, repo_url="https://github.com/x/y", uat_slug=uat_slug, flow_type=flow_type, stage=stage, status=status
+    )
     project = db.execute(
         select(Project).join(Version, Version.project_id == Project.id).where(Version.id == version_id)
     ).scalar_one()
@@ -1076,3 +1106,16 @@ async def test_generic_approve_completes_deployable_with_real_uat(db_session, mo
     out = await orchestrator.apply_action(db_session, version_id=version_id, action="approve")
     assert out.current_stage == "done"
     assert out.status == "done"
+
+
+@pytest.mark.parametrize("flow_type", ["cr", "bug"])
+@pytest.mark.asyncio
+async def test_uat_accept_completes_non_uat_flow_when_deployable(db_session, tmp_path, flow_type) -> None:
+    """CR-R2-1 (#1b) no-over-block: cr/bug releases NEVER deploy a UAT, so even a backend+db app completes
+    (the guard would be unremediable — retry_publish is new_version-only). Gated on the UAT-deploying flows."""
+    version_id, _ = _seed_with_source(
+        db_session, tmp_path / f"dep-{flow_type}", compose=_DEPLOYABLE_COMPOSE, flow_type=flow_type
+    )
+    out = await orchestrator.apply_action(db_session, version_id=version_id, action="uat_accept")
+    assert out.status == "done"
+    assert _last_completion_content(db_session, version_id) == NO_UAT_MSG

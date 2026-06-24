@@ -147,12 +147,18 @@ jobs:
           python3 scripts/ci_render_dotenv.py
           docker compose up -d db
           cid=$(docker compose ps -q db)
+          status=unknown
           for i in $(seq 1 60); do
             status=$(docker inspect -f '{{.State.Health.Status}}' "$cid" 2>/dev/null || echo unknown)
             echo "db health [$i]: $status"
             [ "$status" = healthy ] && break
             sleep 2
           done
+          if [ "$status" != healthy ]; then
+            echo "::error::db did not become healthy in time"
+            docker compose logs db
+            exit 1
+          fi
           docker compose run --rm migrate
 
       - name: Tear down

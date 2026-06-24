@@ -851,6 +851,14 @@ def _existing_render_fails_h1(db: Session, version_id: uuid.UUID) -> bool:
     return bool(fail_msgs)
 
 
+# CR-R2-1 (#1b): the flows that actually deploy a UAT (record a ``uat_deploy`` note) — full flow
+# :func:`_release_auto_uat_deploy` (``new_version``) + fast-fix :func:`_fast_fix_auto_deploy` (``fast_fix``).
+# ``cr`` / ``bug`` releases NEVER deploy a UAT, so the no-silent-done-without-UAT guard must NOT fire for them
+# — it would be unremediable (``retry_publish`` is ``new_version``-only), leaving the version impossible to
+# finish. The guard is therefore gated on this set.
+_UAT_DEPLOYING_FLOWS: frozenset[str] = frozenset({"new_version", "fast_fix"})
+
+
 def _project_is_deployable(db: Session, version_id: uuid.UUID) -> bool:
     """Whether the version's project is STRUCTURALLY deployable — its source compose ships BOTH a backend
     and a db service (CR-R2-1 #1b).
@@ -6420,11 +6428,12 @@ async def apply_action(
             fast_fix.ensure_build_task(db, version_id)
         if state.current_stage == "done":
             # CR-R2-1 (#1b): the SAME no-silent-done-without-UAT guard as uat_accept — applied here too,
-            # else a Director who `approve`s their way to done bypasses it. A structurally-deployable app
-            # (backend+db) must have a real UAT deploy recorded; a pure-CLI/lib project completes normally.
+            # else a Director who `approve`s their way to done bypasses it. Fires ONLY for UAT-deploying flows
+            # (new_version / fast_fix); a structurally-deployable app (backend+db) must then have a real UAT
+            # deploy recorded. cr/bug + pure-CLI/lib projects complete normally.
             deploy = _latest_uat_deploy(db, version_id)
             uat_deployed = deploy is not None and deploy.get("ok") is True and not deploy.get("skipped")
-            if not uat_deployed and _project_is_deployable(db, version_id):
+            if not uat_deployed and state.flow_type in _UAT_DEPLOYING_FLOWS and _project_is_deployable(db, version_id):
                 raise OrchestratorError(
                     "Reálny UAT nebol nasadený — najprv provision + deploy (alebo retry). "
                     "Bez živého UAT nemožno dokončiť nasaditeľný projekt."
@@ -6693,9 +6702,10 @@ async def apply_action(
         # the no-UAT completion now stays consistent with that honest skip.
         deploy = _latest_uat_deploy(db, version_id)
         uat_deployed = deploy is not None and deploy.get("ok") is True and not deploy.get("skipped")
-        # CR-R2-1 (#1b): never silently finish a STRUCTURALLY-deployable app (backend+db) without a real
-        # UAT deploy — fail loud (no override). A pure-CLI/lib project (not deployable) completes normally.
-        if not uat_deployed and _project_is_deployable(db, version_id):
+        # CR-R2-1 (#1b): never silently finish a STRUCTURALLY-deployable app (backend+db) without a real UAT
+        # deploy — fail loud (no override). Gated on the UAT-deploying flows (new_version / fast_fix); cr/bug
+        # never deploy a UAT and a pure-CLI/lib project (not deployable) completes normally.
+        if not uat_deployed and state.flow_type in _UAT_DEPLOYING_FLOWS and _project_is_deployable(db, version_id):
             raise OrchestratorError(
                 "Reálny UAT nebol nasadený — najprv provision + deploy (alebo retry). "
                 "Bez živého UAT nemožno dokončiť nasaditeľný projekt."
