@@ -186,7 +186,11 @@ jobs:
     name: Deploy
     runs-on: self-hosted
     needs: build
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    # DISABLED 2026-06-25 (Director): auto-deploy-on-push redeployed NEX Studio from main via the
+    # base compose on every push → reverted manual PROD v1.0.0 pins. Deploys are now CONTROLLED
+    # (manual `docker compose`, like the apps) to keep PROD v1.0.0 stable while v2.0.0 is developed.
+    # The proper tag-based prod/dev/UAT deploy is part of the v2.0.0 deploy redesign — re-enable then.
+    if: false  # was: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:
       - uses: actions/checkout@v6
 
