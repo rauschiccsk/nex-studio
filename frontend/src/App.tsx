@@ -12,9 +12,6 @@ import NewProjectPage from "./pages/NewProjectPage";
 import ProjectDetailPage from "./pages/ProjectDetailPage";
 import NewVersionPage from "./pages/NewVersionPage";
 import VersionDetailPage from "./pages/VersionDetailPage";
-import MMOverviewPage from "./pages/MMOverviewPage";
-import MMModulePage from "./pages/MMModulePage";
-import MMDepMapPage from "./pages/MMDepMapPage";
 import BacklogPage from "./pages/BacklogPage";
 import MetricsPage from "./pages/MetricsPage";
 import KnowledgeBasePage from "./pages/KnowledgeBasePage";
@@ -47,9 +44,6 @@ function App() {
             <Route path="projects/:slug" element={<ProjectDetailPage />} />
             <Route path="projects/:slug/versions/new" element={<NewVersionPage />} />
             <Route path="projects/:slug/versions/:versionId" element={<VersionDetailPage />} />
-            <Route path="projects/:slug/mm" element={<MMOverviewPage />} />
-            <Route path="projects/:slug/mm/depmap" element={<MMDepMapPage />} />
-            <Route path="projects/:slug/mm/:moduleId" element={<MMModulePage />} />
             <Route path="projects/:slug/backlog" element={<BacklogPage />} />
             <Route path="projects/:slug/metrics" element={<MetricsPage />} />
             <Route path="kb" element={<KnowledgeBasePage />} />

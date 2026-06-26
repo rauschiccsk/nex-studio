@@ -44,7 +44,6 @@ interface ProjectRowProps {
 function ProjectRow({ project, index, selected, onOpen, onTogglePin }: ProjectRowProps) {
   const color = slugColor(index);
   const initials = slugInitials(project.slug);
-  const isMulti = project.category === "multimodule";
   const port = project.backend_port ?? project.frontend_port ?? null;
 
   const rowClass = selected
@@ -65,11 +64,6 @@ function ProjectRow({ project, index, selected, onOpen, onTogglePin }: ProjectRo
           {selected && (
             <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-primary-500/20 border border-primary-500/30 text-primary-700 dark:text-primary-400 font-medium">
               Vybraný
-            </span>
-          )}
-          {isMulti && (
-            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-500/20 border border-indigo-500/30 text-indigo-700 dark:text-indigo-400 font-medium">
-              MM
             </span>
           )}
           {project.status === "archived" && (

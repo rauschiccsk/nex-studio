@@ -30,7 +30,6 @@ interface ProjectCardProps {
 function ProjectCard({ project, index, onOpen }: ProjectCardProps) {
   const color = SLUG_COLORS[index % SLUG_COLORS.length];
   const initials = slugInitials(project.slug);
-  const isMulti = project.category === "multimodule";
 
   return (
     <div className="rounded-xl border border-[var(--color-border-default)] bg-[var(--color-canvas)] p-4 hover:border-[var(--color-border-default)] transition-colors">
@@ -38,11 +37,6 @@ function ProjectCard({ project, index, onOpen }: ProjectCardProps) {
         <div>
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold text-[var(--color-text-primary)]">{project.name}</span>
-            {isMulti && (
-              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-500/20 border border-indigo-500/30 text-indigo-700 dark:text-indigo-400 font-medium">
-                MM
-              </span>
-            )}
           </div>
           <div className="text-xs text-[var(--color-text-muted)] font-mono mt-0.5">
             {project.repo_url || project.slug}

@@ -15,10 +15,8 @@ export * from "./common";
 export * from "./user";
 export * from "./userSession";
 
-// Projects and modules.
+// Projects.
 export * from "./project";
-export * from "./projectModule";
-export * from "./moduleDependency";
 
 // Knowledge base.
 export * from "./kbDocument";

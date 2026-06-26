@@ -196,8 +196,6 @@ export default function ProjectDetailPage() {
     );
   }
 
-  const isMulti = project.category === "multimodule";
-
   return (
     <div className="p-6 max-w-5xl mx-auto">
       {/* "Just created" banner — visible for 8s right after POST /projects. */}
@@ -264,11 +262,6 @@ export default function ProjectDetailPage() {
         </button>
         <div className="flex items-center gap-2">
           <h1 className="text-lg font-bold text-[var(--color-text-primary)]">{project.name}</h1>
-          {isMulti && (
-            <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/20 border border-indigo-500/30 text-[var(--color-accent-primary)] font-medium">
-              Multi-Module
-            </span>
-          )}
           <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
             project.status === "active"
               ? "bg-[var(--color-state-success-bg)] border border-[var(--color-state-success-bg)] text-[var(--color-state-success-fg)]"
@@ -324,22 +317,6 @@ export default function ProjectDetailPage() {
           )}
         </div>
       </div>
-
-      {/* Multi-Module shortcut */}
-      {isMulti && (
-        <div className="rounded-xl border border-indigo-500/30 bg-indigo-500/5 p-4 mb-6 flex items-center justify-between">
-          <div>
-            <div className="text-sm font-semibold text-[var(--color-text-primary)] mb-0.5">Multi-Module projekt</div>
-            <div className="text-xs text-[var(--color-text-muted)]">Spravuj moduly, závislosti a pipeline pre každý modul.</div>
-          </div>
-          <button
-            onClick={() => navigate(`/projects/${slug}/mm`)}
-            className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors shrink-0"
-          >
-            Modul prehľad →
-          </button>
-        </div>
-      )}
 
       {/* Versions */}
       <div>
