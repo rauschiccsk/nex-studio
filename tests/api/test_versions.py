@@ -67,7 +67,8 @@ def _make_project(db_session, *, owner: User) -> Project:
     project = Project(
         name=f"Project {suffix}",
         slug=f"project-{suffix}",
-        category="multimodule",
+        type="standard",
+        auth_mode="password",
         description="Test project description",
         created_by=owner.id,
     )

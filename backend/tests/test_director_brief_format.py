@@ -56,7 +56,8 @@ def _seed_version(db) -> uuid.UUID:
     project = Project(
         name="Director Brief Fixture",
         slug=f"director-brief-{uuid.uuid4().hex[:8]}",
-        category="multimodule",
+        type="standard",
+        auth_mode="password",
         description="CR-2 director-brief test fixture.",
         created_by=creator.id,
     )

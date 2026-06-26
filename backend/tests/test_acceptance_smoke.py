@@ -553,7 +553,8 @@ def _seed_version(db, stage: str) -> uuid.UUID:
     project = Project(
         name=f"Smoke Fixture {suffix}",
         slug=f"smoke-{suffix}",
-        category="multimodule",
+        type="standard",
+        auth_mode="password",
         description="gate-g-hardening GAP 1 smoke test fixture.",
         created_by=creator.id,
     )

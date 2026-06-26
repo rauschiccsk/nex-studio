@@ -14,13 +14,11 @@ session provided by ``tests/conftest.py``. Verifies:
   transitioning ``status → in_progress`` promotes the linked version
   from ``planned`` to ``active`` (idempotent for versions already in
   ``active`` / ``released``).
-* Update allow-list — only ``module_id``, ``title`` and ``status`` are
+* Update allow-list — only ``title`` and ``status`` are
   applied; ``project_id``, ``number``, ``id`` and ``created_at`` are
   preserved.
 * PATCH semantics — omitted fields stay untouched.
-* ``module_id`` is nullable at create (project-level epic) and
-  re-scopable at update.
-* List filters (``project_id``, ``module_id``, ``status``) and
+* List filters (``project_id``, ``status``) and
   pagination.
 * List ordering is ``number ASC``.
 * ``delete`` removes the row; the inbound FK
@@ -38,7 +36,7 @@ import pytest
 from sqlalchemy import select as sa_select
 
 from backend.db.models.foundation import User
-from backend.db.models.projects import Project, ProjectModule
+from backend.db.models.projects import Project
 from backend.db.models.tasks import Epic, Feat
 from backend.db.models.versions import Version
 from backend.schemas.epic import EpicCreate, EpicUpdate
@@ -68,7 +66,8 @@ def _make_project(db_session, *, user: User | None = None, **overrides) -> Proje
     defaults = {
         "name": f"Project {suffix}",
         "slug": f"project-{suffix}",
-        "category": "multimodule",
+        "type": "standard",
+        "auth_mode": "password",
         "description": "Test project description",
         "created_by": user.id,
     }
@@ -77,24 +76,6 @@ def _make_project(db_session, *, user: User | None = None, **overrides) -> Proje
     db_session.add(project)
     db_session.flush()
     return project
-
-
-def _make_module(db_session, *, project: Project | None = None, **overrides) -> ProjectModule:
-    """Create a ProjectModule for FK references."""
-    if project is None:
-        project = _make_project(db_session)
-    suffix = uuid.uuid4().hex[:4]
-    defaults = {
-        "project_id": project.id,
-        "code": f"m{suffix}",
-        "name": f"Module {suffix}",
-        "category": "Systém",
-    }
-    defaults.update(overrides)
-    module = ProjectModule(**defaults)
-    db_session.add(module)
-    db_session.flush()
-    return module
 
 
 def _make_version(
@@ -168,7 +149,6 @@ class TestEpicService:
         assert created.created_at is not None
         assert created.updated_at is not None
         assert created.project_id == project.id
-        assert created.module_id is None
         assert created.version_id == version.id
         assert created.title == "First epic"
         # Schema-level default.
@@ -188,19 +168,6 @@ class TestEpicService:
 
         with pytest.raises(ValueError, match="version_id required for new epics"):
             service.create(db_session, _payload(project.id))
-
-    def test_create_with_module(self, db_session):
-        """``create`` accepts a ``module_id`` to scope the epic to a module."""
-        project = _make_project(db_session)
-        version = _make_version(db_session, project=project)
-        module = _make_module(db_session, project=project)
-
-        created = service.create(
-            db_session,
-            _payload(project.id, version_id=version.id, module_id=module.id),
-        )
-
-        assert created.module_id == module.id
 
     def test_create_with_custom_status(self, db_session):
         """``create`` applies a non-default ``status`` when supplied."""
@@ -276,33 +243,15 @@ class TestEpicService:
         assert updated.title == "New title"
         assert updated.status == "in_progress"
 
-    def test_update_module_id(self, db_session):
-        """``module_id`` is mutable — an epic can be re-scoped to a module."""
-        project = _make_project(db_session)
-        version = _make_version(db_session, project=project)
-        module = _make_module(db_session, project=project)
-        created = service.create(db_session, _payload(project.id, version_id=version.id))
-        assert created.module_id is None
-
-        updated = service.update(
-            db_session,
-            created.id,
-            EpicUpdate(module_id=module.id),
-        )
-
-        assert updated.module_id == module.id
-
     def test_update_partial_only_status(self, db_session):
         """``update`` leaves omitted fields untouched (PATCH semantics)."""
         project = _make_project(db_session)
         version = _make_version(db_session, project=project)
-        module = _make_module(db_session, project=project)
         created = service.create(
             db_session,
             _payload(
                 project.id,
                 version_id=version.id,
-                module_id=module.id,
                 title="Original title",
             ),
         )
@@ -316,7 +265,6 @@ class TestEpicService:
         assert updated.status == "done"
         # Unchanged fields preserved.
         assert updated.title == "Original title"
-        assert updated.module_id == module.id
 
     def test_update_preserves_immutable_fields(self, db_session):
         """``id``, ``project_id``, ``number`` and ``created_at`` must not change across ``update``."""
@@ -358,7 +306,6 @@ class TestEpicService:
 
         assert updated.title == "Keep me"
         assert updated.status == "in_progress"
-        assert updated.module_id is None
 
     def test_update_missing_raises(self, db_session):
         """``update`` on a non-existent id raises ``ValueError``."""
@@ -521,23 +468,6 @@ class TestEpicService:
         assert all(r.project_id == p1.id for r in rows)
         assert any(r.id == mine.id for r in rows)
 
-    def test_list_filter_by_module(self, db_session):
-        """``module_id`` filter returns only epics scoped to that module."""
-        project = _make_project(db_session)
-        version = _make_version(db_session, project=project)
-        module = _make_module(db_session, project=project)
-        module_epic = service.create(
-            db_session,
-            _payload(project.id, version_id=version.id, module_id=module.id),
-        )
-        project_level_epic = service.create(db_session, _payload(project.id, version_id=version.id))
-
-        rows = service.list_epics(db_session, module_id=module.id)
-        row_ids = {r.id for r in rows}
-        assert module_epic.id in row_ids
-        # Project-level epic has module_id IS NULL — excluded by the filter.
-        assert project_level_epic.id not in row_ids
-
     def test_list_filter_by_status(self, db_session):
         """``status`` filter returns only matching epics."""
         project = _make_project(db_session)
@@ -559,26 +489,22 @@ class TestEpicService:
         p2 = _make_project(db_session)
         v1 = _make_version(db_session, project=p1)
         v2 = _make_version(db_session, project=p2)
-        module = _make_module(db_session, project=p1)
 
         match = service.create(
             db_session,
-            _payload(p1.id, version_id=v1.id, module_id=module.id, status="in_progress"),
+            _payload(p1.id, version_id=v1.id, status="in_progress"),
         )
         # Different project.
         service.create(db_session, _payload(p2.id, version_id=v2.id, status="in_progress"))
         # Different status.
         service.create(
             db_session,
-            _payload(p1.id, version_id=v1.id, module_id=module.id, status="planned"),
+            _payload(p1.id, version_id=v1.id, status="planned"),
         )
-        # Project-level (module_id IS NULL).
-        service.create(db_session, _payload(p1.id, version_id=v1.id, status="in_progress"))
 
         rows = service.list_epics(
             db_session,
             project_id=p1.id,
-            module_id=module.id,
             status="in_progress",
         )
         assert len(rows) == 1

@@ -274,7 +274,6 @@ class TestEpicVersionId:
         orm = SimpleNamespace(
             id=uuid.uuid4(),
             project_id=uuid.uuid4(),
-            module_id=None,
             version_id=version_id,
             number=1,
             title="Epic title",

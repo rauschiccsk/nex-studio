@@ -32,7 +32,8 @@ def _make_project(db_session, *, user: User | None = None, **overrides) -> Proje
     defaults = {
         "name": f"Project {uuid.uuid4().hex[:8]}",
         "slug": f"project-{uuid.uuid4().hex[:8]}",
-        "category": "singlemodule",
+        "type": "standard",
+        "auth_mode": "password",
         "description": "Test project description",
         "created_by": user.id,
     }
@@ -97,21 +98,37 @@ class TestProjectModel:
             db_session.flush()
         db_session.rollback()
 
-    def test_category_check_constraint(self, db_session):
-        """Invalid category value must be rejected."""
-        project = _make_project(db_session, category="invalid")
+    def test_type_check_constraint(self, db_session):
+        """Invalid type value must be rejected."""
+        project = _make_project(db_session, type="invalid")
         db_session.add(project)
         with pytest.raises((IntegrityError, ProgrammingError)):
             db_session.flush()
         db_session.rollback()
 
-    @pytest.mark.parametrize("category", ["singlemodule", "multimodule"])
-    def test_valid_categories(self, db_session, category):
-        """All valid category values must be accepted."""
-        project = _make_project(db_session, category=category)
+    @pytest.mark.parametrize("type_value", ["standard", "web"])
+    def test_valid_types(self, db_session, type_value):
+        """All valid type values must be accepted."""
+        project = _make_project(db_session, type=type_value)
         db_session.add(project)
         db_session.flush()
-        assert project.category == category
+        assert project.type == type_value
+
+    def test_auth_mode_check_constraint(self, db_session):
+        """Invalid auth_mode value must be rejected."""
+        project = _make_project(db_session, auth_mode="invalid")
+        db_session.add(project)
+        with pytest.raises((IntegrityError, ProgrammingError)):
+            db_session.flush()
+        db_session.rollback()
+
+    @pytest.mark.parametrize("auth_mode", ["password", "token"])
+    def test_valid_auth_modes(self, db_session, auth_mode):
+        """All valid auth_mode values must be accepted."""
+        project = _make_project(db_session, auth_mode=auth_mode)
+        db_session.add(project)
+        db_session.flush()
+        assert project.auth_mode == auth_mode
 
     def test_status_check_constraint(self, db_session):
         """Invalid status value must be rejected."""
@@ -171,9 +188,17 @@ class TestProjectModel:
             db_session.flush()
         db_session.rollback()
 
-    def test_category_not_nullable(self, db_session):
-        """category=NULL must be rejected."""
-        project = _make_project(db_session, category=None)
+    def test_type_not_nullable(self, db_session):
+        """type=NULL must be rejected."""
+        project = _make_project(db_session, type=None)
+        db_session.add(project)
+        with pytest.raises((IntegrityError, ProgrammingError)):
+            db_session.flush()
+        db_session.rollback()
+
+    def test_auth_mode_not_nullable(self, db_session):
+        """auth_mode=NULL must be rejected."""
+        project = _make_project(db_session, auth_mode=None)
         db_session.add(project)
         with pytest.raises((IntegrityError, ProgrammingError)):
             db_session.flush()

@@ -7,7 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError, ProgrammingError
 
 from backend.db.models.foundation import User
-from backend.db.models.projects import Project, ProjectModule
+from backend.db.models.projects import Project
 from backend.db.models.tasks import Epic
 
 
@@ -31,7 +31,8 @@ def _make_project(db_session, *, user: User | None = None, **overrides) -> Proje
     defaults = {
         "name": f"Project {uuid.uuid4().hex[:8]}",
         "slug": f"project-{uuid.uuid4().hex[:8]}",
-        "category": "singlemodule",
+        "type": "standard",
+        "auth_mode": "password",
         "description": "Test project",
         "created_by": user.id,
     }
@@ -40,20 +41,6 @@ def _make_project(db_session, *, user: User | None = None, **overrides) -> Proje
     db_session.add(project)
     db_session.flush()
     return project
-
-
-def _make_module(db_session, project: Project, **overrides) -> ProjectModule:
-    defaults = {
-        "project_id": project.id,
-        "code": f"m{uuid.uuid4().hex[:4]}",
-        "name": f"Module {uuid.uuid4().hex[:6]}",
-        "category": "Katalógy",
-    }
-    defaults.update(overrides)
-    module = ProjectModule(**defaults)
-    db_session.add(module)
-    db_session.flush()
-    return module
 
 
 def _make_epic(db_session, *, project: Project | None = None, **overrides) -> Epic:
@@ -89,22 +76,6 @@ class TestEpicModel:
 
         db_session.expire(epic)
         assert epic.status == "planned"
-
-    def test_module_id_nullable(self, db_session):
-        """module_id can be NULL."""
-        epic = _make_epic(db_session, module_id=None)
-        db_session.add(epic)
-        db_session.flush()
-        assert epic.module_id is None
-
-    def test_module_id_valid_fk(self, db_session):
-        """module_id can reference a project_module."""
-        project = _make_project(db_session)
-        module = _make_module(db_session, project)
-        epic = _make_epic(db_session, project=project, module_id=module.id)
-        db_session.add(epic)
-        db_session.flush()
-        assert epic.module_id == module.id
 
     def test_unique_project_number(self, db_session):
         """Duplicate (project_id, number) must be rejected."""
@@ -193,27 +164,6 @@ class TestEpicModel:
 
         result = db_session.execute(
             text("SELECT id FROM epics WHERE id = :id"),
-            {"id": str(epic.id)},
-        )
-        assert result.scalar() is None
-
-    def test_module_set_null_on_delete(self, db_session):
-        """Deleting a module sets epic.module_id to NULL."""
-        project = _make_project(db_session)
-        module = _make_module(db_session, project)
-        epic = _make_epic(db_session, project=project, module_id=module.id)
-        db_session.add(epic)
-        db_session.flush()
-
-        db_session.execute(
-            text("DELETE FROM project_modules WHERE id = :id"),
-            {"id": str(module.id)},
-        )
-        db_session.flush()
-
-        db_session.expire(epic)
-        result = db_session.execute(
-            text("SELECT module_id FROM epics WHERE id = :id"),
             {"id": str(epic.id)},
         )
         assert result.scalar() is None

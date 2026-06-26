@@ -41,7 +41,8 @@ def _make_project(db_session, *, user: User, owner: User | None = None, **overri
     defaults = {
         "name": f"Project {uuid.uuid4().hex[:8]}",
         "slug": f"project-{uuid.uuid4().hex[:8]}",
-        "category": "singlemodule",
+        "type": "standard",
+        "auth_mode": "password",
         "description": "Test project",
         "created_by": user.id,
         "owner_id": owner.id if owner is not None else None,
@@ -118,7 +119,8 @@ def test_project_service_create_persists_owner_id(db_session, monkeypatch):
     data = ProjectCreate(
         name=f"P {uuid.uuid4().hex[:6]}",
         slug=f"p-{uuid.uuid4().hex[:6]}",
-        category="singlemodule",
+        type="standard",
+        auth_mode="password",
         description="d",
         created_by=creator.id,
         owner_id=owner.id,
@@ -139,7 +141,8 @@ def test_project_service_create_defaults_owner_to_creator(db_session, monkeypatc
     data = ProjectCreate(
         name=f"P {uuid.uuid4().hex[:6]}",
         slug=f"p-{uuid.uuid4().hex[:6]}",
-        category="singlemodule",
+        type="standard",
+        auth_mode="password",
         description="d",
         created_by=creator.id,
         # owner_id intentionally omitted

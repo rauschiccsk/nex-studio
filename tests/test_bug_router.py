@@ -118,7 +118,8 @@ def project(db_session, reporter) -> Project:
     proj = Project(
         slug=f"proj-{uuid.uuid4().hex[:8]}",
         name=f"Project {uuid.uuid4().hex[:8]}",
-        category="singlemodule",
+        type="standard",
+        auth_mode="password",
         description="Test project description",
         created_by=reporter.id,
     )
@@ -310,14 +311,16 @@ class TestBugRouter:
         p1 = Project(
             slug=f"p1-{uuid.uuid4().hex[:8]}",
             name=f"P1 {uuid.uuid4().hex[:8]}",
-            category="singlemodule",
+            type="standard",
+            auth_mode="password",
             description="P1",
             created_by=reporter.id,
         )
         p2 = Project(
             slug=f"p2-{uuid.uuid4().hex[:8]}",
             name=f"P2 {uuid.uuid4().hex[:8]}",
-            category="singlemodule",
+            type="standard",
+            auth_mode="password",
             description="P2",
             created_by=reporter.id,
         )

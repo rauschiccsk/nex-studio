@@ -36,7 +36,8 @@ def _make_project(db_session, *, user: User | None = None, **overrides) -> Proje
     defaults = {
         "name": f"Project {uuid.uuid4().hex[:8]}",
         "slug": f"project-{uuid.uuid4().hex[:8]}",
-        "category": "singlemodule",
+        "type": "standard",
+        "auth_mode": "password",
         "description": "Test project description",
         "created_by": user.id,
     }

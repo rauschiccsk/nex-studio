@@ -242,7 +242,8 @@ class TestUserService:
         project = Project(
             name=f"P-{uuid.uuid4().hex[:6]}",
             slug=f"p-{uuid.uuid4().hex[:6]}",
-            category="singlemodule",
+            type="standard",
+            auth_mode="password",
             description="",
             created_by=owner.id,
         )
@@ -258,7 +259,8 @@ class TestUserService:
         project = Project(
             name=f"P-{uuid.uuid4().hex[:6]}",
             slug=f"p-{uuid.uuid4().hex[:6]}",
-            category="singlemodule",
+            type="standard",
+            auth_mode="password",
             description="",
             created_by=owner.id,
         )

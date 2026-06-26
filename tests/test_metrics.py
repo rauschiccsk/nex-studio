@@ -47,7 +47,8 @@ def _make_project(db_session, owner):
     project = Project(
         name=f"P {uuid.uuid4().hex[:8]}",
         slug=f"p-{uuid.uuid4().hex[:8]}",
-        category="singlemodule",
+        type="standard",
+        auth_mode="password",
         description="d",
         created_by=owner.id,
     )

@@ -46,7 +46,8 @@ def _seed_released_version(db, version_number: str, release_date: date) -> None:
     project = Project(
         name=f"RN Fixture {uuid.uuid4().hex[:6]}",
         slug=f"rn-{uuid.uuid4().hex[:8]}",
-        category="multimodule",
+        type="standard",
+        auth_mode="password",
         description="release-notes fixture",
         created_by=creator.id,
     )

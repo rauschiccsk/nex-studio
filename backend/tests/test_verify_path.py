@@ -52,7 +52,8 @@ def _seed_version(db) -> uuid.UUID:
     project = Project(
         name="Verify Path Fixture",
         slug=f"verify-path-{uuid.uuid4().hex[:8]}",
-        category="multimodule",
+        type="standard",
+        auth_mode="password",
         description="v0.7.2 verify-path test fixture.",
         created_by=creator.id,
     )

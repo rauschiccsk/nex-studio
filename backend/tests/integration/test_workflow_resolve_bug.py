@@ -240,7 +240,8 @@ def nex_horizont(db_session, zoltan, tibor, dominik, nazar) -> Project:
     project = Project(
         name="NEX Horizont",
         slug="nex-horizont",
-        category="multimodule",
+        type="standard",
+        auth_mode="password",
         description="Enterprise ERP successor to NEX Command.",
         created_by=zoltan.id,
     )

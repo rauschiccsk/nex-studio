@@ -13,10 +13,10 @@ Covers:
 * Create / get / list / patch / delete happy paths.
 * ``PaginatedResponse`` envelope (items / total / skip / limit).
 * Pagination via ``skip`` and ``limit``.
-* Filter by ``status``, ``category`` and ``created_by``.
+* Filter by ``status``, ``type`` and ``created_by``.
 * 404 on missing id (get, patch, delete).
 * 409 on duplicate ``name`` / ``slug``.
-* 422 on schema validation failure (e.g. invalid category or status,
+* 422 on schema validation failure (e.g. invalid type or status,
   limit > 100).
 """
 
@@ -132,7 +132,8 @@ def _payload(creator_id, **overrides) -> dict:
     body = {
         "name": f"Project {suffix}",
         "slug": f"project-{suffix}",
-        "category": "singlemodule",
+        "type": "standard",
+        "auth_mode": "password",
         "description": "Test project description",
         "created_by": str(creator_id),
     }
@@ -148,14 +149,16 @@ class TestProjectRouter:
             creator.id,
             name="Alpha",
             slug="alpha",
-            category="multimodule",
+            type="web",
+            auth_mode="token",
         )
         resp = router_client.post("/api/v1/projects", json=payload)
         assert resp.status_code == 201, resp.text
         body = resp.json()
         assert body["name"] == "Alpha"
         assert body["slug"] == "alpha"
-        assert body["category"] == "multimodule"
+        assert body["type"] == "web"
+        assert body["auth_mode"] == "token"
         assert body["status"] == "active"
         assert body["guardian_enabled"] is False
         assert body["created_by"] == str(creator.id)
@@ -202,8 +205,13 @@ class TestProjectRouter:
         resp = router_client.post("/api/v1/projects", json=dup)
         assert resp.status_code == 409
 
-    def test_create_invalid_category_returns_422(self, router_client, creator):
-        payload = _payload(creator.id, category="bogus")
+    def test_create_invalid_type_returns_422(self, router_client, creator):
+        payload = _payload(creator.id, type="bogus")
+        resp = router_client.post("/api/v1/projects", json=payload)
+        assert resp.status_code == 422
+
+    def test_create_invalid_auth_mode_returns_422(self, router_client, creator):
+        payload = _payload(creator.id, auth_mode="bogus")
         resp = router_client.post("/api/v1/projects", json=payload)
         assert resp.status_code == 422
 
@@ -265,24 +273,24 @@ class TestProjectRouter:
         assert body["total"] >= 1
         assert all(item["status"] == "archived" for item in body["items"])
 
-    def test_list_filter_by_category(self, router_client, creator):
+    def test_list_filter_by_type(self, router_client, creator):
         router_client.post(
             "/api/v1/projects",
-            json=_payload(creator.id, category="singlemodule"),
+            json=_payload(creator.id, type="standard"),
         ).raise_for_status()
         router_client.post(
             "/api/v1/projects",
-            json=_payload(creator.id, category="multimodule"),
+            json=_payload(creator.id, type="web"),
         ).raise_for_status()
 
         resp = router_client.get(
             "/api/v1/projects",
-            params={"category": "multimodule"},
+            params={"type": "web"},
         )
         assert resp.status_code == 200
         body = resp.json()
         assert body["total"] >= 1
-        assert all(item["category"] == "multimodule" for item in body["items"])
+        assert all(item["type"] == "web" for item in body["items"])
 
     def test_list_filter_by_created_by(self, router_client, creator, db_session):
         other = User(
@@ -337,7 +345,8 @@ class TestProjectRouter:
         # Fields omitted from the PATCH payload are untouched.
         assert body["name"] == created["name"]
         assert body["slug"] == created["slug"]
-        assert body["category"] == created["category"]
+        assert body["type"] == created["type"]
+        assert body["auth_mode"] == created["auth_mode"]
         assert body["guardian_enabled"] is False
         # Immutable fields unchanged.
         assert body["id"] == created["id"]

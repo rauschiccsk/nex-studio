@@ -7,9 +7,9 @@ session provided by ``tests/conftest.py``. Verifies:
 * ``ValueError`` on duplicate ``name`` / ``slug`` during create and on
   duplicate ``name`` during update (unique-constraint guard).
 * ``ValueError`` on missing ``id`` for get / update / delete.
-* Immutable fields (``id``, ``slug``, ``category``, ``created_by``,
-  ``created_at``) stay unchanged on update.
-* List filters (``status``, ``category``, ``created_by``) and pagination.
+* Immutable fields (``id``, ``slug``, ``type``, ``auth_mode``,
+  ``created_by``, ``created_at``) stay unchanged on update.
+* List filters (``status``, ``type``, ``created_by``) and pagination.
 * ``list_projects`` returns **all** projects — no member-based filtering
   (``get_projects_for_user`` removed along with the ``ProjectMember``
   model).
@@ -56,7 +56,8 @@ def _payload(created_by, **overrides) -> ProjectCreate:
     defaults = {
         "name": f"Project {suffix}",
         "slug": f"project-{suffix}",
-        "category": "singlemodule",
+        "type": "standard",
+        "auth_mode": "password",
         "description": "A project created for tests.",
         "created_by": created_by,
     }
@@ -80,7 +81,8 @@ class TestProjectService:
         assert created.updated_at is not None
         assert created.name == "Alpha"
         assert created.slug == "alpha"
-        assert created.category == "singlemodule"
+        assert created.type == "standard"
+        assert created.auth_mode == "password"
         assert created.status == "active"
         assert created.guardian_enabled is False
         assert created.created_by == user.id
@@ -106,14 +108,16 @@ class TestProjectService:
         payload = ProjectCreate(
             name=f"Defaulted-{suffix}",
             slug=f"defaulted-{suffix}",
-            category="multimodule",
+            type="web",
+            auth_mode="token",
             description="no overrides",
             created_by=user.id,
         )
         created = service.create(db_session, payload)
         assert created.status == "active"
         assert created.guardian_enabled is False
-        assert created.category == "multimodule"
+        assert created.type == "web"
+        assert created.auth_mode == "token"
 
     def test_create_source_and_kb_path_default_to_convention(self, db_session):
         """NULL source_path / kb_path in payload → filled from slug convention."""
@@ -121,7 +125,8 @@ class TestProjectService:
         payload = ProjectCreate(
             name="Conv Name",
             slug="conv-name",
-            category="singlemodule",
+            type="standard",
+            auth_mode="password",
             description="x",
             created_by=user.id,
         )
@@ -137,7 +142,8 @@ class TestProjectService:
         payload = ProjectCreate(
             name="Explicit Paths",
             slug="explicit-paths",
-            category="singlemodule",
+            type="standard",
+            auth_mode="password",
             description="x",
             source_path="/custom/checkout",
             kb_path="/custom/kb/home",
@@ -170,7 +176,8 @@ class TestProjectService:
         )
         original_id = created.id
         original_slug = created.slug
-        original_category = created.category
+        original_type = created.type
+        original_auth_mode = created.auth_mode
         original_created_by = created.created_by
         original_created_at = created.created_at
 
@@ -203,7 +210,8 @@ class TestProjectService:
         # Immutable fields unchanged.
         assert updated.id == original_id
         assert updated.slug == original_slug
-        assert updated.category == original_category
+        assert updated.type == original_type
+        assert updated.auth_mode == original_auth_mode
         assert updated.created_by == original_created_by
         assert updated.created_at == original_created_at
 
@@ -261,12 +269,13 @@ class TestProjectService:
         user = _make_user(db_session)
         created = service.create(db_session, _payload(user.id))
         original_slug = created.slug
-        original_category = created.category
+        original_type = created.type
+        original_auth_mode = created.auth_mode
 
-        # ``ProjectUpdate`` has no ``slug`` / ``category`` fields, so these
-        # cannot actually be passed through the typed schema. The defensive
-        # ``allowed_fields`` guard in ``update`` still protects against any
-        # bypass — verify by bypassing the schema via a dict with
+        # ``ProjectUpdate`` has no ``slug`` / ``type`` / ``auth_mode`` fields,
+        # so these cannot actually be passed through the typed schema. The
+        # defensive ``allowed_fields`` guard in ``update`` still protects
+        # against any bypass — verify by bypassing the schema via a dict with
         # ``model_construct``-style overrides.
         patched = ProjectUpdate(description="just a desc change")
         # Simulate leakage by directly mutating the dumped dict that the
@@ -275,7 +284,8 @@ class TestProjectService:
         updated = service.update(db_session, created.id, patched)
         assert updated.description == "just a desc change"
         assert updated.slug == original_slug
-        assert updated.category == original_category
+        assert updated.type == original_type
+        assert updated.auth_mode == original_auth_mode
 
     # ---------------------------------------------------------------- delete
     def test_delete(self, db_session):
@@ -312,15 +322,15 @@ class TestProjectService:
         assert all(p.status == "archived" for p in archived_rows)
         assert any(p.id == archived.id for p in archived_rows)
 
-    def test_list_filter_by_category(self, db_session):
-        """``list_projects(category=...)`` returns only matching projects."""
+    def test_list_filter_by_type(self, db_session):
+        """``list_projects(type=...)`` returns only matching projects."""
         user = _make_user(db_session)
-        service.create(db_session, _payload(user.id, category="singlemodule"))
-        multi = service.create(db_session, _payload(user.id, category="multimodule"))
+        service.create(db_session, _payload(user.id, type="standard"))
+        web = service.create(db_session, _payload(user.id, type="web"))
 
-        multi_rows = service.list_projects(db_session, category="multimodule")
-        assert all(p.category == "multimodule" for p in multi_rows)
-        assert any(p.id == multi.id for p in multi_rows)
+        web_rows = service.list_projects(db_session, type="web")
+        assert all(p.type == "web" for p in web_rows)
+        assert any(p.id == web.id for p in web_rows)
 
     def test_list_filter_by_created_by(self, db_session):
         """``list_projects(created_by=...)`` returns only projects owned by that user."""

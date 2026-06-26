@@ -49,7 +49,8 @@ def _make_version(db_session):
     project = Project(
         name=f"P {uuid.uuid4().hex[:8]}",
         slug=f"p-{uuid.uuid4().hex[:8]}",
-        category="singlemodule",
+        type="standard",
+        auth_mode="password",
         description="d",
         created_by=user.id,
     )
@@ -304,7 +305,8 @@ def _make_version_with_owner_config(db_session, configs):
     project = Project(
         name=f"P {uuid.uuid4().hex[:8]}",
         slug=f"p-{uuid.uuid4().hex[:8]}",
-        category="singlemodule",
+        type="standard",
+        auth_mode="password",
         description="d",
         created_by=owner.id,
         owner_id=owner.id,
@@ -4537,7 +4539,7 @@ async def test_return_at_task_plan_blocked_also_keeps_session(db_session, fake_c
     db_session.flush()
 
     state = await orchestrator.apply_action(
-        db_session, version_id=version.id, action="return", payload={"comment": "oprav module_id a doplň testy"}
+        db_session, version_id=version.id, action="return", payload={"comment": "oprav validáciu a doplň testy"}
     )
 
     assert state.status == "agent_working"  # return re-dispatches from blocked too

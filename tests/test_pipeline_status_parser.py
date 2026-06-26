@@ -250,10 +250,8 @@ def test_gate_e_coverage_complete_block_parses():
 # ── task_plan plan parse↔write parity (CR-NS-020 / CR-NS-022 §1) ─────────────────
 
 
-def _task_plan_block(module_id=None) -> str:
+def _task_plan_block() -> str:
     epic = {"title": "E1", "feats": [{"title": "F1", "tasks": [{"title": "T1", "task_type": "backend"}]}]}
-    if module_id is not None:
-        epic["module_id"] = module_id
     return _block(
         stage="task_plan",
         kind="gate_report",
@@ -263,23 +261,12 @@ def _task_plan_block(module_id=None) -> str:
     )
 
 
-def test_task_plan_rejects_non_uuid_module_id():
-    # CR-NS-022 §1: a stray module label ("backend") must fail at PARSE with a clear UUID error,
-    # never a cryptic write→blocked (EpicCreate.module_id is Optional[UUID]).
-    res = parse_status_block(_task_plan_block(module_id="backend"))
-    assert isinstance(res, ParseFailure)
-
-
-def test_task_plan_accepts_valid_uuid_module_id():
-    res = parse_status_block(_task_plan_block(module_id="11111111-1111-1111-1111-111111111111"))
+def test_task_plan_parses_project_level_epic():
+    # v2 (CR-V2-001..005): epics are always project-level (multi-module removed). A plain epic
+    # (no module scoping) parses into a valid PipelineStatusBlock.
+    res = parse_status_block(_task_plan_block())
     assert isinstance(res, PipelineStatusBlock)
-    assert str(res.plan.epics[0].module_id) == "11111111-1111-1111-1111-111111111111"
-
-
-def test_task_plan_accepts_omitted_module_id():
-    res = parse_status_block(_task_plan_block(module_id=None))
-    assert isinstance(res, PipelineStatusBlock)
-    assert res.plan.epics[0].module_id is None
+    assert res.plan.epics[0].title == "E1"
 
 
 def _coordinator_block(directive) -> str:
@@ -348,7 +335,6 @@ def test_parse_task_plan_skeleton_accepts_feats_without_tasks():
         "epics": [
             {
                 "title": "Foundation",
-                "module_id": "11111111-1111-1111-1111-111111111111",
                 "feats": [{"title": "Schema", "description": "tables", "estimated_minutes": 120}],
             }
         ],
@@ -358,16 +344,12 @@ def test_parse_task_plan_skeleton_accepts_feats_without_tasks():
     assert isinstance(res, TaskPlanSkeleton)
     assert res.epics[0].feats[0].title == "Schema"
     assert res.cross_cutting_rules.startswith("## Invarianty")
-    assert str(res.epics[0].module_id) == "11111111-1111-1111-1111-111111111111"
 
 
 def test_parse_task_plan_skeleton_rejects_empty_and_non_object():
     assert isinstance(parse_task_plan_skeleton({"epics": []}), ParseFailure)  # min_length=1
     assert isinstance(parse_task_plan_skeleton({"epics": [{"title": "E", "feats": []}]}), ParseFailure)
     assert isinstance(parse_task_plan_skeleton([]), ParseFailure)  # not an object
-    # a stray module label still fails at parse (parity with the full plan), not a cryptic write
-    bad = {"epics": [{"title": "E", "module_id": "backend", "feats": [{"title": "F"}]}]}
-    assert isinstance(parse_task_plan_skeleton(bad), ParseFailure)
 
 
 def test_parse_task_plan_feat_tasks_accepts_tasks_only():

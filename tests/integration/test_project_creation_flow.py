@@ -69,7 +69,8 @@ class TestProjectCreationFlow:
                 json={
                     "name": "NEX Integration Test",
                     "slug": "nex-integration-test",
-                    "category": "singlemodule",
+                    "type": "standard",
+                    "auth_mode": "password",
                     "description": "Integration test project",
                     "backend_port": 10100,
                     "frontend_port": 10101,
@@ -84,7 +85,7 @@ class TestProjectCreationFlow:
         project_id = project_data["id"]
         assert project_data["name"] == "NEX Integration Test"
         assert project_data["slug"] == "nex-integration-test"
-        assert project_data["category"] == "singlemodule"
+        assert project_data["type"] == "standard"
         assert project_data["backend_port"] == 10100
         assert project_data["frontend_port"] == 10101
         assert project_data["db_port"] == 10102
@@ -145,7 +146,8 @@ class TestProjectCreationFlow:
                 json={
                     "name": "NEX Integration Test Duplicate",
                     "slug": "nex-integration-test",  # same slug
-                    "category": "multimodule",
+                    "type": "standard",
+                    "auth_mode": "password",
                     "description": "Duplicate slug project",
                     "created_by": admin_user_id,
                 },
@@ -182,7 +184,8 @@ class TestProjectCreationFlow:
                 json={
                     "name": "Port Check Project",
                     "slug": "port-check-proj",
-                    "category": "singlemodule",
+                    "type": "standard",
+                    "auth_mode": "password",
                     "description": "Test port allocation",
                     "backend_port": 10110,
                     "frontend_port": 10111,
@@ -219,7 +222,8 @@ class TestProjectCreationFlow:
             json={
                 "name": "Minimal Project",
                 "slug": "minimal-proj",
-                "category": "singlemodule",
+                "type": "standard",
+                "auth_mode": "password",
                 "description": "No ports, no repo",
                 "created_by": admin_user_id,
             },

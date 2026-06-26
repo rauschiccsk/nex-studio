@@ -20,10 +20,11 @@ import pytest
 from pydantic import ValidationError
 
 from backend.schemas.project import (
-    ProjectCategory,
+    ProjectAuthMode,
     ProjectCreate,
     ProjectRead,
     ProjectStatus,
+    ProjectType,
     ProjectUpdate,
 )
 
@@ -32,11 +33,18 @@ from backend.schemas.project import (
 # ---------------------------------------------------------------------------
 
 
-class TestProjectCategory:
-    """``ProjectCategory`` mirrors the DB CHECK constraint."""
+class TestProjectType:
+    """``ProjectType`` mirrors the DB CHECK constraint."""
 
     def test_allowed_values(self) -> None:
-        assert set(get_args(ProjectCategory)) == {"singlemodule", "multimodule"}
+        assert set(get_args(ProjectType)) == {"standard", "web"}
+
+
+class TestProjectAuthMode:
+    """``ProjectAuthMode`` mirrors the DB CHECK constraint."""
+
+    def test_allowed_values(self) -> None:
+        assert set(get_args(ProjectAuthMode)) == {"password", "token"}
 
 
 class TestProjectStatus:
@@ -58,7 +66,8 @@ class TestProjectCreate:
         base: dict = {
             "name": "Test Project",
             "slug": "test-project",
-            "category": "singlemodule",
+            "type": "standard",
+            "auth_mode": "password",
             "description": "A test project.",
             "created_by": uuid.uuid4(),
         }
@@ -69,7 +78,8 @@ class TestProjectCreate:
         payload = ProjectCreate(**self._minimal())
         assert payload.name == "Test Project"
         assert payload.slug == "test-project"
-        assert payload.category == "singlemodule"
+        assert payload.type == "standard"
+        assert payload.auth_mode == "password"
         assert payload.status == "active"
         assert payload.backend_port is None
         assert payload.frontend_port is None
@@ -97,8 +107,8 @@ class TestProjectCreate:
         assert payload.guardian_enabled is True
 
     def test_required_fields(self) -> None:
-        """name, slug, category, description are required. created_by is optional (resolved server-side)."""
-        for field in ("name", "slug", "category", "description"):
+        """name, slug, type, auth_mode, description are required. created_by is optional (resolved server-side)."""
+        for field in ("name", "slug", "type", "auth_mode", "description"):
             data = self._minimal()
             del data[field]
             with pytest.raises(ValidationError) as excinfo:
@@ -129,9 +139,13 @@ class TestProjectCreate:
         with pytest.raises(ValidationError):
             ProjectCreate(**self._minimal(slug="x" * 101))
 
-    def test_category_rejects_invalid(self) -> None:
+    def test_type_rejects_invalid(self) -> None:
         with pytest.raises(ValidationError):
-            ProjectCreate(**self._minimal(category="unknown"))
+            ProjectCreate(**self._minimal(type="unknown"))
+
+    def test_auth_mode_rejects_invalid(self) -> None:
+        with pytest.raises(ValidationError):
+            ProjectCreate(**self._minimal(auth_mode="unknown"))
 
     def test_status_rejects_invalid(self) -> None:
         with pytest.raises(ValidationError):
@@ -185,8 +199,8 @@ class TestProjectUpdate:
         assert dumped["guardian_enabled"] is True
 
     def test_immutable_fields_excluded(self) -> None:
-        """id, slug, category, created_at, created_by are not settable."""
-        for field in ("id", "slug", "category", "created_at", "created_by"):
+        """id, slug, type, auth_mode, created_at, created_by are not settable."""
+        for field in ("id", "slug", "type", "auth_mode", "created_at", "created_by"):
             assert field not in ProjectUpdate.model_fields, f"Immutable field '{field}' should not be in ProjectUpdate"
 
     def test_no_members_field(self) -> None:
@@ -206,7 +220,8 @@ def _make_project_namespace(**overrides: object) -> SimpleNamespace:
         "id": uuid.uuid4(),
         "name": "Test Project",
         "slug": "test-project",
-        "category": "singlemodule",
+        "type": "standard",
+        "auth_mode": "password",
         "description": "A test project.",
         "status": "active",
         "backend_port": None,
@@ -230,13 +245,15 @@ class TestProjectRead:
     def test_round_trip_from_orm_like(self) -> None:
         orm = _make_project_namespace(
             name="Horizont",
-            category="multimodule",
+            type="web",
+            auth_mode="token",
             status="paused",
         )
         read = ProjectRead.model_validate(orm)
         assert read.id == orm.id
         assert read.name == "Horizont"
-        assert read.category == "multimodule"
+        assert read.type == "web"
+        assert read.auth_mode == "token"
         assert read.status == "paused"
         assert read.created_by == orm.created_by
         assert read.created_at == orm.created_at
@@ -261,8 +278,13 @@ class TestProjectRead:
         with pytest.raises(ValidationError):
             ProjectRead.model_validate(orm)
 
-    def test_category_must_be_valid_literal(self) -> None:
-        orm = _make_project_namespace(category="triplemodule")
+    def test_type_must_be_valid_literal(self) -> None:
+        orm = _make_project_namespace(type="triplemodule")
+        with pytest.raises(ValidationError):
+            ProjectRead.model_validate(orm)
+
+    def test_auth_mode_must_be_valid_literal(self) -> None:
+        orm = _make_project_namespace(auth_mode="biometric")
         with pytest.raises(ValidationError):
             ProjectRead.model_validate(orm)
 

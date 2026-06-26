@@ -56,7 +56,8 @@ async def test_away_director_pinged_when_project_has_no_owner(db_session, monkey
     project = Project(
         name="Ownerless Proj",
         slug="ownerless-proj",
-        category="multimodule",
+        type="standard",
+        auth_mode="password",
         description="Class J regression fixture.",
         created_by=director.id,
     )

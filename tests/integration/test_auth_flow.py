@@ -73,7 +73,8 @@ class TestAuthFlow:
             json={
                 "name": "Test Auth Project",
                 "slug": "test-auth-project",
-                "category": "multimodule",
+                "type": "standard",
+                "auth_mode": "password",
                 "description": "Created during auth integration test",
                 "created_by": user_id,
             },
@@ -83,7 +84,7 @@ class TestAuthFlow:
         project_data = project_resp.json()
         assert project_data["name"] == "Test Auth Project"
         assert project_data["slug"] == "test-auth-project"
-        assert project_data["category"] == "multimodule"
+        assert project_data["type"] == "standard"
         assert project_data["status"] == "active"
 
     def test_login_bad_password_returns_401(self, integration_client, _seed_admin):

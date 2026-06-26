@@ -149,7 +149,8 @@ class TestProjectMembersRouter:
         project = Project(
             name="proj-rbac",
             slug="proj-rbac-create",
-            category="singlemodule",
+            type="standard",
+            auth_mode="password",
             description="rbac test",
             created_by=creator.id,
         )
@@ -235,14 +236,16 @@ class TestShuProjectMembership:
         proj_a = Project(
             name="A",
             slug="proj-a",
-            category="singlemodule",
+            type="standard",
+            auth_mode="password",
             description="",
             created_by=ri_user.id,
         )
         proj_b = Project(
             name="B",
             slug="proj-b",
-            category="singlemodule",
+            type="standard",
+            auth_mode="password",
             description="",
             created_by=ri_user.id,
         )

@@ -50,7 +50,8 @@ def _make_project(db_session, *, user=None, **overrides) -> Project:
     defaults = {
         "name": f"Project {suffix}",
         "slug": f"proj-{suffix}",
-        "category": "singlemodule",
+        "type": "standard",
+        "auth_mode": "password",
         "description": "Test project",
         "created_by": user.id,
     }

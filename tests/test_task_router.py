@@ -134,7 +134,8 @@ def project(db_session, owner) -> Project:
     proj = Project(
         slug=f"proj-{uuid.uuid4().hex[:8]}",
         name=f"Project {uuid.uuid4().hex[:8]}",
-        category="multimodule",
+        type="standard",
+        auth_mode="password",
         description="Test project description",
         created_by=owner.id,
     )

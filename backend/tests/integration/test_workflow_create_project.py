@@ -5,7 +5,7 @@ end-to-end through the real FastAPI ``app``. The workflow is Zoltán
 (``ri_director`` per BEHAVIOR.md §1.1) — or any ``ri``-role user —
 creating a brand-new project in NEX Studio from the dashboard. The
 worked example (§3.6 "Konkrétny príklad") is the creation of the NEX
-Horizont project with slug ``nex-horizont``, category ``multimodule``,
+Horizont project with slug ``nex-horizont``, type ``standard``,
 ports 9170/9171/9172, repo ``rauschiccsk/nex-horizont`` and all four
 ICC members (Zoltán, Tibor, Dominik, Nazar) added as
 :class:`ProjectMember` rows.
@@ -21,7 +21,7 @@ ICC members (Zoltán, Tibor, Dominik, Nazar) added as
            surfaces the form. Not HTTP-observable; modelled via the
            "no existing project with this name / slug" list query the
            dashboard uses to detect duplicates client-side.
-        2. Zoltán fills in Name, Category, Description, Repo URL,
+        2. Zoltán fills in Name, Type, Auth-mode, Description, Repo URL,
            ports, Members — client-side only, no HTTP round-trip.
         3. Zoltán clicks "Vytvoriť projekt" → the orchestrator drives
            the multi-step creation sequence:
@@ -47,7 +47,7 @@ ICC members (Zoltán, Tibor, Dominik, Nazar) added as
 
     Postcondition (per BEHAVIOR.md §3.6):
         * ``projects`` row exists with a unique ``slug`` and
-          ``status='active'`` / ``category='multimodule'``.
+          ``status='active'`` / ``type='standard'``.
         * ``project_members`` contains one row per selected member
           (including the creator).
         * ``report_configs`` row exists with the default senior / junior
@@ -185,7 +185,7 @@ def nazar(db_session) -> User:
 # ---------------------------------------------------------------------------
 
 
-# BEHAVIOR.md §3.6 step 2: "Názov='NEX Horizont', Kategória='multimodule',
+# BEHAVIOR.md §3.6 step 2: "Názov='NEX Horizont', Typ='standard', Login='password',
 # Repo='rauschiccsk/nex-horizont', Backend port=9170, Frontend port=9171,
 # DB port=9172".
 NEX_HORIZONT_NAME = "NEX Horizont"
@@ -204,14 +204,15 @@ def _project_payload(creator_id: uuid.UUID, **overrides: Any) -> dict[str, Any]:
     """Build a JSON payload for ``POST /api/v1/projects``.
 
     Defaults mirror the §3.6 worked example exactly (NEX Horizont,
-    multimodule, three ports, ANDROS-style repo slug). Overrides let
-    individual tests swap fields (e.g. duplicate ``name`` / ``slug``
+    standard archetype, three ports, ANDROS-style repo slug). Overrides
+    let individual tests swap fields (e.g. duplicate ``name`` / ``slug``
     for the collision edge cases).
     """
     payload: dict[str, Any] = {
         "name": NEX_HORIZONT_NAME,
         "slug": NEX_HORIZONT_SLUG,
-        "category": "multimodule",
+        "type": "standard",
+        "auth_mode": "password",
         "description": NEX_HORIZONT_DESCRIPTION,
         "repo_url": NEX_HORIZONT_REPO_URL,
         "backend_port": NEX_HORIZONT_BACKEND_PORT,
@@ -269,7 +270,8 @@ class TestCreateProjectHappyPath:
         created = create_resp.json()
         assert created["name"] == NEX_HORIZONT_NAME
         assert created["slug"] == NEX_HORIZONT_SLUG
-        assert created["category"] == "multimodule"
+        assert created["type"] == "standard"
+        assert created["auth_mode"] == "password"
         assert created["description"] == NEX_HORIZONT_DESCRIPTION
         assert created["repo_url"] == NEX_HORIZONT_REPO_URL
         assert created["backend_port"] == NEX_HORIZONT_BACKEND_PORT
@@ -294,7 +296,7 @@ class TestCreateProjectHappyPath:
         assert show_resp.json()["id"] == project_id
         assert show_resp.json()["slug"] == NEX_HORIZONT_SLUG
         assert show_resp.json()["status"] == "active"
-        assert show_resp.json()["category"] == "multimodule"
+        assert show_resp.json()["type"] == "standard"
 
         # --- Postcondition verification (HTTP) -------------------------
         # 1. The project list shows exactly one project now.
@@ -312,7 +314,7 @@ class TestCreateProjectHappyPath:
         assert persisted_project is not None
         assert persisted_project.slug == NEX_HORIZONT_SLUG
         assert persisted_project.status == "active"
-        assert persisted_project.category == "multimodule"
+        assert persisted_project.type == "standard"
         assert persisted_project.created_by == zoltan.id
         # §3.6 Konkrétny príklad: "Guardian je vypnutý (default)".
         assert persisted_project.guardian_enabled is False
@@ -344,14 +346,14 @@ class TestCreateProjectHappyPath:
                 tibor.id,
                 name="NEX Marina",
                 slug="nex-marina",
-                description="Marina booking — singlemodule sibling.",
-                category="singlemodule",
+                description="Marina booking — sibling project.",
+                type="standard",
             ),
         )
         assert resp.status_code == 201, resp.text
         assert resp.json()["created_by"] == str(tibor.id)
         assert resp.json()["slug"] == "nex-marina"
-        assert resp.json()["category"] == "singlemodule"
+        assert resp.json()["type"] == "standard"
         # Defaults stay intact regardless of who creates the row.
         assert resp.json()["status"] == "active"
         assert resp.json()["guardian_enabled"] is False

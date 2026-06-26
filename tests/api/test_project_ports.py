@@ -97,7 +97,8 @@ def _make_project(db_session, creator, **overrides) -> Project:
     attrs = {
         "name": f"Proj {suffix}",
         "slug": f"proj-{suffix}",
-        "category": "singlemodule",
+        "type": "standard",
+        "auth_mode": "password",
         "description": "Port test project",
         "created_by": creator.id,
     }

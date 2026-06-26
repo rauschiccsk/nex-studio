@@ -30,7 +30,8 @@ def _make_project(db_session, **overrides) -> Project:
     defaults = {
         "name": f"Project {uuid.uuid4().hex[:8]}",
         "slug": f"project-{uuid.uuid4().hex[:8]}",
-        "category": "singlemodule",
+        "type": "standard",
+        "auth_mode": "password",
         "description": "Test project",
         "created_by": user.id,
     }

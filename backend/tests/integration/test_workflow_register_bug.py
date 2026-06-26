@@ -217,7 +217,8 @@ def nex_horizont(db_session, zoltan, tibor, nazar, dominik) -> Project:
     project = Project(
         name="NEX Horizont",
         slug="nex-horizont",
-        category="multimodule",
+        type="standard",
+        auth_mode="password",
         description="Enterprise ERP successor to NEX Command.",
         created_by=zoltan.id,
     )
@@ -641,13 +642,14 @@ class TestRegisterBugEdgeCases:
         about to own 12; a fresh sibling project (``NEX Marina``)
         therefore starts at 1 on its first register, not at 13.
         """
-        # Seed a second project — singlemodule is fine, the
-        # per-project scoping does not care about category.
+        # Seed a second project — the archetype is irrelevant here, the
+        # per-project scoping does not care about the project type.
         nex_marina = Project(
             name="NEX Marina",
             slug="nex-marina",
-            category="singlemodule",
-            description="Marina booking — singlemodule sibling.",
+            type="standard",
+            auth_mode="password",
+            description="Marina booking — sibling project.",
             created_by=zoltan.id,
         )
         db_session.add(nex_marina)

@@ -31,12 +31,11 @@ import pytest
 from sqlalchemy import select as sa_select
 
 from backend.db.models.foundation import User
-from backend.db.models.projects import Project, ProjectModule
+from backend.db.models.projects import Project
 from backend.db.models.tasks import Epic, Feat, Task
 from backend.db.models.versions import Version
 from backend.schemas.live_documents import (
     FeatCompletionData,
-    ModuleEventData,
     TaskCompletionData,
 )
 from backend.services.knowledge_base_writer import KnowledgeBaseWriter
@@ -193,77 +192,6 @@ def test_history_entry_first_attempt_default() -> None:
     assert "1st attempt" in entry
 
 
-# ── generate_module_event_entry ───────────────────────────────────────
-
-
-def _module_event(**overrides: Any) -> ModuleEventData:
-    defaults: dict[str, Any] = {
-        "event_type": "created",
-        "module_code": "mm",
-        "module_name": "Manažér modulov",
-        "category": "Systém",
-        "timestamp": datetime(2026, 4, 23, 19, 20, 0, tzinfo=timezone.utc),
-    }
-    defaults.update(overrides)
-    return ModuleEventData(**defaults)
-
-
-def test_module_event_created_format() -> None:
-    svc = LiveDocumentService("nex-test")
-    entry = svc.generate_module_event_entry(_module_event())
-
-    assert entry == "19:20 Module mm created — Manažér modulov (Systém)\n"
-
-
-def test_module_event_deleted_format() -> None:
-    svc = LiveDocumentService("nex-test")
-    entry = svc.generate_module_event_entry(_module_event(event_type="deleted"))
-
-    assert entry == "19:20 Module mm deleted — Manažér modulov\n"
-
-
-def test_module_event_status_changed_format() -> None:
-    svc = LiveDocumentService("nex-test")
-    entry = svc.generate_module_event_entry(
-        _module_event(
-            event_type="status_changed",
-            old_status="planned",
-            new_status="in_development",
-        )
-    )
-
-    assert entry == "19:20 Module mm status planned → in_development\n"
-
-
-def test_append_module_event_persists_to_history(tmp_path: Path) -> None:
-    writer = KnowledgeBaseWriter(tmp_path)
-    svc = LiveDocumentService("nex-test", writer=writer)
-
-    svc.append_module_event(_module_event())
-
-    content = writer.read("nex-test", "HISTORY.md")
-    assert "# nex-test — History" in content
-    assert "Module mm created — Manažér modulov (Systém)" in content
-
-
-def test_append_module_event_dedup_on_replay(tmp_path: Path) -> None:
-    """Writer-level dedup keeps a replay of the same event idempotent."""
-    writer = KnowledgeBaseWriter(tmp_path)
-    svc = LiveDocumentService("nex-test", writer=writer)
-    event = _module_event()
-
-    svc.append_module_event(event)
-    svc.append_module_event(event)
-
-    content = writer.read("nex-test", "HISTORY.md")
-    assert content.count("Module mm created") == 1
-
-
-def test_append_module_event_no_writer_is_noop() -> None:
-    svc = LiveDocumentService("nex-test")  # writer=None
-    svc.append_module_event(_module_event())  # must not raise
-
-
 # ── generate_phase_summary_entry ──────────────────────────────────────
 
 
@@ -416,7 +344,8 @@ def _make_project(db_session: Any, *, name: str | None = None, slug: str | None 
     project = Project(
         name=name or f"Project {suffix}",
         slug=slug or f"project-{suffix}",
-        category="multimodule",
+        type="standard",
+        auth_mode="password",
         description="Test project",
         created_by=user.id,
     )
@@ -645,112 +574,6 @@ def test_status_md_feat_without_tasks_still_renders(db_session: Any) -> None:
     assert "Tasks: 0/0" in md
 
 
-# ── N4: Modules section in STATUS.md ──────────────────────────────────
-
-
-def _make_module(
-    db_session: Any,
-    *,
-    project: Project,
-    code: str,
-    name: str,
-    category: str = "Systém",
-    status: str = "planned",
-) -> ProjectModule:
-    mod = ProjectModule(
-        project_id=project.id,
-        code=code,
-        name=name,
-        category=category,
-        status=status,
-    )
-    db_session.add(mod)
-    db_session.flush()
-    return mod
-
-
-def test_status_md_multimodule_lists_modules(db_session: Any) -> None:
-    project = _make_project(db_session, name="NEX Test", slug="nex-test")
-    _make_module(db_session, project=project, code="mm", name="Manažér modulov", category="Systém")
-    _make_module(db_session, project=project, code="pab", name="Katalóg partnerov", category="Katalógy")
-
-    svc = LiveDocumentService(project.slug)
-    md = svc.generate_status_md(db_session, project.id)
-
-    assert "## Modules (2)" in md
-    assert "- [planned] mm · Manažér modulov · Systém" in md
-    assert "- [planned] pab · Katalóg partnerov · Katalógy" in md
-    assert "Modules: 0/2 done" in md
-
-
-def test_status_md_modules_sorted_by_code(db_session: Any) -> None:
-    """Module rows come out in alphabetical code order for stable diffs."""
-    project = _make_project(db_session)
-    _make_module(db_session, project=project, code="pab", name="B")
-    _make_module(db_session, project=project, code="mm", name="A")
-
-    svc = LiveDocumentService(project.slug)
-    md = svc.generate_status_md(db_session, project.id)
-    mm_idx = md.index("mm ·")
-    pab_idx = md.index("pab ·")
-    assert mm_idx < pab_idx
-
-
-def test_status_md_multimodule_empty_shows_no_modules_placeholder(db_session: Any) -> None:
-    project = _make_project(db_session)
-    svc = LiveDocumentService(project.slug)
-    md = svc.generate_status_md(db_session, project.id)
-
-    # Empty multimodule project short-circuits to "no epics planned yet" —
-    # no modules heading either. This matches the original empty-render.
-    assert "No epics planned yet." in md
-
-
-def test_status_md_multimodule_with_modules_but_no_epics(db_session: Any) -> None:
-    project = _make_project(db_session)
-    _make_module(db_session, project=project, code="mm", name="Manažér modulov")
-
-    svc = LiveDocumentService(project.slug)
-    md = svc.generate_status_md(db_session, project.id)
-
-    assert "## Modules (1)" in md
-    assert "mm ·" in md
-    assert "Modules: 0/1 done" in md
-
-
-def test_status_md_singlemodule_has_no_modules_section(db_session: Any) -> None:
-    user = _make_user(db_session)
-    project = Project(
-        name="Single App",
-        slug="single-app",
-        category="singlemodule",
-        description="x",
-        created_by=user.id,
-    )
-    db_session.add(project)
-    db_session.flush()
-    _make_epic(db_session, project=project, number=1, title="E")
-
-    svc = LiveDocumentService(project.slug)
-    md = svc.generate_status_md(db_session, project.id)
-
-    assert "Modules" not in md
-    assert "Modules:" not in md.split("## Summary")[-1]
-
-
-def test_status_md_modules_done_count_in_summary(db_session: Any) -> None:
-    project = _make_project(db_session)
-    _make_module(db_session, project=project, code="mm", name="A", status="done")
-    _make_module(db_session, project=project, code="pab", name="B", status="done")
-    _make_module(db_session, project=project, code="gsc", name="C", status="planned")
-
-    svc = LiveDocumentService(project.slug)
-    md = svc.generate_status_md(db_session, project.id)
-
-    assert "## Modules (3)" in md
-    assert "Modules: 2/3 done" in md
-
-
 # ── regenerate_status — persistence ──────────────────────────────────
 
 
@@ -931,16 +754,6 @@ def test_init_live_documents_reindexes_both_files(db_session: Any, tmp_path: Pat
     reindexed = {c["file_path"] for c in indexer.calls}
     assert reindexed == {"projects/seeded/STATUS.md", "projects/seeded/HISTORY.md"}
     assert all(c["tenant"] == "icc" for c in indexer.calls)
-
-
-def test_append_module_event_reindexes(tmp_path: Path) -> None:
-    writer = KnowledgeBaseWriter(tmp_path)
-    indexer = _RecordingIndexer()
-    svc = LiveDocumentService("app", writer=writer, indexer=indexer)
-
-    svc.append_module_event(_module_event())
-
-    assert [c["file_path"] for c in indexer.calls] == ["projects/app/HISTORY.md"]
 
 
 def test_append_phase_summary_reindexes(tmp_path: Path) -> None:

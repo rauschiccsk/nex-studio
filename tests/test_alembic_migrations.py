@@ -49,16 +49,15 @@ def test_expected_domain_tables_present() -> None:
 
     The legacy in-app design/execution pipeline tables were dropped by
     migration 048; multi-module (``project_modules`` /
-    ``module_dependencies``) and the agent infra (Versions / Epics /
-    Feats / Tasks / Bugs) are preserved. The F-007 Orchestration Cockpit
-    (CR-NS-018) adds ``pipeline_state`` / ``pipeline_message`` (migration 051).
+    ``module_dependencies``) was dropped by migration 070 (CR-V2-001..005).
+    The agent infra (Versions / Epics / Feats / Tasks / Bugs) is preserved.
+    The F-007 Orchestration Cockpit (CR-NS-018) adds ``pipeline_state`` /
+    ``pipeline_message`` (migration 051).
     """
     expected_tables = {
         "bugs",
         "epics",
         "feats",
-        "module_dependencies",
-        "project_modules",
         "projects",
         "tasks",
         "user_sessions",

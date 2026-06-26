@@ -5,7 +5,7 @@ Covers:
 * Slug uniqueness → 409 Conflict.
 * Port uniqueness → 409 Conflict (across all three port types).
 * Port range (10100–14999) → 422 Unprocessable Entity.
-* Invalid category → 422 (Pydantic rejects invalid Literal values).
+* Invalid type / auth_mode → 422 (Pydantic rejects invalid Literal values).
 * GitHub repo_url → accepted as-is, no existence check.
 """
 
@@ -120,7 +120,8 @@ def _payload(creator_id, **overrides) -> dict:
     body = {
         "name": f"Project {suffix}",
         "slug": f"project-{suffix}",
-        "category": "singlemodule",
+        "type": "standard",
+        "auth_mode": "password",
         "description": "Test project description",
         "created_by": str(creator_id),
     }
@@ -134,7 +135,8 @@ def _make_project(db_session, creator, **overrides) -> Project:
     attrs = {
         "name": f"Existing {suffix}",
         "slug": f"existing-{suffix}",
-        "category": "singlemodule",
+        "type": "standard",
+        "auth_mode": "password",
         "description": "Existing project",
         "created_by": creator.id,
     }
@@ -299,30 +301,42 @@ class TestPortRange:
         assert resp.json()["frontend_port"] == 14999
 
 
-class TestInvalidCategory:
-    """POST /api/v1/projects — category validation (422)."""
+class TestInvalidType:
+    """POST /api/v1/projects — type / auth_mode validation (422)."""
 
-    def test_invalid_category_returns_422(self, router_client, creator):
-        """A category value not in ('singlemodule', 'multimodule') should return 422."""
-        payload = _payload(creator.id, category="invalid")
+    def test_invalid_type_returns_422(self, router_client, creator):
+        """A type value not in ('standard', 'web') should return 422."""
+        payload = _payload(creator.id, type="invalid")
         resp = router_client.post("/api/v1/projects", json=payload)
         assert resp.status_code == 422
 
-    def test_single_typo_returns_422(self, router_client, creator):
-        """'single' (without 'module') is not a valid category."""
-        payload = _payload(creator.id, category="single")
+    def test_type_typo_returns_422(self, router_client, creator):
+        """'std' is not a valid type."""
+        payload = _payload(creator.id, type="std")
         resp = router_client.post("/api/v1/projects", json=payload)
         assert resp.status_code == 422
 
-    def test_valid_singlemodule_accepted(self, router_client, creator):
-        """'singlemodule' is a valid category."""
-        payload = _payload(creator.id, category="singlemodule")
+    def test_invalid_auth_mode_returns_422(self, router_client, creator):
+        """An auth_mode value not in ('password', 'token') should return 422."""
+        payload = _payload(creator.id, auth_mode="invalid")
+        resp = router_client.post("/api/v1/projects", json=payload)
+        assert resp.status_code == 422
+
+    def test_valid_standard_accepted(self, router_client, creator):
+        """'standard' is a valid type."""
+        payload = _payload(creator.id, type="standard")
         resp = router_client.post("/api/v1/projects", json=payload)
         assert resp.status_code == 201
 
-    def test_valid_multimodule_accepted(self, router_client, creator):
-        """'multimodule' is a valid category."""
-        payload = _payload(creator.id, category="multimodule")
+    def test_valid_web_accepted(self, router_client, creator):
+        """'web' is a valid type."""
+        payload = _payload(creator.id, type="web")
+        resp = router_client.post("/api/v1/projects", json=payload)
+        assert resp.status_code == 201
+
+    def test_valid_token_auth_mode_accepted(self, router_client, creator):
+        """'token' is a valid auth_mode."""
+        payload = _payload(creator.id, auth_mode="token")
         resp = router_client.post("/api/v1/projects", json=payload)
         assert resp.status_code == 201
 

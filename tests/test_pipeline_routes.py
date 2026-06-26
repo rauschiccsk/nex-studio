@@ -60,7 +60,8 @@ def _make_version(db_session, user) -> Version:
     project = Project(
         name=f"P {uuid.uuid4().hex[:8]}",
         slug=f"p-{uuid.uuid4().hex[:8]}",
-        category="singlemodule",
+        type="standard",
+        auth_mode="password",
         description="d",
         created_by=user.id,
     )
@@ -153,7 +154,8 @@ def _make_project_with_semver(db_session, user, version_number="0.3.0") -> Proje
     project = Project(
         name=f"P {uuid.uuid4().hex[:8]}",
         slug=f"p-{uuid.uuid4().hex[:8]}",
-        category="singlemodule",
+        type="standard",
+        auth_mode="password",
         description="d",
         created_by=user.id,
     )

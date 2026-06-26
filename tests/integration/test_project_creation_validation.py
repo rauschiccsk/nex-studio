@@ -94,7 +94,8 @@ class TestProjectCreationValidation:
         payload = {
             "name": "Validation Test Project",
             "slug": "val-test-proj",
-            "category": "singlemodule",
+            "type": "standard",
+            "auth_mode": "password",
             "description": "Validation test",
             "created_by": user_id,
         }
@@ -278,7 +279,8 @@ class TestProjectCreationValidation:
             json={
                 "name": "Bad Repo Project",
                 "slug": "bad-repo-proj",
-                "category": "singlemodule",
+                "type": "standard",
+                "auth_mode": "password",
                 "description": "Non-existent repo — accepted as metadata",
                 "repo_url": "nonexistent-org/nonexistent-repo",
                 "created_by": user_id,
@@ -297,7 +299,8 @@ class TestProjectCreationValidation:
             json={
                 "name": "Any Format Repo",
                 "slug": "any-format-repo",
-                "category": "singlemodule",
+                "type": "standard",
+                "auth_mode": "password",
                 "description": "Any repo_url string is accepted",
                 "repo_url": "no-slash-here",
                 "created_by": user_id,
@@ -357,7 +360,8 @@ class TestProjectCreationValidation:
             json={
                 "name": "Repo Error Structure",
                 "slug": "repo-error-structure",
-                "category": "singlemodule",
+                "type": "standard",
+                "auth_mode": "password",
                 "description": "Test",
                 "repo_url": "fake/repo",
                 "created_by": user_id,

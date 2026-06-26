@@ -217,7 +217,8 @@ def _seed(
     project = Project(
         name=f"Publish Fixture {uuid.uuid4().hex[:6]}",
         slug=f"pub-{uuid.uuid4().hex[:8]}",
-        category="multimodule",
+        type="standard",
+        auth_mode="password",
         description="v0.8.0 release-publish fixture.",
         repo_url=repo_url,
         uat_slug=uat_slug,

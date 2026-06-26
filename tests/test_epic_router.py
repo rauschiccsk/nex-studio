@@ -13,13 +13,12 @@ Covers:
 * Create / get / list / patch / delete happy paths.
 * ``PaginatedResponse`` envelope (items / total / skip / limit).
 * Pagination via ``skip`` and ``limit``.
-* Filter by ``project_id``, ``module_id`` and ``status``.
+* Filter by ``project_id`` and ``status``.
 * 404 on missing id (get, patch, delete).
 * 422 on schema validation failure (invalid status, limit > 100, blank
   title).
 * Auto-assignment of ``number`` per project (1, 2, 3 …) and independent
   numbering across projects.
-* ``module_id`` is nullable at create (project-level epic).
 * List ordering is ``number ASC``.
 """
 
@@ -33,7 +32,7 @@ from fastapi.testclient import TestClient
 
 from backend.api.routes.epics import router as epics_router
 from backend.db.models.foundation import User
-from backend.db.models.projects import Project, ProjectModule
+from backend.db.models.projects import Project
 from backend.db.models.versions import Version
 from backend.db.session import get_db
 
@@ -118,28 +117,14 @@ def project(db_session, owner) -> Project:
     proj = Project(
         slug=f"proj-{uuid.uuid4().hex[:8]}",
         name=f"Project {uuid.uuid4().hex[:8]}",
-        category="multimodule",
+        type="standard",
+        auth_mode="password",
         description="Test project description",
         created_by=owner.id,
     )
     db_session.add(proj)
     db_session.flush()
     return proj
-
-
-@pytest.fixture()
-def module(db_session, project) -> ProjectModule:
-    """Persist a module that epics may be scoped to."""
-    suffix = uuid.uuid4().hex[:4]
-    mod = ProjectModule(
-        project_id=project.id,
-        code=f"m{suffix}",
-        name=f"Module {suffix}",
-        category="Systém",
-    )
-    db_session.add(mod)
-    db_session.flush()
-    return mod
 
 
 @pytest.fixture()
@@ -212,7 +197,6 @@ class TestEpicRouter:
         assert body["title"] == "Design the widget"
         assert body["status"] == "in_progress"
         assert body["project_id"] == str(project.id)
-        assert body["module_id"] is None
         assert body["version_id"] == str(version.id)
         assert body["number"] == 1
         assert body["id"]
@@ -231,16 +215,6 @@ class TestEpicRouter:
         resp = router_client.post("/api/v1/epics", json=payload)
         assert resp.status_code == 422, resp.text
         assert "version_id required" in resp.text
-
-    def test_create_with_module(self, router_client, project, module, version):
-        payload = _payload(
-            project_id=project.id,
-            version_id=version.id,
-            module_id=str(module.id),
-        )
-        resp = router_client.post("/api/v1/epics", json=payload)
-        assert resp.status_code == 201, resp.text
-        assert resp.json()["module_id"] == str(module.id)
 
     def test_create_status_defaults_to_planned(self, router_client, project, version):
         resp = router_client.post(
@@ -269,14 +243,16 @@ class TestEpicRouter:
         p1 = Project(
             slug=f"p1-{uuid.uuid4().hex[:8]}",
             name=f"P1 {uuid.uuid4().hex[:8]}",
-            category="singlemodule",
+            type="standard",
+            auth_mode="password",
             description="P1",
             created_by=owner.id,
         )
         p2 = Project(
             slug=f"p2-{uuid.uuid4().hex[:8]}",
             name=f"P2 {uuid.uuid4().hex[:8]}",
-            category="singlemodule",
+            type="standard",
+            auth_mode="password",
             description="P2",
             created_by=owner.id,
         )
@@ -374,14 +350,16 @@ class TestEpicRouter:
         p1 = Project(
             slug=f"p1-{uuid.uuid4().hex[:8]}",
             name=f"P1 {uuid.uuid4().hex[:8]}",
-            category="singlemodule",
+            type="standard",
+            auth_mode="password",
             description="P1",
             created_by=owner.id,
         )
         p2 = Project(
             slug=f"p2-{uuid.uuid4().hex[:8]}",
             name=f"P2 {uuid.uuid4().hex[:8]}",
-            category="singlemodule",
+            type="standard",
+            auth_mode="password",
             description="P2",
             created_by=owner.id,
         )
@@ -408,27 +386,6 @@ class TestEpicRouter:
         assert body["total"] >= 1
         assert all(item["project_id"] == str(p2.id) for item in body["items"])
 
-    def test_list_filter_by_module_id(self, router_client, project, module, version):
-        # Project-level epic — must be filtered out when module_id is set.
-        router_client.post(
-            "/api/v1/epics",
-            json=_payload(project_id=project.id, version_id=version.id),
-        ).raise_for_status()
-        # Module-scoped epic — the one we expect back.
-        router_client.post(
-            "/api/v1/epics",
-            json=_payload(project_id=project.id, version_id=version.id, module_id=str(module.id)),
-        ).raise_for_status()
-
-        resp = router_client.get(
-            "/api/v1/epics",
-            params={"module_id": str(module.id)},
-        )
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["total"] >= 1
-        assert all(item["module_id"] == str(module.id) for item in body["items"])
-
     def test_list_filter_by_status(self, router_client, project, version):
         router_client.post(
             "/api/v1/epics",
@@ -453,7 +410,7 @@ class TestEpicRouter:
         assert resp.status_code == 422
 
     # -------------------------------------------------------------- patch
-    def test_patch_partial_update(self, router_client, project, module, version):
+    def test_patch_partial_update(self, router_client, project, version):
         created = router_client.post(
             "/api/v1/epics",
             json=_payload(
@@ -469,14 +426,12 @@ class TestEpicRouter:
             json={
                 "status": "in_progress",
                 "title": "Updated title",
-                "module_id": str(module.id),
             },
         )
         assert resp.status_code == 200
         body = resp.json()
         assert body["status"] == "in_progress"
         assert body["title"] == "Updated title"
-        assert body["module_id"] == str(module.id)
         # Immutable fields unchanged.
         assert body["id"] == created["id"]
         assert body["project_id"] == created["project_id"]
