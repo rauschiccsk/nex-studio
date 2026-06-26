@@ -293,8 +293,9 @@ _VERIFY_RETRIES = 2
 # Auditor fix-loop bound (v2 design §2.2 "Division of labour"; CR-V2-009). At Verifikácia, an Auditor FAIL
 # verdict loops the fix back to the AI Agent (the Auditor only finds; the AI Agent fixes), the Auditor
 # re-verifies, bounded to this many fix↔re-verify rounds; on the (n+1)-th still-failing round the build
-# STOPS and escalates to the Manažér (design §2.2 (i)). PROVISIONAL home of the named constant
-# CR-V2-014 wires into the runner's auto-chain backstop (R-AUTOCHAIN) once the Verifikácia loop exists.
+# STOPS and escalates to the Manažér (design §2.2 (i)). The named constant the runner's auto-chain backstop
+# budgets (R-AUTOCHAIN, finalized CR-V2-014): :func:`auto_chain_limit` adds ``2 * AUDITOR_LOOP_MAX`` so a
+# legit 5-round Auditor loop never mis-trips the backstop. Driven by :func:`_settle_verifikacia_verdict`.
 AUDITOR_LOOP_MAX = 5
 # (The v1 per-task ``_AUTO_FIX_RETRIES`` is RETIRED — CR-V2-012 replaced the per-task-audited build loop with
 # the AI-Agent self-checking loop, whose own bound is :data:`_SELF_CHECK_RETRIES` defined beside it.)
@@ -737,6 +738,76 @@ def _auditor_upfront_directive(db: Session, version_id: uuid.UUID) -> str:
     )
 
 
+def _verifikacia_directive(db: Session, version_id: uuid.UUID, *, smoke_block: str = "") -> str:
+    """The Auditor's END verification brief (Verifikácia phase; CR-V2-014; VERIF-1..VERIF-3, AUD-1(b),
+    AUD-2, AUD-3, AUD-6) — the v2 form of v1 ``gate_g``.
+
+    DESIGN-BEARING (flagged for the Manažér): this prompt DEFINES the independent Auditor's END-verification
+    behaviour. Drafted from ``nex-studio-v2-design.md`` §2.5 (release verification) + §5.1(2) (Auditor rules
+    → "Behavioural acceptance" + "Security verification"). The Auditor's ``Pravidlá agenta`` charter
+    (``templates/auditor-charter.md`` §2(b)/§3) carries the matching standing rules; this is the per-turn
+    orchestrator injection.
+
+    After Programovanie — before Hotovo — the independent Auditor runs the END check and emits ONE
+    ``kind=verdict`` (the CR-V2-006 repurposed findings shape):
+
+      * **Release-acceptance (behavioural pillar):** the engine already ran the built app via
+        :func:`_run_release_smoke` against INTERNAL FIXTURES (an ephemeral ``-p <slug>-smoke`` compose
+        up/down — NOT a customer instance; deploy is OUT of the pipeline, OQ-3/D6, so "Hotovo" means
+        *verified*, not *deployed*). Its boot + acceptance result is fed below (``smoke_block``); the Auditor
+        confirms the app does what the brief promised. The Auditor MAY additionally run the app to verify.
+      * **Adversarial spot-checks (targeted, NOT per-task):** actively hunt holes in the RISKY parts —
+        security, money/calculations, the core contract — verify-don't-trust against the artifacts + the
+        running app, not the AI Agent's say-so.
+      * **Explicit §4 hard-security verification:** verify the inviolable P0 rules HOLD in code AND logs — no
+        credential written to source / committed / leaked to logs; secrets only in ``.env`` / runtime env;
+        ``VITE_*`` public-only. A credential leak is a FAIL.
+      * **verdict=true (PASS)** — the version is verified (behavioural acceptance + spot-checks + §4 clean).
+        ``findings`` may carry non-blocking notes. The Verifikácia end stop is then governed by the dial
+        (auto-sign-off to Hotovo at a non-stopping level, else the Manažér signs off).
+      * **verdict=false (FAIL)** — list the concrete failures in ``findings`` and the targeted re-run scope
+        in ``proposed_fix`` (the salvaged ``surgical_fix`` scope). FAIL loops the fix back to the AI Agent
+        (the Auditor FINDS, the AI Agent FIXES — independence), bounded by :data:`AUDITOR_LOOP_MAX` rounds,
+        then STOP + escalate to the Manažér.
+
+    Depth scales INVERSELY with human oversight (OQ-9 / AUD-6): higher autonomy → deeper, more adversarial
+    end check (the Auditor is the safety net that compensates for fewer human stops); lower autonomy →
+    lighter. The ``--effort`` flag is coupled to the dial in :func:`_resolve_dispatch_overrides`; the prose
+    tells the Auditor to MATCH its scrutiny."""
+    level = resolve_miera_autonomie(db, version_id)
+    depth = (
+        "Miera autonómie je VYSOKÁ (Manažér je málokedy v slučke) — rob DÔKLADNÚ, adverzariálnu verifikáciu: "
+        "si jediné nezávislé oči pred Hotovo, kompenzuješ menej ľudských kontrol."
+        if level in ("plna", "len_na_konci")
+        else "Miera autonómie je nižšia (Manažér kontroluje často) — rob ZAMERANÚ verifikáciu na rizikové "
+        "miesta; ťažšiu kontrolu nesie Manažér."
+    )
+    return (
+        "VERIFIKÁCIA (nezávislý Auditor, koncová kontrola po Programovaní, pred Hotovo).\n"
+        "1. Si NEZÁVISLÝ overovateľ MIMO tímu AI Agenta — over z VONKU (žiadny agent sa nevie auditovať sám). "
+        "SI READ + RUN-ONLY: smieš ČÍTAŤ a SPUSTIŤ appku na overenie, ale NIKDY neupravuj súbor, nepíš kód "
+        "ani necommituj. TY NÁJDEŠ — opravuje AI Agent (zachovaná nezávislosť).\n"
+        "2. RELEASE-ACCEPTANCE (behaviorálny pilier): over, že appka robí to, čo brief sľúbil. Engine už "
+        "spustil appku proti INTERNÝM FIXTÚRAM (nie zákazníckej inštancii — deploy je mimo pipeline; "
+        "„Hotovo“ = overené, nie nasadené) — výsledok je nižšie. Zohľadni ho v synthéze.\n"
+        + smoke_block
+        + "3. ADVERZARIÁLNE SPOT-CHECKY (zamerané, NIE per-task): aktívne lov diery v RIZIKOVÝCH častiach — "
+        "bezpečnosť, peniaze/výpočty, hlavný kontrakt. Verify-don't-trust: over oproti artefaktom a bežiacej "
+        "appke, NIE oproti slovu AI Agenta.\n"
+        "4. §4 HARD-SECURITY (explicitne): over, že P0 pravidlá držia v KÓDE aj v LOGOCH — žiadny credential "
+        "v zdrojáku / commitnutý / v logoch; secrets len v `.env`/runtime env; `VITE_*` len public hodnoty. "
+        "Únik credentialu je FAIL.\n"
+        f"5. {depth}\n"
+        "6. Vráť `kind=verdict`:\n"
+        "   - ak je verzia overená (acceptance + spot-checky + §4 čisté) → `verdict=true` (PASS); do "
+        "`findings` daj prípadné neblokujúce poznámky.\n"
+        "   - ak nájdeš zlyhanie → `verdict=false` (FAIL); konkrétne zlyhania vymenuj v `findings` a do "
+        "`proposed_fix` napíš ZAMERANÝ rozsah opravy pre AI Agenta (NEvykonávaj ho — opravuje AI Agent, ty "
+        "re-verifikuješ). FAIL sa vráti AI Agentovi do ohraničenej slučky.\n"
+        "Ukonči odpoveď štruktúrovaným stavovým výstupom (F-007-orchestration-cockpit.md §5.3)."
+    )
+
+
 # E5 (CR-NS-045): the per-task human-effort estimate is the metrics page's human-baseline source — kept
 # in BOTH task_plan prompts below (skeleton → feat-level Σ; per-feat → per-task), advisory, never blocking.
 _TASK_PLAN_ESTIMATE_NOTE = (
@@ -1108,18 +1179,18 @@ def _gate_e_open_findings(db: Session, version_id: uuid.UUID) -> int:
 def auto_chain_limit(db: Session, version_id: uuid.UUID) -> int:
     """Upper bound for the runner's auto-chain backstop (:mod:`backend.services.pipeline_runner`).
 
-    PROVISIONAL 4-phase bound (CR-V2-009, R-AUTOCHAIN). The v1 bound budgeted the full 11-stage waterfall
+    FINAL 4-phase bound (R-AUTOCHAIN, finalized CR-V2-014). The v1 bound budgeted the full 11-stage waterfall
     PLUS the Gate-E self-loop question ceiling PLUS topic slack — but the 4-phase model has NO Gate-E
-    self-loop, so that slack is dropped. The new non-monotonic loop is the Auditor's bounded fix↔re-verify
-    cycle (Verifikácia FAIL → Programovanie → Verifikácia, up to :data:`AUDITOR_LOOP_MAX` rounds), which
-    only fully exists after CR-V2-014. So this CR sets a provisional bound = ``len(STAGE_ORDER)`` (the
-    monotonic phase advance) + an Auditor-loop margin; **CR-V2-014 finalizes it** by wiring the named
-    ``AUDITOR_LOOP_MAX`` term once the Verifikácia loop is implemented, so a legitimately deep (but bounded)
-    Auditor loop does not mis-trip the backstop. A pure runaway backstop — every real path settles well
-    before it. fast_fix is unaffected (its chain is ≤3, far under any bound). The ``db``/``version_id`` args
-    are kept (the runner calls it per-version) for CR-V2-014, which may scale the margin per build."""
-    # Each Auditor FAIL round re-enters Programovanie then Verifikácia → 2 phase steps per round; budget
-    # AUDITOR_LOOP_MAX such rounds on top of the monotonic phase advance.
+    self-loop, so that slack is dropped. The only non-monotonic loop is the Auditor's bounded fix↔re-verify
+    cycle, which CR-V2-014 implemented (:func:`_run_verifikacia_round` → :func:`_settle_verifikacia_verdict`):
+    a Verifikácia FAIL re-enters Programovanie then Verifikácia → TWO phase steps per round, up to the named
+    :data:`AUDITOR_LOOP_MAX` rounds. The bound therefore budgets the monotonic phase advance
+    (``len(STAGE_ORDER)``) PLUS ``2 * AUDITOR_LOOP_MAX`` so a legitimately long (but bounded) Auditor loop —
+    a full 5-round fix↔re-verify — NEVER mis-trips the runner backstop; only a true runaway (the loop's own
+    bound failed) ever hits it. fast_fix is unaffected (its chain is ≤3, far under any bound). The
+    ``db``/``version_id`` args are kept (the runner calls it per-version) for a future per-build margin."""
+    # Each Auditor FAIL round re-enters Programovanie then Verifikácia → 2 phase steps per round; budget the
+    # named AUDITOR_LOOP_MAX such rounds (R-AUTOCHAIN final term) on top of the monotonic phase advance.
     return len(STAGE_ORDER) + 2 * AUDITOR_LOOP_MAX
 
 
@@ -3632,15 +3703,23 @@ async def run_dispatch(
     if stage == "programovanie":
         return await _run_build_round(db, state, on_event=on_event, directive=directive, on_message=on_message)
 
+    # Verifikácia round (CR-V2-014): the independent Auditor's END verification — release-acceptance against
+    # INTERNAL FIXTURES (via _run_release_smoke; never a customer instance — OQ-3/D6) + adversarial spot-checks
+    # + explicit §4 hard-security verification. Emits ONE kind=verdict; PASS → dial-governed end sign-off to
+    # Hotovo (no-silent-done invariant), FAIL → bounded fix↔re-verify loop back to the AI Agent (AUDITOR_LOOP_MAX),
+    # then escalate. Owns its own smoke → verdict → settle lifecycle, so it early-returns here (the v1 gate_g
+    # Coordinator-relay verify_done / _infer_regate_entry_stage Director PASS/FAIL regate inference is replaced).
+    if stage == "verifikacia":
+        return await _run_verifikacia_round(db, state, on_event=on_event, directive=directive, on_message=on_message)
+
     # 4-phase dispatch. The v1 stage-specific routing (gate_e per-question round / build per-task loop /
-    # task_plan incremental passes / kickoff triage / release publish) is collapsed: each phase runs as a
-    # generic agent turn through the shared invoke path, with a per-phase BRIEF. Milestone C/D give each
-    # phase its rich brief — Príprava (the interactive Zadanie→Špecifikácia dialogue, CR-V2-010) + Návrh
-    # (the design doc + task plan, CR-V2-011, which also runs the Auditor's upfront review, CR-V2-013) +
-    # Programovanie (the self-checking loop, CR-V2-012 above) here; Verifikácia (CR-V2-014) next. The v1
-    # ``_run_gate_e_round`` per-question machinery is REMOVED wholesale (CR-V2-013) — there is no Gate-E
-    # routing anywhere in this 4-phase dispatch (``_run_task_plan_round`` folded into Návrh, CR-V2-011;
-    # ``_run_build_round`` was rebuilt + re-homed to Programovanie, CR-V2-012).
+    # task_plan incremental passes / kickoff triage / release publish) is collapsed: each phase owns its own
+    # round runner above (Návrh → _run_navrh_round + upfront review CR-V2-013; Programovanie → _run_build_round
+    # CR-V2-012; Verifikácia → _run_verifikacia_round CR-V2-014). The ONLY phase that reaches this generic
+    # single-turn path is Príprava (the interactive Zadanie→Špecifikácia dialogue, CR-V2-010) — plus a Manažér
+    # uprav/ask/answer ``directive`` re-dispatch of any phase (the framed message IS the prompt; direct comms).
+    # The v1 ``_run_gate_e_round`` per-question machinery is REMOVED wholesale (CR-V2-013) — there is no Gate-E
+    # routing anywhere in this 4-phase dispatch.
     if directive is not None:
         prompt = directive  # the Manažér's framed uprav/ask/answer message IS the prompt (direct comms)
     elif stage == "priprava":
@@ -4216,6 +4295,247 @@ async def _materialize_inline_navrh_plan(
     return None
 
 
+async def _settle_verifikacia_verdict(
+    db: Session,
+    state: PipelineState,
+    *,
+    verdict: str,
+    on_message: Optional[MessageCallback] = None,
+) -> PipelineState:
+    """Apply an Auditor Verifikácia ``verdict`` (PASS / FAIL) and settle the state (CR-V2-014; VERIF-1..3,
+    AUD-2, AUD-3). The SINGLE source of truth shared by BOTH verdict paths so they can never diverge:
+
+      * the AUTONOMOUS path — :func:`_run_verifikacia_round` runs the Auditor + smoke and applies the
+        Auditor's own verdict at a non-stopping dial level;
+      * the MANUAL path — :func:`apply_action` ``action="verdict"`` when the Manažér ratifies/overrides at a
+        dial-governed Verifikácia stop.
+
+    The caller has ALREADY recorded the ``kind=verdict`` message (``author=auditor`` / ``recipient=manazer``
+    / ``stage=verifikacia`` — all valid v2 DB CHECK tokens). This applies the consequence:
+
+      * **PASS** — SETTLE ``awaiting_manazer`` for the dial-governed end sign-off (``schvalit`` → Hotovo). The
+        phase does NOT auto-advance to Hotovo here; whether the build stops for the Manažér or the engine
+        auto-signs-off (``plna``) is the dial's call, applied in the dispatch path / :func:`_settle_phase_boundary`.
+        Keeping the PASS-then-sign-off split preserves the no-silent-done invariant (safeguard #5): Hotovo is
+        reached ONLY through this recorded PASS verdict (:func:`_verifikacia_passed`).
+      * **FAIL** — the bounded Auditor fix↔re-verify loop (the Auditor FINDS, the AI Agent FIXES — §2.2
+        "Division of labour"). ``iteration`` counts the rounds. On the (n+1)-th still-failing round
+        (``iteration >= AUDITOR_LOOP_MAX``) STOP + escalate to the Manažér (``blocked``, a visible
+        ``system→manazer`` note). Otherwise loop the fix back to the AI Agent: reset the version's ``done``
+        tasks to ``todo`` (:func:`_reset_done_tasks_for_regate` — the WHOLE build re-runs against the
+        corrected understanding; the salvaged ``surgical_fix`` scope is threaded by :func:`_run_build_round`
+        via :func:`_latest_verifikacia_fix_scope`), mark ``is_regate``, bump the round counter, re-enter
+        Programovanie, and re-dispatch (warm sessions preserved — never reset mid-loop).
+
+    The sole-mutator invariant holds whichever path called it: the autonomous path runs inside the dispatch
+    path (a consequence of an action already routed through :func:`apply_action`), the manual path IS
+    :func:`apply_action`."""
+    version_id = state.version_id
+    if verdict == "PASS":
+        state.status = "awaiting_manazer"
+        state.next_action = "Verifikácia PASS — schváľ na Hotovo (nasadenie je samostatná akcia per zákazník)."
+        db.flush()
+        return state
+    # FAIL → bounded fix loop.
+    if state.iteration >= AUDITOR_LOOP_MAX:
+        # Exhausted the bounded loop → STOP + escalate to the Manažér (§2.2 (i)).
+        state.status = "blocked"
+        state.block_reason = "agent_error"  # R4 (D1): the version still fails verification after the bound
+        state.next_action = (
+            f"Auditor po {AUDITOR_LOOP_MAX} kolách stále FAIL — eskalované Manažérovi. "
+            "Usmerni opravu (Uprav) alebo rozhodni o ďalšom kroku."
+        )
+        db.flush()
+        note = _record_message(
+            db,
+            version_id=version_id,
+            stage="verifikacia",
+            author="system",
+            recipient="manazer",
+            kind="notification",
+            content=f"Verifikácia zlyhala {AUDITOR_LOOP_MAX}× — bounded fix-loop vyčerpaný, eskalované Manažérovi.",
+            payload={"phase": "verifikacia", "auditor_loop_exhausted": True},
+        )
+        if on_message is not None:
+            await on_message(note)
+        return state
+    # Loop the fix back to the AI Agent: reset done tasks so the build re-runs against the corrected
+    # understanding (the Auditor's findings/proposed_fix are threaded by _run_build_round), re-enter
+    # Programovanie, bump the round counter, preserve sessions (warm context — never reset mid-loop).
+    _reset_done_tasks_for_regate(db, version_id)
+    state.is_regate = True
+    state.iteration += 1
+    state.current_stage = "programovanie"
+    db.flush()
+    _begin_dispatch(db, state)
+    return state
+
+
+async def _run_verifikacia_round(
+    db: Session,
+    state: PipelineState,
+    *,
+    on_event: Optional[claude_agent.EventCallback] = None,
+    directive: Optional[str] = None,
+    on_message: Optional[MessageCallback] = None,
+) -> PipelineState:
+    """The Verifikácia round (CR-V2-014; VERIF-1..VERIF-3, AUD-1(b), AUD-2, AUD-3, AUD-6) — the v2 form of v1
+    ``gate_g``, now the independent Auditor's END verification.
+
+    Replaces the v1 ``gate_g`` Coordinator-relay verify (``verify_done`` / ``_verify_with_retries`` per-question
+    judge + ``_infer_regate_entry_stage`` Director PASS/FAIL regate inference) with ONE independent Auditor
+    invocation governed by the Miera autonómie dial. Today (before this CR) ``verifikacia`` fell through to the
+    generic agent turn with no smoke, no verdict, no fix loop; this is the missing round.
+
+    1. **Release-acceptance against INTERNAL FIXTURES** (the behavioural pillar, §2.5): the engine runs the
+       built app via :func:`_run_release_smoke` — an ephemeral isolated ``-p <slug>-smoke`` compose up/down,
+       NOT a customer instance (deploy is OUT of the pipeline, OQ-3/D6; "Hotovo" = verified, not deployed).
+       The boot + acceptance outcome is recorded ``system→manazer`` (valid v2 tokens) and fed into the
+       Auditor's brief. A boot/acceptance FAIL does NOT short-circuit — it is fed HONESTLY to the Auditor,
+       which weighs it into its verdict (the Auditor is the judge; the engine surfaces the deterministic
+       runtime floor).
+    2. **Auditor verdict turn** — the independent Auditor (``role=AUDITOR_ROLE``, READ + RUN-ONLY) runs the
+       adversarial spot-checks + the explicit §4 hard-security verification per :func:`_verifikacia_directive`
+       and emits ONE ``kind=verdict``. The verdict message is recorded ``author=auditor`` / ``recipient=manazer``
+       / ``stage=verifikacia`` / ``kind=verdict`` (all valid v2 DB CHECK tokens — never director/coordinator/
+       gate_g). DEPTH scales with the dial (OQ-9) via :func:`_resolve_dispatch_overrides` (effort) + the brief.
+    3. **Apply the verdict** via the shared :func:`_settle_verifikacia_verdict`:
+       * **PASS** → SETTLE for the dial-governed end stop, then the SHARED dial-settle
+         (:func:`_settle_phase_boundary`) auto-signs-off to Hotovo at a non-stopping level (gated by the
+         no-silent-done invariant — only through a recorded PASS verdict) or stops ``awaiting_manazer``.
+       * **FAIL** → loop the fix back to the AI Agent (re-enter Programovanie, bounded by
+         :data:`AUDITOR_LOOP_MAX`), then escalate.
+
+    A parse failure of the Auditor turn is fail-CLOSED here (unlike the upfront review, which is an early
+    safety net): Verifikácia IS the release gate — an unparseable verdict must NEVER reach Hotovo. It settles
+    ``blocked`` with a visible ``system→manazer`` note so the Manažér steers (Uprav / answer); the
+    no-silent-done invariant holds (no PASS on record → Hotovo unreachable).
+
+    The sole-mutator invariant holds: this runs inside the dispatch path, always a consequence of an action
+    routed through :func:`apply_action`. (``directive`` — a Manažér uprav/ask/answer re-dispatch — is accepted
+    for signature symmetry with the other round runners; the Auditor's verdict brief is engine-owned, so a
+    Manažér steer that lands here is folded into the brief context, never replacing the verdict instruction.)"""
+    version_id = state.version_id
+    slug = _project_slug_for_version(db, version_id)
+    version_label = db.execute(select(Version.version_number).where(Version.id == version_id)).scalar_one()
+
+    # 1. Release-acceptance against INTERNAL FIXTURES (boot leg + acceptance leg in ONE up/down cycle). NEVER
+    # touches a customer instance / uat_provisioner / deploy.py — an ephemeral -p <slug>-smoke stack only.
+    (smoke_ok, smoke_detail), acceptance = await _run_release_smoke(slug, version_label)
+    smoke_msg = _record_message(
+        db,
+        version_id=version_id,
+        stage="verifikacia",
+        author="system",
+        recipient="manazer",
+        kind="notification",
+        content=(f"Release smoke (interné fixtúry) — boot {'PASS' if smoke_ok else 'FAIL'}: {smoke_detail}"),
+        payload={"phase": "verifikacia", "smoke": {"pass": smoke_ok, "detail": smoke_detail}},
+    )
+    if on_message is not None:
+        await on_message(smoke_msg)
+    # The acceptance leg only ran if boot passed (else None). Record it + build the Slovak block for the brief.
+    if acceptance is not None:
+        acc_ok, acc_detail, acc_skipped = acceptance
+        acc_msg = _record_message(
+            db,
+            version_id=version_id,
+            stage="verifikacia",
+            author="system",
+            recipient="manazer",
+            kind="notification",
+            content=(f"Release acceptance — {'PASS' if acc_ok else ('SKIP' if acc_skipped else 'FAIL')}: {acc_detail}"),
+            payload={
+                "phase": "verifikacia",
+                "release_acceptance": {"pass": acc_ok, "detail": acc_detail, "skipped": acc_skipped},
+            },
+        )
+        if on_message is not None:
+            await on_message(acc_msg)
+        acc_line = "PASS" if acc_ok else ("SKIP" if acc_skipped else "FAIL")
+        smoke_block = (
+            f"   Engine release smoke (interné fixtúry): boot {'PASS' if smoke_ok else 'FAIL'} — {smoke_detail}; "
+            f"acceptance {acc_line} — {acc_detail}.\n"
+        )
+    else:
+        smoke_block = (
+            f"   Engine release smoke (interné fixtúry): boot FAIL — {smoke_detail} "
+            "(acceptance sa nespustila). Zohľadni to vo verdikte.\n"
+        )
+
+    # 2. The Auditor's verdict turn (independent, READ + RUN-ONLY). Recorded author=auditor / recipient=manazer
+    # / stage=verifikacia / kind=verdict by invoke_agent — all valid v2 tokens. Effort scales with the dial.
+    review = await invoke_agent_with_parse_retry(
+        db,
+        version_id=version_id,
+        role=AUDITOR_ROLE,
+        stage="verifikacia",
+        prompt=_verifikacia_directive(db, version_id, smoke_block=smoke_block),
+        on_event=on_event,
+        recipient="manazer",
+        on_message=on_message,
+    )
+    if isinstance(review, ParseFailure):
+        # Fail-CLOSED at the release gate: an unparseable verdict must NEVER reach Hotovo (unlike the upfront
+        # review's fail-open early net). Record it visibly + metered (system→manazer — NEVER the deferred-RED
+        # _record_internal_turn_parse_failure, which writes recipient="director", a token the v2 CHECK rejects)
+        # and settle blocked. The no-silent-done invariant holds: no PASS verdict on record → Hotovo unreachable.
+        msg = _record_message(
+            db,
+            version_id=version_id,
+            stage="verifikacia",
+            author="system",
+            recipient="manazer",
+            kind="notification",
+            content=(
+                "Verdikt Auditora vo Verifikácii sa nepodarilo spracovať ani po opakovaných pokusoch — "
+                "Verifikácia je blokovaná (release gate, fail-closed). Usmerni (Uprav) alebo over znova."
+            ),
+            payload=_failure_metrics_payload(review) or None,
+        )
+        if on_message is not None:
+            await on_message(msg)
+        state.status = "blocked"
+        state.block_reason = "agent_error"  # R4 (D1): the release verdict turn produced no parseable output
+        state.next_action = "Blokované — Auditor nevrátil platný verdikt Verifikácie. Usmerni (Uprav) alebo over znova."
+        db.flush()
+        return state
+
+    # 3. Apply the verdict (fail-closed: a verdict block without an explicit verdict=true is a FAIL — mirrors
+    # _verifikacia_passed). The kind=verdict message was already recorded by invoke_agent (author=auditor) but
+    # WITHOUT the canonical PASS/FAIL payload _verifikacia_passed / _latest_verifikacia_fix_scope read — record
+    # the canonical verdict message now (the durable Verifikácia artifact) so both gates see it.
+    is_pass = review.kind == "verdict" and bool(review.verdict)
+    verdict_str = "PASS" if is_pass else "FAIL"
+    verdict_msg = _record_message(
+        db,
+        version_id=version_id,
+        stage="verifikacia",
+        author="auditor",
+        recipient="manazer",
+        kind="verdict",
+        content=review.summary or f"Verifikácia {verdict_str}.",
+        payload={
+            "verdict": verdict_str,
+            "findings": review.findings,
+            "proposed_fix": review.proposed_fix,
+            "phase": "verifikacia",
+        },
+    )
+    if on_message is not None:
+        await on_message(verdict_msg)
+
+    settled = await _settle_verifikacia_verdict(db, state, verdict=verdict_str, on_message=on_message)
+    if verdict_str == "FAIL":
+        return settled  # the fix loop re-entered Programovanie (or escalated) — already settled
+    # PASS → the dial governs the end sign-off. _settle_verifikacia_verdict put it awaiting_manazer; now apply
+    # the SHARED dial-settle: a non-stopping level auto-signs-off to Hotovo (gated by the no-silent-done
+    # invariant — the PASS verdict is now on record), else it stays awaiting_manazer for the Manažér.
+    if _settle_phase_boundary(db, settled):
+        return settled  # (Verifikácia auto-sign-off advances to done inside _settle_phase_boundary, not here)
+    return settled
+
+
 async def _verify_with_retries(
     db: Session,
     state: PipelineState,
@@ -4656,6 +4976,45 @@ def _latest_surgical_fix_directive(db: Session, version_id: uuid.UUID) -> Option
     if not directive:
         return None
     return "## Cielená oprava od Directora (vykonaj v tomto buildu)\n" + directive
+
+
+def _latest_verifikacia_fix_scope(db: Session, version_id: uuid.UUID) -> Optional[str]:
+    """The Auditor's latest Verifikácia FAIL findings + ``proposed_fix``, formatted as the AI-Agent fix-scope
+    brief threaded into the Programovanie re-loop (CR-V2-014; AUD-3 — the salvaged ``surgical_fix`` targeted
+    re-run scope, now an AI-AGENT fix scope, NOT a Director directive).
+
+    Replaces the v1 ``_latest_surgical_fix_directive`` + ``_latest_gate_g_findings`` re-gate threading
+    (which read ``director→implementer``/``gate_g`` tokens the v2 DB CHECK rejects). The v2 source is the
+    Auditor's own verdict: the LATEST ``stage=verifikacia`` ∧ ``kind=verdict`` ∧ ``payload.verdict=='FAIL'``
+    message (``author=auditor`` — a valid v2 token). Its ``findings`` (the concrete failures) + ``proposed_fix``
+    (the targeted scope the Auditor proposes, never an edit by it — independence) become the fix brief the AI
+    Agent re-runs against in the bounded fix↔re-verify loop. ``None`` when there is no FAIL verdict on record
+    (a fresh build, or the last verdict was a PASS) → the build loop falls back to its generated task briefs."""
+    latest = db.execute(
+        select(PipelineMessage)
+        .where(
+            PipelineMessage.version_id == version_id,
+            PipelineMessage.stage == "verifikacia",
+            PipelineMessage.kind == "verdict",
+        )
+        .order_by(PipelineMessage.seq.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if latest is None or not latest.payload or latest.payload.get("verdict") != "FAIL":
+        return None
+    findings = latest.payload.get("findings") or []
+    proposed_fix = latest.payload.get("proposed_fix")
+    parts: list[str] = []
+    if proposed_fix:
+        parts.append(str(proposed_fix).strip())
+    if findings:
+        parts.append("\n".join(f"- {f}" for f in findings))
+    if not parts:
+        return None
+    return (
+        "## Verifikácia FAIL — oprav podľa nálezov Auditora (cielená oprava, potom Auditor re-verifikuje)\n"
+        + "\n\n".join(parts)
+    )
 
 
 def _verify_reason_is_scope(directive: Optional[dict[str, Any]]) -> bool:
@@ -5803,12 +6162,24 @@ async def _run_build_round(
     db.flush()
 
     # Cross-cutting invariants the AI Agent codified once in the Návrh gate_report (re-read each round, threaded
-    # into every task brief). The v1 gate_g/surgical-fix re-gate threading is GONE — the Verifikácia FAIL fix
-    # loop (the Auditor's findings → AI-Agent fix scope) is owned by CR-V2-014, not the per-task build loop.
+    # into every task brief).
     cross_cutting = _fetch_cross_cutting_rules(db, version_id)
     # The Manažér's framed return/answer (an ``uprav`` / ``answer`` re-dispatch) seeds attempt 1 of whichever
     # task runs first in THIS dispatch (the resumed task), then is consumed so later turns use generated briefs.
     pending_directive = directive
+    # Verifikácia FAIL fix-loop (CR-V2-014; AUD-3): a re-gate re-entry (``is_regate`` set by the verdict FAIL
+    # settle) re-runs the build against the Auditor's findings → the SALVAGED ``surgical_fix`` scope (the
+    # Auditor FINDS, the AI Agent FIXES — independence). Thread the Auditor's latest Verifikácia FAIL
+    # findings/proposed_fix as the first task's brief, so the AI Agent's re-run is targeted, not blind. A
+    # Manažér directive (an explicit steer) takes precedence — it is the more specific instruction.
+    if pending_directive is None and state.is_regate:
+        pending_directive = _latest_verifikacia_fix_scope(db, version_id)
+    # Consume the re-gate flag for THIS re-run: the fix scope is now threaded (or there was none on record).
+    # A NEXT Verifikácia FAIL re-sets it (verdict settle); this prevents a stale flag from re-threading a
+    # superseded fix scope on a later (e.g. Manažér-steered) Programovanie re-dispatch.
+    if state.is_regate:
+        state.is_regate = False
+        db.flush()
 
     while True:
         # CR-NS-027 visibility crux: SessionLocal is expire_on_commit=False, so after the loop's per-message
@@ -6254,49 +6625,12 @@ async def apply_action(
             content=verdict,
             payload={"verdict": verdict, "phase": "verifikacia"},
         )
-        if verdict == "PASS":
-            # Verified. SETTLE at Verifikácia awaiting the Manažér's end sign-off (``schvalit`` → Hotovo) —
-            # the dial-governed end schvaľovací bod. The phase does NOT auto-advance to Hotovo here: whether
-            # the build stops for the Manažér or the engine auto-signs-off (``plna``) is the dial's call,
-            # applied in the dispatch path (CR-V2-014). Keeping the PASS-then-sign-off split preserves the
-            # no-silent-done invariant — Hotovo is only ever reached through this recorded PASS verdict.
-            state.status = "awaiting_manazer"
-            state.next_action = "Verifikácia PASS — schváľ na Hotovo (nasadenie je samostatná akcia per zákazník)."
-            db.flush()
-            return state
-        # FAIL → bounded fix loop. ``iteration`` counts the fix↔re-verify rounds the Auditor has driven.
-        if state.iteration >= AUDITOR_LOOP_MAX:
-            # Exhausted the bounded loop → STOP + escalate to the Manažér (§2.2 (i)). Settle to blocked with
-            # an agent_error reason so the board surfaces it; the Manažér steers via ``uprav`` or re-runs.
-            state.status = "blocked"
-            state.block_reason = "agent_error"
-            state.next_action = (
-                f"Auditor po {AUDITOR_LOOP_MAX} kolách stále FAIL — eskalované Manažérovi. "
-                "Usmerni opravu (Uprav) alebo rozhodni o ďalšom kroku."
-            )
-            db.flush()
-            _record_message(
-                db,
-                version_id=version_id,
-                stage="verifikacia",
-                author="system",
-                recipient="manazer",
-                kind="notification",
-                content=(
-                    f"Verifikácia zlyhala {AUDITOR_LOOP_MAX}× — bounded fix-loop vyčerpaný, eskalované Manažérovi."
-                ),
-                payload={"phase": "verifikacia", "auditor_loop_exhausted": True},
-            )
-            return state
-        # Loop the fix back to the AI Agent: re-enter Programovanie (the AI Agent fixes), bump the round
-        # counter, preserve sessions (warm context — never reset mid-loop). The Auditor re-verifies on the
-        # next Verifikácia turn. ``is_regate`` marks the re-loop for the dispatch path.
-        state.is_regate = True
-        state.iteration += 1
-        state.current_stage = "programovanie"
-        db.flush()
-        _begin_dispatch(db, state)
-        return state
+        # Apply the verdict via the SHARED settle (CR-V2-014) so the MANUAL path here and the AUTONOMOUS path
+        # (:func:`_run_verifikacia_round`) can never diverge: PASS → settle for the dial-governed end sign-off
+        # (no-silent-done invariant); FAIL → bounded fix↔re-verify loop (reset done tasks + re-enter
+        # Programovanie with the Auditor's fix scope threaded, bounded by :data:`AUDITOR_LOOP_MAX`, then
+        # escalate). The ``kind=verdict`` message above is the canonical record both gates read.
+        return await _settle_verifikacia_verdict(db, state, verdict=verdict)
 
     if action == "pokracovat":
         # Resume a Programovanie loop the Manažér paused (cooperative pause boundary) — no comment, no phase

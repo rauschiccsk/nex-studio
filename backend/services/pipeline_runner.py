@@ -155,12 +155,13 @@ async def _run(version_id: uuid.UUID, directive: str | None = None, gate_e_dispa
             # single-flight task — no Manažér gate between them. In the 4-phase model the chain advances
             # monotonically across STAGE_ORDER (Príprava → Návrh → Programovanie → Verifikácia) under the
             # Miera autonómie dial, plus the Auditor's bounded fix↔re-verify self-loop (Verifikácia FAIL →
-            # Programovanie → Verifikácia), which is wired in CR-V2-014. The Gate-E self-loop is GONE.
+            # Programovanie → Verifikácia), implemented in CR-V2-014. The Gate-E self-loop is GONE.
             # Continue dispatching with a phase-correct activity callback, broadcasting each intermediate
             # state so the board steps through the auto-advanced phases live, until it settles. Bounded as a
-            # backstop by orchestrator.auto_chain_limit = len(STAGE_ORDER) + the Auditor-loop margin (the
-            # provisional 4-phase bound — R-AUTOCHAIN, finalized with AUDITOR_LOOP_MAX in CR-V2-014). Every
-            # real path settles (status != agent_working) well before the bound — it only stops a runaway.
+            # backstop by orchestrator.auto_chain_limit = len(STAGE_ORDER) + 2 * AUDITOR_LOOP_MAX (the FINAL
+            # 4-phase bound — R-AUTOCHAIN finalized in CR-V2-014, so a legit 5-round Auditor loop never trips
+            # it). Every real path settles (status != agent_working) well before the bound — it only stops a
+            # runaway.
             guard = 0
             # Compute the backstop ONLY when we're actually about to auto-chain — avoids the read on a plain
             # settle and the version-vanished (state is None) edge.

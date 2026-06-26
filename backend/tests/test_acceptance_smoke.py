@@ -43,12 +43,16 @@ from backend.services import orchestrator
 from backend.services.pipeline_status import PipelineStatusBlock
 
 # v2.0.0-dev: the acceptance-smoke DRIVER + boot/readiness/compose-port helpers below are the SURVIVING
-# behavioural release-oracle (§2.5) — they stay live and GREEN on the v2 schema. Only the tests that wire
-# the driver into the v1 ENGINE gate_g verdict flow (verify_done at gate_g, fast-fix stage order,
-# acceptance-satisfied gating of the v1 verdict) are v1-engine and individually deferred below with
-# @pytest.mark.skip(reason=_V1_ENGINE) — those gate hooks are rebuilt on the v2 verifikacia phase in
-# Milestone C/D.
+# behavioural release-oracle (§2.5) — they stay live and GREEN on the v2 schema (the v2 Verifikácia round
+# REUSES _run_release_smoke against internal fixtures). The tests that wired the driver into the v1 ENGINE
+# gate_g verdict flow (verify_done at gate_g, _release_acceptance_satisfied gating of the v1 Director verdict)
+# are SUPERSEDED: CR-V2-014 rebuilt that wiring on the v2 verifikacia phase (the smoke feeds the independent
+# Auditor verdict; a failing acceptance → Auditor FAIL → no Hotovo). The behaviour now lives in
+# tests/test_orchestrator_v2_verifikacia.py against the live v2 DB; the v1 verify_done /
+# _release_acceptance_satisfied functions are dead-pending-removal (they emit director/gate_g tokens the v2
+# CHECK rejects, so they cannot be un-skipped as-is — their v2 replacement is the new file).
 _V1_ENGINE = "v1 engine behaviour — replaced by v2 in Milestone C/D"
+_SUPERSEDED = "v1 gate_g verdict wiring — SUPERSEDED by CR-V2-014 (tests/test_orchestrator_v2_verifikacia.py)"
 
 COMPOSE_YML = """\
 services:
@@ -616,7 +620,7 @@ def _system_notes(db, version_id):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(reason=_V1_ENGINE)
+@pytest.mark.skip(reason=_SUPERSEDED)
 async def test_verify_done_gate_g_smoke_fail_short_circuits(db_session, monkeypatch) -> None:
     """A boot smoke FAIL returns a non-None reason BEFORE the judgment (no Coordinator turn), records the
     boot evidence, and never records a ``release_acceptance`` notification (acceptance never ran)."""
@@ -641,7 +645,7 @@ async def test_verify_done_gate_g_smoke_fail_short_circuits(db_session, monkeypa
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(reason=_V1_ENGINE)
+@pytest.mark.skip(reason=_SUPERSEDED)
 async def test_verify_done_gate_g_acceptance_fail_records_and_proceeds(db_session, monkeypatch) -> None:
     """A boot PASS + acceptance FAIL records BOTH notifications and STILL runs the judgment (acceptance does
     NOT short-circuit — the PASS guard enforces it). The judge prompt carries the honest acceptance FAIL."""
@@ -670,7 +674,7 @@ async def test_verify_done_gate_g_acceptance_fail_records_and_proceeds(db_sessio
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(reason=_V1_ENGINE)
+@pytest.mark.skip(reason=_SUPERSEDED)
 async def test_verify_done_gate_g_pass_feeds_both_verdicts(db_session, monkeypatch) -> None:
     """A boot PASS + acceptance PASS records both, runs the judgment, and injects both verdict lines."""
     version_id = _seed_version(db_session, "gate_g")
@@ -692,7 +696,7 @@ async def test_verify_done_gate_g_pass_feeds_both_verdicts(db_session, monkeypat
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(reason=_V1_ENGINE)
+@pytest.mark.skip(reason=_SUPERSEDED)
 async def test_verify_done_non_gate_g_never_runs_smoke(db_session, monkeypatch) -> None:
     """At a non-``gate_g`` gate the smoke is never invoked (and the judge prompt has no verdict line)."""
     version_id = _seed_version(db_session, "gate_b")
@@ -714,11 +718,15 @@ async def test_verify_done_non_gate_g_never_runs_smoke(db_session, monkeypatch) 
     assert "app-starts smoke" not in coord_prompt.lower()
 
 
-@pytest.mark.skip(reason=_V1_ENGINE)
-def test_fast_fix_stage_order_has_no_gate_g() -> None:
-    """Structural fast-fix guarantee: the fast-fix lane can never reach the smoke (no ``gate_g``)."""
+def test_fast_fix_stage_order_reaches_verifikacia_no_v1_gate_g() -> None:
+    """v2 re-key (CR-V2-014): the v1 ``gate_g`` stage is GONE. Both lanes now end at the 4-phase Verifikácia
+    (the release smoke + Auditor verdict) → ``done``; no ``gate_g`` survives anywhere. The fast-fix lane skips
+    Návrh but STILL passes through Verifikácia (a light end check), then ``done`` (Hotovo = verified; deploy is
+    OUT — OQ-3/D6)."""
     assert "gate_g" not in orchestrator.FAST_FIX_STAGE_ORDER
-    assert "gate_g" in orchestrator.STAGE_ORDER, "the full-flow lane still owns gate_g"
+    assert "gate_g" not in orchestrator.STAGE_ORDER, "v1 gate_g is replaced by the 4-phase Verifikácia"
+    assert "verifikacia" in orchestrator.FAST_FIX_STAGE_ORDER and orchestrator.FAST_FIX_STAGE_ORDER[-1] == "done"
+    assert "verifikacia" in orchestrator.STAGE_ORDER and orchestrator.STAGE_ORDER[-1] == "done"
 
 
 # ---------------------------------------------------------------------------
@@ -752,7 +760,7 @@ def _record_verdict(db, version_id, verdict: str) -> None:
     )
 
 
-@pytest.mark.skip(reason=_V1_ENGINE)
+@pytest.mark.skip(reason=_SUPERSEDED)
 def test_acceptance_satisfied_pass_skip_fail_none(db_session) -> None:
     """pass==True → satisfied; legit SKIP → satisfied; FAIL → not; no notification → not."""
     none_v = _seed_version(db_session, "gate_g")
@@ -771,7 +779,7 @@ def test_acceptance_satisfied_pass_skip_fail_none(db_session) -> None:
     assert orchestrator._release_acceptance_satisfied(db_session, fail_v) is False
 
 
-@pytest.mark.skip(reason=_V1_ENGINE)
+@pytest.mark.skip(reason=_SUPERSEDED)
 def test_acceptance_satisfied_uses_latest(db_session) -> None:
     """The LATEST acceptance notification wins: a FAIL after a PASS → not satisfied; a PASS after → yes."""
     version_id = _seed_version(db_session, "gate_g")
@@ -782,7 +790,7 @@ def test_acceptance_satisfied_uses_latest(db_session) -> None:
     assert orchestrator._release_acceptance_satisfied(db_session, version_id) is True
 
 
-@pytest.mark.skip(reason=_V1_ENGINE)
+@pytest.mark.skip(reason=_SUPERSEDED)
 def test_acceptance_satisfied_freshness_anchored_on_boundary(db_session) -> None:
     """A PASS from a PRIOR iteration (before the latest verdict boundary) does NOT satisfy the current one."""
     version_id = _seed_version(db_session, "gate_g")
@@ -799,7 +807,7 @@ def test_acceptance_satisfied_freshness_anchored_on_boundary(db_session) -> None
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(reason=_V1_ENGINE)
+@pytest.mark.skip(reason=_SUPERSEDED)
 async def test_verdict_pass_blocked_until_acceptance_satisfied(db_session, monkeypatch) -> None:
     """``apply_action(verdict, PASS)`` is REFUSED while the acceptance isn't satisfied, and ALLOWED once it
     is — and the refusal records NO verdict message (the boundary must not move)."""
@@ -832,7 +840,7 @@ async def test_verdict_pass_blocked_until_acceptance_satisfied(db_session, monke
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(reason=_V1_ENGINE)
+@pytest.mark.skip(reason=_SUPERSEDED)
 async def test_verdict_fail_never_blocked_by_acceptance(db_session, monkeypatch) -> None:
     """A FAIL verdict is ALWAYS allowed (it returns the version to fix), even with no acceptance run."""
     monkeypatch.setattr(orchestrator.claude_agent, "PROJECTS_ROOT", Path("/nonexistent-smoke-root"))

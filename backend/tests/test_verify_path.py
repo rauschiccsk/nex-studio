@@ -33,9 +33,15 @@ from backend.services.pipeline_status import ParseFailure, PipelineStatusBlock
 
 # v2.0.0-dev: this whole module drives the v1 ENGINE verify path (Coordinator relay of a worker's
 # parse-failure, the gate_b designer-report verify/auto-return) off v1 gate-flow pipeline_state rows the
-# v2 CHECKs reject. The v2 verify path follows the Auditor / per-phase rebuild in Milestone C/D. Kept as
-# the SPEC of the verify behaviour C/D must re-build; deferred meanwhile.
-pytestmark = pytest.mark.skip(reason="v1 engine behaviour — replaced by v2 in Milestone C/D")
+# v2 CHECKs reject. v2 RETIRES the Coordinator-relay verify entirely (the independent Auditor is the
+# verifier; no Coordinator hub-and-spoke). The verify behaviour is REPLACED by CR-V2-014's Verifikácia
+# round (the Auditor verdict + bounded fix↔re-verify loop), tested against the live v2 DB in
+# tests/test_orchestrator_v2_verifikacia.py. The v1 verify_done / _verify_with_retries functions are
+# dead-pending-removal (they emit director/coordinator/gate_b tokens the v2 CHECK rejects, so this module
+# cannot be un-skipped as-is — its v2 replacement is the new file).
+pytestmark = pytest.mark.skip(
+    reason="v1 Coordinator-relay verify — SUPERSEDED by CR-V2-014 (tests/test_orchestrator_v2_verifikacia.py)"
+)
 
 STAGE = "gate_b"
 

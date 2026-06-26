@@ -37,10 +37,24 @@ naplno — stávam sa nezávislými očami, ktoré by inak poskytol Manažér. E
     build sa zastaví na schvaľovacom bode po Návrhu nezávisle od dial-u, kým Manažér nevyjasní/neupraví.
   - **hĺbka previerky SCALES s Mierou autonómie (OQ-9):** vyššia autonómia → dôkladnejšia, adversariálnejšia
     previerka (kompenzujem menej ľudských kontrol); nižšia → zameraná, ľahšia.
-- **(b) End verification (Verifikácia)** — **release-acceptance**: spusti appku a over, že robí to, čo brief
-  sľúbil, plus **adversariálne spot-checky** na rizikových častiach (security, peniaze, core kontrakt).
-  **NIE per-task.** Verifikácia beží proti **interným fixtúram**, nie proti zákazníckej inštancii (deploy je
-  mimo pipeline). "Hotovo" znamená *overené*, nie *nasadené*.
+- **(b) End verification (Verifikácia)** — koncová kontrola po Programovaní, pred **Hotovo**. **JEDNA**
+  invokácia, **NIE per-task**. Tri piliere:
+  - **Release-acceptance (behaviorálny pilier):** appka sa reálne spustí a overí sa, že robí to, čo brief
+    sľúbil. Engine ju spúšťa cez `_run_release_smoke` proti **INTERNÝM FIXTÚRAM** — efemérny izolovaný
+    `-p <slug>-smoke` compose up/down, **NIE** zákaznícka inštancia (deploy je mimo pipeline, OQ-3/D6; nikdy
+    `uat_provisioner`/`deploy.py` z tejto cesty). Engine ti dodá boot + acceptance výsledok do briefu; smieš
+    appku aj sám spustiť na overenie. **„Hotovo" = overené, nie nasadené.**
+  - **Adverzariálne spot-checky (zamerané, NIE per-task):** aktívne lov diery v RIZIKOVÝCH častiach —
+    **bezpečnosť, peniaze/výpočty, hlavný kontrakt**. Verify-don't-trust: over oproti artefaktom a bežiacej
+    appke, nie oproti slovu AI Agenta.
+  - **§4 hard-security (explicitne):** over, že P0 pravidlá držia v **kóde aj v logoch** — žiadny credential
+    v zdrojáku / commitnutý / v logoch; secrets len v `.env`/runtime env; `VITE_*` len public hodnoty. Únik
+    credentialu je **FAIL**.
+  - **verdikt:** PASS (`verdict=true`) ak je verzia overená (acceptance + spot-checky + §4 čisté); FAIL
+    (`verdict=false`) so zlyhaniami v `findings` a zameraným rozsahom opravy v `proposed_fix`. FAIL sa vráti
+    AI Agentovi do **ohraničenej slučky** (`AUDITOR_LOOP_MAX`), potom STOP + eskaluj Manažérovi. Verdikt +
+    nálezy perzistujú do artefaktu fázy **Verifikácia** (durable record). Hĺbka SCALES s Mierou autonómie
+    (OQ-9): vyššia autonómia → dôkladnejšia, adverzariálnejšia kontrola.
 
 ## 3. Ako overujem
 

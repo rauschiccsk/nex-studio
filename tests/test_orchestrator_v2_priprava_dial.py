@@ -232,37 +232,45 @@ async def test_priprava_approve_spec_always_stops_even_at_plna(db_session, monke
     assert orchestrator.dial_stops_at("plna", "approve_spec") is True
 
 
+def _stub_verifikacia_smoke(monkeypatch):
+    """The Verifikácia round (CR-V2-014) runs _run_release_smoke; stub it (no docker) so these dial tests
+    exercise only the PASS/FAIL → dial-settle wiring."""
+
+    async def _fake(slug, version_label):
+        return (True, "app booted + responds"), (True, "5 assertions", False)
+
+    monkeypatch.setattr(orchestrator, "_run_release_smoke", _fake)
+
+
 async def test_verifikacia_auto_signoff_requires_recorded_pass(db_session, monkeypatch):
-    # no-silent-done invariant under the dial: at plná, the Verifikácia end stop auto-signs-off to Hotovo
-    # ONLY when a PASS verdict is on record; absent one it STOPS regardless of the dial.
+    # no-silent-done invariant (CR-V2-014): at plná, the Verifikácia end stop reaches Hotovo ONLY through a
+    # recorded Auditor PASS verdict. A non-PASS verdict (here fail-closed: no explicit verdict=true) does NOT
+    # auto-sign-off to Hotovo — it loops the fix back to the AI Agent (Programovanie), never a silent done.
     version, _ = _make_version(db_session, project_dial="plna")
     _seed_state(db_session, version.id, stage="verifikacia", actor="auditor")
-    _stub_invoke(monkeypatch, _gate_report("verifikacia"))  # no PASS verdict recorded
+    _stub_verifikacia_smoke(monkeypatch)
+    # the Auditor returns a verdict block WITHOUT verdict=true → fail-closed FAIL
+    no_pass = PipelineStatusBlock(stage="verifikacia", kind="verdict", summary="nejasné", awaiting="manazer")
+    _stub_invoke(monkeypatch, no_pass)
     state = await orchestrator.run_dispatch(db_session, version.id)
-    assert state.current_stage == "verifikacia"
-    assert state.status == "awaiting_manazer"  # STOP — never a silent done without verification
+    assert state.current_stage != "done"  # never a silent done without a PASS verdict
+    assert orchestrator._verifikacia_passed(db_session, version.id) is False
 
 
 async def test_verifikacia_auto_signoff_to_done_with_recorded_pass(db_session, monkeypatch):
-    # With a recorded Auditor PASS, plná auto-signs-off the Verifikácia end stop to Hotovo (terminal).
+    # With an Auditor PASS verdict, plná auto-signs-off the Verifikácia end stop to Hotovo (terminal). The
+    # PASS is recorded by the Verifikácia round (CR-V2-014); _settle_phase_boundary then auto-advances to done.
     version, _ = _make_version(db_session, project_dial="plna")
     _seed_state(db_session, version.id, stage="verifikacia", actor="auditor")
-    db_session.add(
-        PipelineMessage(
-            version_id=version.id,
-            stage="verifikacia",
-            author="auditor",
-            recipient="manazer",
-            kind="verdict",
-            content="PASS",
-            payload={"verdict": "PASS", "phase": "verifikacia"},
-        )
+    _stub_verifikacia_smoke(monkeypatch)
+    pass_block = PipelineStatusBlock(
+        stage="verifikacia", kind="verdict", summary="overené", awaiting="manazer", verdict=True
     )
-    db_session.flush()
-    _stub_invoke(monkeypatch, _gate_report("verifikacia"))
+    _stub_invoke(monkeypatch, pass_block)
     state = await orchestrator.run_dispatch(db_session, version.id)
     assert state.current_stage == "done"
     assert state.status == "done"
+    assert orchestrator._verifikacia_passed(db_session, version.id) is True
 
 
 async def test_per_build_dial_beats_project_in_settle(db_session, monkeypatch):

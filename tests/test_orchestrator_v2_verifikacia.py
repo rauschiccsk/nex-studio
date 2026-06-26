@@ -1,0 +1,522 @@
+"""CR-V2-014 — Verifikácia phase (the independent Auditor's END verification, replaces v1 gate_g).
+
+Exercised against the REAL v2 branch DB (4-phase + 2-role CHECKs) so the FAIL / verdict / escalation / fix
+branches insert against the LIVE constraints — a happy-path-only test would not catch a recipient='director'
+or stage='gate_g' write the v2 CHECK rejects.
+
+The Verifikácia round (``_run_verifikacia_round``) is the v2 form of v1 gate_g:
+
+* **Release-acceptance against INTERNAL FIXTURES** — the engine runs the built app via ``_run_release_smoke``
+  (an ephemeral isolated ``-p <slug>-smoke`` compose up/down), NEVER a customer instance / uat_provisioner /
+  deploy.py (OQ-3/D6 — "Hotovo" = verified, not deployed). The boot + acceptance result is fed to the Auditor.
+* **Auditor verdict turn** — the independent Auditor emits ONE ``kind=verdict`` (PASS/FAIL) with the
+  adversarial spot-checks + explicit §4 hard-security verification; recorded ``author=auditor`` /
+  ``recipient=manazer`` / ``stage=verifikacia`` (valid v2 tokens).
+* **PASS** → the dial governs the end sign-off (``plna`` auto-signs-off to Hotovo through the recorded PASS
+  verdict — no-silent-done invariant; ``po_kazdej_faze`` stops awaiting_manazer).
+* **FAIL** → loop the fix back to the AI Agent (reset done tasks + re-enter Programovanie with the Auditor's
+  proposed_fix threaded), bounded by ``AUDITOR_LOOP_MAX``, then escalate to the Manažér.
+* A §4 credential leak → the Auditor FAILs it; a parse failure of the verdict → fail-CLOSED (blocked, never
+  Hotovo).
+
+``invoke_agent_with_parse_retry`` and ``_run_release_smoke`` are monkeypatched (no live ``claude`` / docker).
+"""
+
+import uuid
+
+from sqlalchemy import select
+
+from backend.db.models.foundation import User
+from backend.db.models.pipeline import PARTICIPANT_VALUES, STAGE_VALUES, PipelineMessage, PipelineState
+from backend.db.models.projects import Project
+from backend.db.models.tasks import Epic, Feat, Task
+from backend.db.models.versions import Version
+from backend.services import orchestrator
+from backend.services.pipeline_status import ParseFailure, PipelineStatusBlock
+
+# (pytest ``asyncio_mode = auto`` — async tests run without an explicit mark.)
+
+
+# ── fixtures ──────────────────────────────────────────────────────────────────
+
+
+def _make_version(db_session, *, project_dial=None):
+    user = User(
+        username=f"u_{uuid.uuid4().hex[:8]}",
+        email=f"{uuid.uuid4().hex[:8]}@example.com",
+        password_hash="x",
+        role="ri",
+    )
+    db_session.add(user)
+    db_session.flush()
+    project = Project(
+        name=f"P {uuid.uuid4().hex[:8]}",
+        slug=f"p-{uuid.uuid4().hex[:8]}",
+        type="standard",
+        auth_mode="password",
+        description="d",
+        created_by=user.id,
+        source_path=None,  # library/no-checkout → artifacts live in the DB audit trail
+        miera_autonomie=project_dial,
+    )
+    db_session.add(project)
+    db_session.flush()
+    version = Version(project_id=project.id, version_number=f"1.{uuid.uuid4().hex[:4]}.0")
+    db_session.add(version)
+    db_session.flush()
+    return version, project
+
+
+def _seed_verifikacia(db_session, version_id, *, build_dial=None, iteration=0, is_regate=False):
+    state = PipelineState(
+        version_id=version_id,
+        flow_type="new_version",
+        current_stage="verifikacia",
+        current_actor="auditor",
+        status="agent_working",
+        next_action="working",
+        miera_autonomie=build_dial,
+        iteration=iteration,
+        is_regate=is_regate,
+    )
+    db_session.add(state)
+    db_session.flush()
+    return state
+
+
+def _seed_done_tasks(db_session, version, project, titles):
+    """Seed ONE epic + ONE feat + a Task per title, all ``done`` (a build that completed Programovanie)."""
+    epic = Epic(project_id=project.id, version_id=version.id, number=1, title="Foundation", status="done")
+    db_session.add(epic)
+    db_session.flush()
+    feat = Feat(epic_id=epic.id, number=1, title="Schema", status="done")
+    db_session.add(feat)
+    db_session.flush()
+    tasks = []
+    for i, title in enumerate(titles, start=1):
+        t = Task(feat_id=feat.id, number=i, title=title, task_type="backend", status="done")
+        db_session.add(t)
+        tasks.append(t)
+    db_session.flush()
+    return epic, feat, tasks
+
+
+def _msgs(db_session, version_id):
+    return (
+        db_session.execute(
+            select(PipelineMessage).where(PipelineMessage.version_id == version_id).order_by(PipelineMessage.seq.asc())
+        )
+        .scalars()
+        .all()
+    )
+
+
+def _tasks(db_session, version_id):
+    return (
+        db_session.execute(
+            select(Task)
+            .join(Feat, Feat.id == Task.feat_id)
+            .join(Epic, Epic.id == Feat.epic_id)
+            .where(Epic.version_id == version_id)
+        )
+        .scalars()
+        .all()
+    )
+
+
+# ── stubs ─────────────────────────────────────────────────────────────────────
+
+
+def _verdict_pass(findings=None):
+    return PipelineStatusBlock(
+        stage="verifikacia",
+        kind="verdict",
+        summary="Verzia overená — acceptance + spot-checky + §4 čisté.",
+        awaiting="manazer",
+        verdict=True,
+        findings=findings or [],
+    )
+
+
+def _verdict_fail(findings, proposed_fix="Oprav výpočet DPH pri reverse-charge a doplň test."):
+    return PipelineStatusBlock(
+        stage="verifikacia",
+        kind="verdict",
+        summary="Verifikácia FAIL.",
+        awaiting="manazer",
+        verdict=False,
+        findings=findings,
+        proposed_fix=proposed_fix,
+    )
+
+
+def _stub_auditor(monkeypatch, audit_block):
+    """Make ``invoke_agent_with_parse_retry`` answer the Auditor verifikacia turn with *audit_block*, capturing
+    the prompt. The real ``invoke_agent`` would record the verdict message; the round runner ALSO records the
+    canonical verdict message, so the stub returns the block WITHOUT recording (avoids a duplicate)."""
+    captured = {}
+
+    async def _fake(db, *, version_id, role, stage, prompt, **_kw):
+        captured["role"] = role
+        captured["stage"] = stage
+        captured["prompt"] = prompt
+        captured["recipient"] = _kw.get("recipient")
+        return audit_block
+
+    monkeypatch.setattr(orchestrator, "invoke_agent_with_parse_retry", _fake)
+    return captured
+
+
+def _stub_smoke(monkeypatch, *, boot_ok=True, acc=(True, "release acceptance PASS — 12 assertions", False)):
+    """Stub ``_run_release_smoke`` (no docker). Returns ((boot_ok, detail), acceptance|None) like the real one
+    (acceptance is None when boot failed). Captures the (slug, version) it was called with."""
+    seen = {}
+
+    async def _fake(project_slug, version_label):
+        seen["slug"] = project_slug
+        seen["version"] = version_label
+        if not boot_ok:
+            return (False, "up exit 1: boot failed"), None
+        return (True, "app booted + responds"), acc
+
+    monkeypatch.setattr(orchestrator, "_run_release_smoke", _fake)
+    return seen
+
+
+def _ban_deploy_calls(monkeypatch):
+    """Belt-and-suspenders for "release smoke runs WITHOUT provisioning any customer instance": blow up if the
+    Verifikácia path ever calls a deploy / uat_provisioner entry point."""
+
+    def _boom(*_a, **_k):
+        raise AssertionError("Verifikácia must NOT touch a customer instance (uat_provisioner/deploy)")
+
+    monkeypatch.setattr(orchestrator.uat_provisioner, "provision_uat", _boom)
+    if hasattr(orchestrator, "_run_uat_deploy"):
+
+        async def _aboom(*_a, **_k):
+            raise AssertionError("Verifikácia must NOT call _run_uat_deploy")
+
+        monkeypatch.setattr(orchestrator, "_run_uat_deploy", _aboom)
+
+
+# ── the verdict brief (DESIGN-BEARING) ────────────────────────────────────────
+
+
+async def test_verifikacia_brief_is_release_acceptance_internal_fixtures_security(db_session, monkeypatch):
+    version, _ = _make_version(db_session, project_dial="po_kazdej_faze")
+    _seed_verifikacia(db_session, version.id)
+    cap = _stub_auditor(monkeypatch, _verdict_pass())
+    _stub_smoke(monkeypatch)
+    _ban_deploy_calls(monkeypatch)
+    await orchestrator.run_dispatch(db_session, version.id)
+    p = cap["prompt"]
+    assert cap["role"] == orchestrator.AUDITOR_ROLE and cap["stage"] == "verifikacia"
+    assert cap["recipient"] == "manazer"
+    assert "RELEASE-ACCEPTANCE" in p  # behavioural pillar
+    assert "INTERNÝM FIXTÚRAM" in p  # internal fixtures, not a customer instance
+    assert "READ + RUN-ONLY" in p  # independence
+    assert "§4 HARD-SECURITY" in p  # explicit §4 verification
+    assert "ADVERZARIÁLNE SPOT-CHECKY" in p  # adversarial spot-checks
+    assert "kind=verdict" in p
+    # the engine smoke result was fed into the brief
+    assert "Engine release smoke" in p and "interné fixtúry" in p
+
+
+async def test_verifikacia_brief_depth_scales_with_dial(db_session, monkeypatch):
+    hi, _ = _make_version(db_session, project_dial="plna")
+    _seed_verifikacia(db_session, hi.id)
+    cap_hi = _stub_auditor(monkeypatch, _verdict_pass())
+    _stub_smoke(monkeypatch)
+    await orchestrator.run_dispatch(db_session, hi.id)
+    assert "DÔKLADNÚ" in cap_hi["prompt"]
+
+    lo, _ = _make_version(db_session, project_dial="po_kazdej_faze")
+    _seed_verifikacia(db_session, lo.id)
+    cap_lo = _stub_auditor(monkeypatch, _verdict_pass())
+    _stub_smoke(monkeypatch)
+    await orchestrator.run_dispatch(db_session, lo.id)
+    assert "ZAMERANÚ" in cap_lo["prompt"]
+
+
+# ── PASS: the dial governs the end sign-off ───────────────────────────────────
+
+
+async def test_pass_under_plna_auto_signs_off_to_hotovo(db_session, monkeypatch):
+    # plná autonómia + PASS → the end stop auto-signs-off to Hotovo THROUGH the recorded PASS verdict
+    # (no-silent-done invariant). Deploy is OUT — Hotovo means verified, not deployed.
+    version, _ = _make_version(db_session, project_dial="plna")
+    _seed_verifikacia(db_session, version.id)
+    _stub_auditor(monkeypatch, _verdict_pass(findings=["pozn.: zváž rate-limit"]))
+    _stub_smoke(monkeypatch)
+    _ban_deploy_calls(monkeypatch)
+    state = await orchestrator.run_dispatch(db_session, version.id)
+    assert state.current_stage == "done" and state.status == "done"
+    assert "Nasadenie je samostatná akcia" in state.next_action
+    # Hotovo reached ONLY through a recorded PASS verdict (the gate)
+    assert orchestrator._verifikacia_passed(db_session, version.id) is True
+    verdicts = [m for m in _msgs(db_session, version.id) if m.kind == "verdict"]
+    assert verdicts[-1].author == "auditor" and verdicts[-1].recipient == "manazer"
+    assert verdicts[-1].stage == "verifikacia" and verdicts[-1].payload["verdict"] == "PASS"
+
+
+async def test_pass_under_stopping_dial_awaits_manazer_sign_off(db_session, monkeypatch):
+    # po_kazdej_faze + PASS → the dial stops the end schvaľovací bod; the Manažér signs off (schvalit → Hotovo).
+    version, _ = _make_version(db_session, project_dial="po_kazdej_faze")
+    _seed_verifikacia(db_session, version.id)
+    _stub_auditor(monkeypatch, _verdict_pass())
+    _stub_smoke(monkeypatch)
+    state = await orchestrator.run_dispatch(db_session, version.id)
+    assert state.current_stage == "verifikacia" and state.status == "awaiting_manazer"
+    assert "Verifikácia PASS" in state.next_action
+    assert orchestrator._verifikacia_passed(db_session, version.id) is True
+    # NOT yet Hotovo — the PASS-then-sign-off split
+    assert state.status != "done"
+
+
+# ── FAIL: the bounded fix↔re-verify loop (THE GATE) ───────────────────────────
+
+
+async def test_fail_loops_fix_back_to_programovanie_with_scope(db_session, monkeypatch):
+    # THE GATE (first half): an injected behavioural FAIL → the build does NOT reach Hotovo; it loops the fix
+    # back to the AI Agent (re-enter Programovanie), resets done tasks to todo, threads the Auditor's
+    # proposed_fix, and bumps the round counter. Even at plná (where a PASS would auto-sign-off to Hotovo).
+    version, project = _make_version(db_session, project_dial="plna")
+    _seed_verifikacia(db_session, version.id, iteration=0)
+    _seed_done_tasks(db_session, version, project, ["T1", "T2"])
+    fail = _verdict_fail(["DPH pri reverse-charge sa počíta zle (acceptance 2/12 FAIL)."])
+    _stub_auditor(monkeypatch, fail)
+    _stub_smoke(monkeypatch, acc=(False, "release_smoke_test.sh exit 1: 2 of 12 failed", False))
+    _ban_deploy_calls(monkeypatch)
+    state = await orchestrator.run_dispatch(db_session, version.id)
+    # looped back into Programovanie (NOT Hotovo), counter bumped, re-gate marked-then-consumed
+    assert state.current_stage == "programovanie"
+    assert state.iteration == 1
+    # done tasks were reset to todo so the build re-runs against the corrected understanding
+    assert all(t.status == "todo" for t in _tasks(db_session, version.id))
+    # the FAIL verdict landed with VALID v2 tokens (the live CHECK accepted it)
+    verdicts = [m for m in _msgs(db_session, version.id) if m.kind == "verdict"]
+    assert verdicts[-1].author == "auditor" and verdicts[-1].recipient == "manazer"
+    assert verdicts[-1].payload["verdict"] == "FAIL" and verdicts[-1].payload["findings"]
+    # the salvaged surgical-fix scope is readable for the re-run brief
+    scope = orchestrator._latest_verifikacia_fix_scope(db_session, version.id)
+    assert scope is not None and "DPH" in scope and "Verifikácia FAIL" in scope
+    # NOT yet verified
+    assert orchestrator._verifikacia_passed(db_session, version.id) is False
+
+
+async def test_fail_then_fix_reaches_hotovo(db_session, monkeypatch):
+    # THE GATE (full loop): FAIL → AI Agent fixes (Programovanie re-run, stubbed) → Auditor re-verifies PASS →
+    # reaches Hotovo. Drives the whole loop through run_dispatch in two steps (the auto-chain would do it live).
+    version, project = _make_version(db_session, project_dial="plna")
+    _seed_verifikacia(db_session, version.id, iteration=0)
+    _seed_done_tasks(db_session, version, project, ["T1"])
+    # round 1: FAIL → loop to Programovanie
+    _stub_auditor(monkeypatch, _verdict_fail(["behaviorálne zlyhanie"]))
+    _stub_smoke(monkeypatch, acc=(False, "1 of 5 failed", False))
+    _ban_deploy_calls(monkeypatch)
+    state = await orchestrator.run_dispatch(db_session, version.id)
+    assert state.current_stage == "programovanie" and state.iteration == 1
+
+    # Simulate the AI Agent fixing (the Programovanie round is its own CR; here jump the state back to a
+    # settled Verifikácia as the auto-chain would after the re-run completes), then re-verify PASS.
+    state.current_stage = "verifikacia"
+    state.current_actor = "auditor"
+    state.status = "agent_working"
+    db_session.flush()
+    _stub_auditor(monkeypatch, _verdict_pass())
+    _stub_smoke(monkeypatch, acc=(True, "5 assertions", False))
+    state = await orchestrator.run_dispatch(db_session, version.id)
+    assert state.current_stage == "done" and state.status == "done"
+    assert orchestrator._verifikacia_passed(db_session, version.id) is True
+
+
+async def test_fail_at_loop_max_escalates_to_manazer(db_session, monkeypatch):
+    # The bounded loop: a still-failing build at the AUDITOR_LOOP_MAX-th round STOPS + escalates to the Manažér
+    # (blocked, a visible system→manazer note) — never an infinite loop, never a silent done.
+    version, project = _make_version(db_session, project_dial="plna")
+    _seed_verifikacia(db_session, version.id, iteration=orchestrator.AUDITOR_LOOP_MAX)
+    _seed_done_tasks(db_session, version, project, ["T1"])
+    _stub_auditor(monkeypatch, _verdict_fail(["stále zlyháva"]))
+    _stub_smoke(monkeypatch, acc=(False, "still failing", False))
+    state = await orchestrator.run_dispatch(db_session, version.id)
+    assert state.status == "blocked" and state.block_reason == "agent_error"
+    assert state.current_stage == "verifikacia"  # did NOT loop back — escalated
+    assert f"{orchestrator.AUDITOR_LOOP_MAX}" in state.next_action and "Manažér" in state.next_action
+    notes = [m for m in _msgs(db_session, version.id) if m.payload and m.payload.get("auditor_loop_exhausted")]
+    assert notes and notes[-1].author == "system" and notes[-1].recipient == "manazer"
+    assert orchestrator._verifikacia_passed(db_session, version.id) is False
+
+
+# ── §4 credential leak → FAIL ─────────────────────────────────────────────────
+
+
+async def test_credential_leak_is_flagged_as_fail(db_session, monkeypatch):
+    # A §4 hard-security failure (credential in code) is a FAIL verdict — it must NOT reach Hotovo, even at plná.
+    version, project = _make_version(db_session, project_dial="plna")
+    _seed_verifikacia(db_session, version.id)
+    _seed_done_tasks(db_session, version, project, ["T1"])
+    leak = _verdict_fail(
+        ["§4 PORUŠENIE: hardkódovaný DB heslo v backend/config.py:12 — credential v zdrojáku."],
+        proposed_fix="Presuň heslo do .env a načítaj cez env var; nikdy v zdrojáku.",
+    )
+    _stub_auditor(monkeypatch, leak)
+    _stub_smoke(monkeypatch)
+    _ban_deploy_calls(monkeypatch)
+    state = await orchestrator.run_dispatch(db_session, version.id)
+    assert state.current_stage != "done", "a §4 credential leak must not reach Hotovo"
+    verdicts = [m for m in _msgs(db_session, version.id) if m.kind == "verdict"]
+    assert verdicts[-1].payload["verdict"] == "FAIL"
+    assert any("§4" in f for f in verdicts[-1].payload["findings"])
+    assert orchestrator._verifikacia_passed(db_session, version.id) is False
+
+
+# ── fail-closed on a bad verdict ──────────────────────────────────────────────
+
+
+async def test_absent_verdict_is_fail_closed(db_session, monkeypatch):
+    # A verdict block WITHOUT an explicit verdict=true is treated as FAIL (mirrors _verifikacia_passed).
+    version, project = _make_version(db_session, project_dial="plna")
+    _seed_verifikacia(db_session, version.id)
+    _seed_done_tasks(db_session, version, project, ["T1"])
+    no_verdict = PipelineStatusBlock(
+        stage="verifikacia", kind="verdict", summary="nejasné", awaiting="manazer", findings=["?"]
+    )  # verdict defaults to None → not True → FAIL
+    _stub_auditor(monkeypatch, no_verdict)
+    _stub_smoke(monkeypatch)
+    state = await orchestrator.run_dispatch(db_session, version.id)
+    assert state.current_stage != "done"  # did NOT auto-sign-off
+    verdicts = [m for m in _msgs(db_session, version.id) if m.kind == "verdict"]
+    assert verdicts[-1].payload["verdict"] == "FAIL"
+
+
+async def test_parse_failure_is_fail_closed_blocked(db_session, monkeypatch):
+    # Verifikácia IS the release gate: an unparseable verdict must NEVER reach Hotovo → blocked, visible note,
+    # tokens metered. (Unlike the upfront review's fail-OPEN early net.)
+    version, _ = _make_version(db_session, project_dial="plna")
+    _seed_verifikacia(db_session, version.id)
+    pf = ParseFailure(
+        "auditor returned no parseable verdict", usage={"input_tokens": 7, "output_tokens": 2, "model": "m"}
+    )
+    _stub_auditor(monkeypatch, pf)
+    _stub_smoke(monkeypatch)
+    state = await orchestrator.run_dispatch(db_session, version.id)
+    assert state.status == "blocked" and state.block_reason == "agent_error"
+    assert state.current_stage == "verifikacia"
+    assert orchestrator._verifikacia_passed(db_session, version.id) is False
+    # the failure is visible (system→manazer) + the tokens are metered (NOT a director note)
+    notes = [
+        m
+        for m in _msgs(db_session, version.id)
+        if m.author == "system" and m.recipient == "manazer" and "nepodarilo spracovať" in m.content
+    ]
+    assert notes and notes[-1].payload and notes[-1].payload.get("usage")
+
+
+# ── release smoke runs WITHOUT provisioning a customer instance ────────────────
+
+
+async def test_release_smoke_runs_against_internal_fixtures_no_customer(db_session, monkeypatch):
+    # The CR invariant: the Verifikácia path runs the smoke against INTERNAL FIXTURES — it never provisions /
+    # deploys to a customer instance. _ban_deploy_calls asserts no uat_provisioner/deploy is reached; the smoke
+    # is called with the project slug + version (the ephemeral -p <slug>-smoke stack, asserted by the stub).
+    version, project = _make_version(db_session, project_dial="po_kazdej_faze")
+    _seed_verifikacia(db_session, version.id)
+    _stub_auditor(monkeypatch, _verdict_pass())
+    seen = _stub_smoke(monkeypatch)
+    _ban_deploy_calls(monkeypatch)
+    await orchestrator.run_dispatch(db_session, version.id)
+    assert seen["slug"] == project.slug  # smoke ran against the project's own compose (internal fixture)
+    assert seen["version"] == version.version_number
+    # the smoke outcome is recorded as a system→manazer note (durable Verifikácia artifact), valid v2 tokens
+    smoke_notes = [m for m in _msgs(db_session, version.id) if m.payload and m.payload.get("smoke")]
+    assert smoke_notes and smoke_notes[-1].author == "system" and smoke_notes[-1].recipient == "manazer"
+    assert smoke_notes[-1].stage == "verifikacia"
+
+
+def test_no_uat_provisioner_or_deploy_in_verifikacia_source():
+    # Grep-assert (CR verification): no uat_provisioner / deploy.py call reachable from the Verifikácia path
+    # functions. The smoke uses an ephemeral -p <slug>-smoke compose, never a customer instance.
+    import ast
+    import inspect
+
+    src = inspect.getsource(orchestrator._run_verifikacia_round)
+    src += inspect.getsource(orchestrator._settle_verifikacia_verdict)
+    src += inspect.getsource(orchestrator._verifikacia_directive)
+    tree = ast.parse("\n".join(line for line in src.splitlines()))
+    banned = {"provision_uat", "_run_uat_deploy", "_fast_fix_auto_deploy", "_release_auto_uat_deploy"}
+    called = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            f = node.func
+            name = f.attr if isinstance(f, ast.Attribute) else (f.id if isinstance(f, ast.Name) else "")
+            called.add(name)
+    assert not (called & banned), f"Verifikácia path must not call {called & banned}"
+
+
+# ── the manual verdict path (apply_action) matches the autonomous one ──────────
+
+
+async def test_manual_verdict_fail_resets_tasks_and_loops(db_session, monkeypatch):
+    # The Manažér's manual verdict (apply_action) shares _settle_verifikacia_verdict with the autonomous round:
+    # a manual FAIL resets done tasks + re-enters Programovanie (the same downstream effect — no divergence).
+    version, project = _make_version(db_session, project_dial="po_kazdej_faze")
+    state = _seed_verifikacia(db_session, version.id, iteration=0)
+    state.status = "awaiting_manazer"  # settled at the Verifikácia stop, the Manažér acts
+    db_session.flush()
+    _seed_done_tasks(db_session, version, project, ["T1"])
+    # _begin_dispatch is a no-op for the test (no real runner); the state mutation is what we assert
+    monkeypatch.setattr(orchestrator, "_begin_dispatch", lambda db, st: None)
+    new_state = await orchestrator.apply_action(
+        db_session, version_id=version.id, action="verdict", payload={"verdict": "FAIL"}
+    )
+    assert new_state.current_stage == "programovanie" and new_state.iteration == 1
+    assert all(t.status == "todo" for t in _tasks(db_session, version.id))
+    verdicts = [m for m in _msgs(db_session, version.id) if m.kind == "verdict"]
+    assert verdicts[-1].author == "auditor" and verdicts[-1].payload["verdict"] == "FAIL"
+
+
+async def test_manual_verdict_pass_settles_for_sign_off(db_session, monkeypatch):
+    version, _ = _make_version(db_session, project_dial="po_kazdej_faze")
+    state = _seed_verifikacia(db_session, version.id)
+    state.status = "awaiting_manazer"
+    db_session.flush()
+    monkeypatch.setattr(orchestrator, "_begin_dispatch", lambda db, st: None)
+    new_state = await orchestrator.apply_action(
+        db_session, version_id=version.id, action="verdict", payload={"verdict": "PASS"}
+    )
+    assert new_state.status == "awaiting_manazer" and "Verifikácia PASS" in new_state.next_action
+    assert orchestrator._verifikacia_passed(db_session, version.id) is True
+
+
+# ── the auto_chain bound includes AUDITOR_LOOP_MAX (R-AUTOCHAIN finalized) ─────
+
+
+def test_auto_chain_bound_budgets_auditor_loop_max(db_session):
+    version, _ = _make_version(db_session)
+    bound = orchestrator.auto_chain_limit(db_session, version.id)
+    # len(STAGE_ORDER) monotonic advance + 2 phase steps per Auditor FAIL round, up to AUDITOR_LOOP_MAX rounds.
+    assert bound == len(orchestrator.STAGE_ORDER) + 2 * orchestrator.AUDITOR_LOOP_MAX
+    # a full 5-round Auditor loop (Verifikácia FAIL → Programovanie → Verifikácia, ×AUDITOR_LOOP_MAX) plus the
+    # monotonic advance does NOT exceed the bound → it never mis-trips the runner backstop.
+    monotonic = len(orchestrator.STAGE_ORDER)
+    full_loop = 2 * orchestrator.AUDITOR_LOOP_MAX
+    assert monotonic + full_loop <= bound
+
+
+# ── LANDMINE belt-and-suspenders: only valid v2 tokens in the live path ────────
+
+
+async def test_no_invalid_v2_tokens_written_anywhere_in_path(db_session, monkeypatch):
+    # The live Verifikácia FAIL path writes ONLY valid v2 participant/stage tokens (auditor/system/manazer;
+    # verifikacia) — never director/coordinator/gate_e/gate_g/build/release. Exercises the FAIL branch (the
+    # one most likely to leak a v1 token) against the live DB CHECK.
+    version, project = _make_version(db_session, project_dial="plna")
+    _seed_verifikacia(db_session, version.id, iteration=0)
+    _seed_done_tasks(db_session, version, project, ["T1"])
+    _stub_auditor(monkeypatch, _verdict_fail(["x"]))
+    _stub_smoke(monkeypatch, acc=(False, "fail", False))
+    await orchestrator.run_dispatch(db_session, version.id)
+    for m in _msgs(db_session, version.id):
+        assert m.author in PARTICIPANT_VALUES, m.author
+        assert m.recipient in PARTICIPANT_VALUES, m.recipient
+        assert m.stage in STAGE_VALUES, m.stage
