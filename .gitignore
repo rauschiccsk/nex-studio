@@ -47,3 +47,6 @@ migrations/versions/__pycache__/
 .claude/scheduled_tasks.lock
 /.dedo-channel/
 /.uat-ports.json
+
+# Runtime uploads (file-browser / upload dir — not versioned)
+/uploads/
