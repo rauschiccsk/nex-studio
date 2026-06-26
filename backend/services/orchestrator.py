@@ -57,6 +57,7 @@ from backend.services import claude_agent, fast_fix, template_bootstrap, uat_pro
 from backend.services import epic as epic_service
 from backend.services import feat as feat_service
 from backend.services import project as project_service
+from backend.services import system_setting as system_setting_service
 from backend.services import task as task_service
 from backend.services.claude_agent import ClaudeAgentError, invoke_claude
 from backend.services.pipeline_status import (
@@ -484,11 +485,12 @@ def _resolve_dispatch_overrides(db: Session, version_id: uuid.UUID, role: str) -
     The version's project owner's ``user_agent_settings(role)`` row drives ``--model`` / ``--effort``
     (attribution = project owner: stable, reuses the existing owner join, aligns with the future
     per-user subscription). Graceful fallback — no owner / no row / unset field → no flag (today's
-    exact behavior, ``scalar``-safe, never crashes) — EXCEPT the **Auditor effort defaults to ``max``**
-    (CR-V2-007 / AUTON-5: the independent verifier is the safety net that compensates for fewer human
-    stops, so it is the one judgment role differentiated up on effort; its depth further scales with the
-    Miera autonómie dial — OQ-9 — wired in CR-V2-008/013/014). Re-resolved on every :func:`invoke_agent`
-    call, so parse-retries keep it.
+    exact behavior, ``scalar``-safe, never crashes) — EXCEPT the **Auditor effort, which scales with the
+    Miera autonómie dial** (CR-V2-008 / AUTON-5 / OQ-9): when no explicit per-user effort is set, the
+    Auditor's effort is :func:`auditor_effort_for_level` of the resolved dial (higher autonomy → deeper
+    Auditor; the independent verifier is the safety net that compensates for fewer human stops). An
+    explicit per-user Auditor effort still wins (the Manažér's deliberate choice overrides the coupling).
+    Re-resolved on every :func:`invoke_agent` call, so parse-retries keep it.
     """
     row = db.execute(
         select(UserAgentSettings.model, UserAgentSettings.effort)
@@ -499,7 +501,9 @@ def _resolve_dispatch_overrides(db: Session, version_id: uuid.UUID, role: str) -
     model = row.model if row is not None else None
     effort = row.effort if row is not None else None
     if effort is None and role == AUDITOR_ROLE:
-        effort = "max"
+        # OQ-9: no explicit per-user Auditor effort → derive it from the autonomy dial (inverse to human
+        # oversight). Falls back to the dial default's effort (``max``) when the dial itself is unset.
+        effort = auditor_effort_for_level(resolve_miera_autonomie(db, version_id))
     return model, effort
 
 
@@ -5324,21 +5328,156 @@ async def _maybe_autonomous_recovery(
     return True
 
 
+# ── Miera autonómie — the 4-level autonomy dial (v2.0.0, CR-V2-008 / AUTON-1..6) ───────────────────
+# REPLACES the v1 binary ``_autonomy_enabled`` toggle + the ``_maybe_autonomous_*`` decision predicates.
+# The dial (design §2.3) governs how often the AI Agent STOPS at a *schvaľovací bod* for the Manažér's
+# approval. Four presets:
+#   * ``plna``                 — Plná autonómia: runs the whole build non-stop; no dial stop fires.
+#   * ``len_na_konci``         — Len na konci: stops only when the build is verified/done.
+#   * ``pri_klucovych_bodoch`` — Pri kľúčových bodoch: stops after Návrh + at build-done.
+#   * ``po_kazdej_faze``       — Po každej fáze: stops after each dial-governed phase
+#                                (Návrh / Programovanie / Verifikácia) for maximum control.
+#: Canonical preset tuple — the SINGLE SOURCE for the resolver's validation + the FE picker order
+#: (CR-V2-019/030). Declaration order = ascending human-oversight (least → most stops).
+MIERA_AUTONOMIE_VALUES = ("plna", "len_na_konci", "pri_klucovych_bodoch", "po_kazdej_faze")
+#: The GLOBAL-default fallback when no per-build / per-project / system_settings value resolves, AND the
+#: degrade target for an unrecognised stored value. Plná autonómia (matches DEFAULT_SETTINGS).
+_MIERA_AUTONOMIE_DEFAULT = "plna"
+
+# Dial-governed *schvaľovacie body* (approval stops) in the 4-phase model. A boundary fires AFTER its
+# named phase completes. These are the ONLY stops the dial governs (design §2.3):
+SCHVALOVACI_BOD_NAVRH = "navrh"  # after Návrh (design + task plan)
+SCHVALOVACI_BOD_PROGRAMOVANIE = "programovanie"  # after Programovanie (the coding phase)
+SCHVALOVACI_BOD_VERIFIKACIA = "verifikacia"  # after Verifikácia = build verified/done (the "end" stop)
+#: Every dial-governed boundary (the schvaľovacie body the dial can halt at).
+DIAL_GOVERNED_BOUNDARIES = frozenset(
+    {SCHVALOVACI_BOD_NAVRH, SCHVALOVACI_BOD_PROGRAMOVANIE, SCHVALOVACI_BOD_VERIFIKACIA}
+)
+#: Two stops are ALWAYS outside the dial — they fire at EVERY level, including ``plna`` (design §2.3,
+#: D3/D6). Carved out here so :func:`dial_stops_at` never even consults the dial for them:
+#:   * ``approve_spec`` — the Špecifikácia approval at the end of Príprava (ALWAYS mandatory; CR-V2-009
+#:     surfaces it as the hard ``approve_spec`` stop, dial-independent).
+#:   * ``deploy``       — UAT / PROD deploy is ALWAYS a separate, manual, per-customer action, outside
+#:     the build pipeline (the deploy subsystem owns it; the dial never reaches it).
+ALWAYS_STOP_BOUNDARIES = frozenset({"approve_spec", "deploy"})
+
+#: For each level, the set of dial-governed boundaries at which the build STOPS for the Manažér. The
+#: complement (within :data:`DIAL_GOVERNED_BOUNDARIES`) auto-continues. Derived directly from the design
+#: §2.3 table; ``plna`` stops at none, ``po_kazdej_faze`` stops at all three.
+_DIAL_STOP_BOUNDARIES: dict[str, frozenset[str]] = {
+    "plna": frozenset(),
+    "len_na_konci": frozenset({SCHVALOVACI_BOD_VERIFIKACIA}),
+    "pri_klucovych_bodoch": frozenset({SCHVALOVACI_BOD_NAVRH, SCHVALOVACI_BOD_VERIFIKACIA}),
+    "po_kazdej_faze": frozenset({SCHVALOVACI_BOD_NAVRH, SCHVALOVACI_BOD_PROGRAMOVANIE, SCHVALOVACI_BOD_VERIFIKACIA}),
+}
+
+#: OQ-9 — the Auditor's depth/effort scales INVERSELY with human oversight: higher autonomy (fewer
+#: Manažér stops) → deeper, more adversarial Auditor (the safety net that compensates). Mapped to the
+#: CR-V2-007 ``--effort`` levels. Plná autonómia → the Auditor is the only independent eyes → ``max``;
+#: Po každej fáze → the Manažér checks often → ``high`` (still a real audit, just lighter). The DEPTH of
+#: the review (how adversarial / how many spot-checks) is applied per-touchpoint in CR-V2-013/014; this
+#: is the effort-flag half of the coupling, consumed by :func:`_resolve_dispatch_overrides`.
+_AUDITOR_EFFORT_FOR_LEVEL: dict[str, str] = {
+    "plna": "max",
+    "len_na_konci": "max",
+    "pri_klucovych_bodoch": "high",
+    "po_kazdej_faze": "high",
+}
+
+
+def _normalize_miera_autonomie(value: Optional[str]) -> Optional[str]:
+    """Return *value* iff it is a recognised preset, else ``None`` (so a caller can fall through to the
+    next resolution layer / the default). An unrecognised or empty stored value never crashes — it
+    degrades, never silently mis-behaves (the value set evolves in code, not via a DB CHECK)."""
+    if value is None:
+        return None
+    v = value.strip()
+    return v if v in MIERA_AUTONOMIE_VALUES else None
+
+
+def resolve_miera_autonomie(db: Session, version_id: uuid.UUID) -> str:
+    """Resolve the effective Miera autonómie LEVEL for a build (AUTON-6).
+
+    Resolution order — first NON-NULL (and recognised) layer wins (design §2.3):
+
+        per-build (``pipeline_state.miera_autonomie``)
+          → per-project (``projects.miera_autonomie``)
+            → global (``DEFAULT_SETTINGS['miera_autonomie']`` / its ``system_settings`` row)
+              → :data:`_MIERA_AUTONOMIE_DEFAULT` (belt-and-suspenders if the global is unreadable).
+
+    NULL at a layer means "inherit the next layer up"; an unrecognised stored value at a layer is treated
+    as NULL (degrade through, never crash). One cheap row fetch joins the build's project + its state; the
+    global read goes through the cached :mod:`system_setting` getter. Always returns one of
+    :data:`MIERA_AUTONOMIE_VALUES`.
+
+    **Fast-fix carve-out (design §2.3 — "Fast-fix = dial at full-auto"):** a ``fast_fix`` build ALWAYS
+    runs at ``plna``, regardless of any per-build / per-project / global setting. The fast-fix lane is its
+    own minimal full-auto path (Oprava → quick verify → done); the override layers govern only
+    ``new_version`` builds. This is absolute, so it short-circuits BEFORE the override layers."""
+    row = db.execute(
+        select(PipelineState.miera_autonomie, Project.miera_autonomie, PipelineState.flow_type)
+        .select_from(Version)
+        .join(Project, Project.id == Version.project_id)
+        .outerjoin(PipelineState, PipelineState.version_id == Version.id)
+        .where(Version.id == version_id)
+    ).first()
+    if row is not None:
+        if row[2] == "fast_fix":
+            return "plna"  # fast-fix = dial at full-auto (design §2.3), overrides every layer
+        per_build = _normalize_miera_autonomie(row[0])
+        if per_build is not None:
+            return per_build
+        per_project = _normalize_miera_autonomie(row[1])
+        if per_project is not None:
+            return per_project
+    # Global layer — the system_settings KV (DEFAULT_SETTINGS-backed). Degrade an unrecognised stored
+    # global to the hard default so the dial is ALWAYS one of the four presets.
+    try:
+        global_value = _normalize_miera_autonomie(system_setting_service.get_str(db, "miera_autonomie"))
+    except KeyError:  # key somehow missing from DEFAULT_SETTINGS → hard default
+        global_value = None
+    return global_value or _MIERA_AUTONOMIE_DEFAULT
+
+
+def dial_stops_at(level: str, boundary: str) -> bool:
+    """Pure dial logic — does the *schvaľovací bod* ``boundary`` HALT the build for the Manažér at the
+    given autonomy ``level``? The new evaluator that REPLACES the v1 ``_maybe_autonomous_*`` predicates;
+    CR-V2-009's ``apply_action`` consults it at each phase boundary to decide settle-for-Manažér vs
+    auto-continue.
+
+    Two carve-outs are independent of the dial and ALWAYS stop (design §2.3, D3/D6):
+    :data:`ALWAYS_STOP_BOUNDARIES` (``approve_spec`` end-Príprava + ``deploy``) return ``True`` at EVERY
+    level, including ``plna``. For the dial-governed boundaries (after Návrh / Programovanie /
+    Verifikácia) the stop set per level is :data:`_DIAL_STOP_BOUNDARIES`. An unrecognised ``level``
+    degrades to the default; a boundary that is neither always-stop nor dial-governed never stops
+    (an internal step the dial does not gate)."""
+    if boundary in ALWAYS_STOP_BOUNDARIES:
+        return True  # dial-independent: spec approval + deploy always stop
+    lvl = level if level in MIERA_AUTONOMIE_VALUES else _MIERA_AUTONOMIE_DEFAULT
+    return boundary in _DIAL_STOP_BOUNDARIES[lvl]
+
+
+def auditor_effort_for_level(level: str) -> str:
+    """OQ-9 — the Auditor ``--effort`` flag for the given autonomy ``level`` (inverse to human oversight:
+    higher autonomy → deeper Auditor). An unrecognised level degrades to the default's effort. The DEPTH
+    (adversarial spot-check intensity) is applied in CR-V2-013/014; this is the effort-flag coupling
+    consumed by :func:`_resolve_dispatch_overrides`."""
+    lvl = level if level in MIERA_AUTONOMIE_VALUES else _MIERA_AUTONOMIE_DEFAULT
+    return _AUDITOR_EFFORT_FOR_LEVEL[lvl]
+
+
 def _autonomy_enabled(db: Session, version_id: uuid.UUID) -> bool:
-    """The version's kickoff routine-gate-autonomy toggle (design §4.1). Default ON — the Director may set
-    ``autonomy_enabled=false`` in the ``start`` payload to KEEP per-gate sign-off for a high-stakes build.
-    Read from the durable kickoff ``notification`` payload (no schema column needed — the kickoff message is
-    append-only and always present), so a version started before this flag existed has no key → defaults to
-    True (autonomy on). Only ``False`` (the explicit opt-out) disables it; any other / missing value is ON."""
-    payload = db.execute(
-        select(PipelineMessage.payload)
-        .where(PipelineMessage.version_id == version_id, PipelineMessage.kind == "kickoff")
-        .order_by(PipelineMessage.seq.asc())
-        .limit(1)
-    ).scalar_one_or_none()
-    if not payload:
-        return True
-    return payload.get("autonomy_enabled", True) is not False
+    """Bridge for the v1 ``_maybe_autonomous_*`` routine-gate predicates while their call sites are
+    rebuilt in CR-V2-009 (apply_action) — now BACKED BY THE DIAL, not the retired binary kickoff toggle.
+
+    The v1 callers (``_maybe_autonomous_gate_ratify`` / ``_maybe_autonomous_build_ratify`` /
+    ``_maybe_autonomous_gate_e_continue``) ask "auto-advance this ROUTINE gate without a Manažér click?".
+    In dial terms that is "the dial does NOT make me stop here". The routine v1 gates are NOT the key
+    Návrh / build-done stops, so they auto-advance at every level EXCEPT ``po_kazdej_faze`` (which stops
+    after each phase for maximum control). Hence: autonomy "on" ⇔ resolved level ≠ ``po_kazdej_faze``.
+    This keeps the v1 binary contract intact, sourced from the dial, until CR-V2-009 replaces these
+    predicates with direct :func:`dial_stops_at` checks at the new 4-phase boundaries."""
+    return resolve_miera_autonomie(db, version_id) != "po_kazdej_faze"
 
 
 async def _maybe_autonomous_gate_ratify(
@@ -6369,10 +6508,11 @@ async def apply_action(
         # on the board and the kickoff brief's "smernica je vyššie" claim is honoured. Other flows keep the
         # generic kickoff content.
         kickoff_content = directive if (flow_type == "fast_fix" and directive) else "Spustenie pipeline."
-        # PIPELINE-AUTONOMY Phase 1 (design §4.1): persist the routine-gate-autonomy toggle (default ON) in
-        # the durable kickoff payload so :func:`_autonomy_enabled` can read it at each gate-PASS settle —
-        # no schema column. Only for new_version (the only flow that auto-ratifies); fast_fix / cr / bug
-        # kickoff payloads stay byte-identical (the key is simply absent → no behaviour change).
+        # ORPHANED (CR-V2-008): the v1 binary ``autonomy_enabled`` kickoff toggle is SUPERSEDED by the
+        # Miera autonómie dial — :func:`_autonomy_enabled` now reads :func:`resolve_miera_autonomie`
+        # (per-build → per-project → global), NOT this payload key. The write is kept here only so the
+        # v1 ``start`` flow stays byte-identical until CR-V2-009 rebuilds ``apply_action`` (which will
+        # write the per-build override to ``pipeline_state.miera_autonomie`` instead). Harmless dead key.
         kickoff_extra: dict[str, Any] = {}
         if flow_type == "new_version":
             kickoff_extra["autonomy_enabled"] = payload.get("autonomy_enabled", True) is not False

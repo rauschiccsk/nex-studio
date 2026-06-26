@@ -55,6 +55,30 @@ DEFAULT_SETTINGS: dict[str, _Default] = {
             "GitHub organisation used to auto-fill repository URLs on the new-project form as '{github_org}/{slug}'."
         ),
     ),
+    # ── Miera autonómie — the autonomy dial (v2.0.0, CR-V2-008 / AUTON-1, AUTON-6) ──
+    # GLOBAL default level of the 4-level Miera autonómie dial — how often the AI Agent
+    # stops at a schvaľovací bod for the Manažér's approval (design §2.3). The four presets:
+    #   * ``plna``               — Plná autonómia: runs the whole build non-stop.
+    #   * ``len_na_konci``       — Len na konci: stops only when the build is verified/done.
+    #   * ``pri_klucovych_bodoch`` — Pri kľúčových bodoch: stops after Návrh + at build-done.
+    #   * ``po_kazdej_faze``     — Po každej fáze: stops after each dial-governed phase
+    #                              (Návrh / Programovanie / Verifikácia) for maximum control.
+    # This is the GLOBAL layer of the AUTON-6 resolution order (per-build → per-project →
+    # global, first non-NULL wins): the per-project (``projects.miera_autonomie``) and
+    # per-build (``pipeline_state.miera_autonomie``) nullable columns override it; NULL there
+    # inherits this default. Two stops are ALWAYS outside the dial regardless of level: the
+    # Špecifikácia approval (end of Príprava) and deploy (UAT/PROD) — see the orchestrator
+    # evaluator. The dial also scales the Auditor's depth (OQ-9) and sets fast-fix = full-auto.
+    "miera_autonomie": _Default(
+        value="plna",
+        description=(
+            "Global default of the Miera autonómie dial — how often the AI Agent stops at a "
+            "schvaľovací bod for the Manažér. One of: plna | len_na_konci | pri_klucovych_bodoch "
+            "| po_kazdej_faze. Overridable per project (projects.miera_autonomie) and per build "
+            "(pipeline_state.miera_autonomie); NULL there inherits this. The Špecifikácia approval "
+            "and deploy are always outside the dial. Also scales the Auditor's depth (OQ-9)."
+        ),
+    ),
     # ── Pipeline / AI ───────────────────────────────────────────────
     "claude_stream_timeout_seconds": _Default(
         value="1800",

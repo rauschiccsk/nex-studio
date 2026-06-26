@@ -51,6 +51,14 @@ class Project(Base, UUIDMixin, TimestampMixin):
     # via ``scripts/uat-deploy.py <uat_slug> --project <slug>``. NULL = no UAT
     # configured → the fast-fix auto-deploy is skipped gracefully.
     uat_slug = Column(String(100), nullable=True)
+    # Per-project Miera autonómie override (v2.0.0, CR-V2-008 / AUTON-6). The MIDDLE layer of
+    # the dial resolution order (per-build → per-project → global): a non-NULL value here
+    # overrides the global ``DEFAULT_SETTINGS['miera_autonomie']`` for every build of this
+    # project; NULL (the default) inherits the global. One of the four presets
+    # (plna | len_na_konci | pri_klucovych_bodoch | po_kazdej_faze) — validated by the
+    # orchestrator resolver, not a DB CHECK (the value set evolves with the dial, kept in
+    # one place in code; an unrecognised stored value degrades to the global default).
+    miera_autonomie = Column(String(32), nullable=True)
     guardian_enabled = Column(Boolean, nullable=False, server_default="false")
     created_by = Column(
         UUID(as_uuid=True),

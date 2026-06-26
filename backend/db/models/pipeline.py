@@ -149,6 +149,14 @@ class PipelineState(Base, UUIDMixin, TimestampMixin):
     #: + action-bar derive question-vs-error from this, falling back to the heuristic only for NULL (legacy)
     #: rows. Nullable; NULL whenever ``status != 'blocked'``.
     block_reason = Column(String(20), nullable=True)
+    #: Per-build Miera autonómie override (v2.0.0, CR-V2-008 / AUTON-6). The TOP layer of the
+    #: dial resolution order (per-build → per-project → global): a non-NULL value here overrides
+    #: both the per-project (``projects.miera_autonomie``) and the global default for THIS build;
+    #: NULL (the default) inherits the per-project value, which itself inherits the global. One of
+    #: the four presets (plna | len_na_konci | pri_klucovych_bodoch | po_kazdej_faze) — validated
+    #: by the orchestrator resolver, not a DB CHECK (the dial value set lives in one place in code;
+    #: an unrecognised stored value degrades to the next layer). Written on ``start`` by CR-V2-009.
+    miera_autonomie = Column(String(32), nullable=True)
 
     __table_args__ = (
         UniqueConstraint("version_id", name="uq_pipeline_state_version_id"),
