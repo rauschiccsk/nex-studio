@@ -17,8 +17,9 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict
 
-# The PIPELINE agent role (same set as OrchestratorSession), NOT the user's ri/ha/shu access role.
-PipelineAgentRole = Literal["coordinator", "designer", "customer", "implementer", "auditor"]
+# The PIPELINE agent role {ai_agent, auditor} (same set as OrchestratorSession; v2.0.0 CR-V2-001), NOT
+# the user's ri/ha/shu access role.
+PipelineAgentRole = Literal["ai_agent", "auditor"]
 # Dispatchable model IDs (claude --model accepts the full name).
 AgentModel = Literal["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"]
 # The 5 effort levels claude --effort accepts (NO ultracode — see module docstring).
