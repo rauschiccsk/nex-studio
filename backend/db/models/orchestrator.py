@@ -41,7 +41,8 @@ class OrchestratorSession(Base, UUIDMixin, TimestampMixin):
     __table_args__ = (
         UniqueConstraint("project_slug", "role", name="uq_orchestrator_session_project_role"),
         CheckConstraint(
-            "role IN ('coordinator', 'designer', 'customer', 'implementer', 'auditor')",
+            # v2.0.0 (CR-V2-001): two agent roles — AI Agent (doer) + Auditor (independent verifier).
+            "role IN ('ai_agent', 'auditor')",
             name="ck_orchestrator_session_role",
         ),
     )

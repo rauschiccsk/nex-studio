@@ -42,24 +42,23 @@ from backend.db.models.base import Base, TimestampMixin, UUIDMixin
 # so the two can never drift (v0.7.0 R2, D2). String + CHECK rather than native PG enum follows
 # the codebase convention (F-007 §3.1, §12). Declaration order is meaningful — it is preserved
 # into the OpenAPI ``enum`` arrays and the generated FE union member order (R2-b).
-FLOW_TYPE_VALUES = ("new_version", "cr", "bug", "fast_fix")
+# v2.0.0 (CR-V2-001): the v1 5-role serial waterfall (Designer/Customer/Implementer/Auditor/
+# Coordinator across 11 stages) collapses to TWO agents — AI Agent (doer) + Auditor (independent
+# verifier) — across 4 phases (priprava → navrh → programovanie → verifikacia) + done. flow_type
+# drops 'cr'/'bug' (OQ-1): every change is a 'new_version' (full 4-phase) or a 'fast_fix' (short path).
+FLOW_TYPE_VALUES = ("new_version", "fast_fix")
 STAGE_VALUES = (
-    "kickoff",
-    "gate_a",
-    "gate_b",
-    "gate_c",
-    "gate_d",
-    "gate_e",
-    "task_plan",
-    "build",
-    "gate_g",
-    "release",
+    "priprava",
+    "navrh",
+    "programovanie",
+    "verifikacia",
     "done",
 )
-# Actors (PipelineState.current_actor) vs participants (message author/recipient): ``system`` is
-# message-only (F-007 §3.1, §4.2), so it joins the participant set but never the actor set.
-ACTOR_VALUES = ("coordinator", "designer", "customer", "implementer", "auditor", "director")
-PARTICIPANT_VALUES = ACTOR_VALUES + ("system",)
+# Actors (PipelineState.current_actor) = the AGENTS on turn: AI Agent + Auditor. Participants
+# (message author/recipient) additionally include the human operator (``director`` — renamed to
+# ``manazer`` in CR-V2-004) and ``system`` (message-only). (F-007 §3.1, §4.2.)
+ACTOR_VALUES = ("ai_agent", "auditor")
+PARTICIPANT_VALUES = ACTOR_VALUES + ("director", "system")
 STATUS_VALUES = ("agent_working", "awaiting_director", "blocked", "paused", "done")
 # Why a ``blocked`` state happened (v0.7.0 R4, D1) — the authoritative, persisted reason the FE
 # reads INSTEAD of the fragile ``lastMessage.author == "system"`` heuristic. ``agent_question`` = the
@@ -151,9 +150,8 @@ class PipelineState(Base, UUIDMixin, TimestampMixin):
     __table_args__ = (
         UniqueConstraint("version_id", name="uq_pipeline_state_version_id"),
         CheckConstraint(
-            # 'fast_fix' (F-009, CR-NS-094): the lightweight fast-fix lane — a distinct flow_type
-            # (NOT reusing cr/bug, which are full-pipeline labels today) that traverses the shorter
-            # kickoff→build→release→done path. Additive; the existing three are unchanged.
+            # v2.0.0 (CR-V2-001, OQ-1): two flow_types — 'new_version' (full 4-phase) and 'fast_fix'
+            # (the lighter short path). 'cr'/'bug' dropped — every change is a version or a fast-fix.
             f"flow_type IN ({_sql_in_list(FLOW_TYPE_VALUES)})",
             name="ck_pipeline_state_flow_type",
         ),

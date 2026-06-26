@@ -65,8 +65,8 @@ class UserSession(Base, UUIDMixin, TimestampMixin):
 class UserAgentSettings(Base, UUIDMixin, TimestampMixin):
     """Per-USER per-pipeline-role model/effort the cockpit applies at dispatch (CR-NS-040, E3(b/c)).
 
-    ``agent_role`` is the PIPELINE agent role (coordinator/designer/customer/implementer/auditor —
-    same set as ``OrchestratorSession``), NOT the user's ri/ha/shu access role. ``model``/``effort``
+    ``agent_role`` is the PIPELINE agent role (ai_agent/auditor — same set as ``OrchestratorSession``;
+    v2.0.0 CR-V2-001), NOT the user's ri/ha/shu access role. ``model``/``effort``
     are nullable ``str`` validated by pydantic enums at the API layer — deliberately NO DB CHECK on
     them, so the CLI's accepted model IDs / effort levels can evolve without a migration. Only
     ``agent_role`` (a stable set) keeps a DB CHECK. The project owner's row drives a build's dispatch;
@@ -87,7 +87,9 @@ class UserAgentSettings(Base, UUIDMixin, TimestampMixin):
     __table_args__ = (
         UniqueConstraint("user_id", "agent_role", name="uq_user_agent_settings_user_role"),
         CheckConstraint(
-            "agent_role IN ('coordinator', 'designer', 'customer', 'implementer', 'auditor')",
+            # v2.0.0 (CR-V2-001): 2 agent roles. A SECOND surviving 5-role CHECK (was migration 061) —
+            # moves in lock-step with ck_orchestrator_session_role or 2-role dispatch is DB-rejected.
+            "agent_role IN ('ai_agent', 'auditor')",
             name="ck_user_agent_settings_role",
         ),
     )
