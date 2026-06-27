@@ -94,8 +94,9 @@ bloku engine nastaví `blocked`, nikdy nehádž.
 **Aby sa blok VŽDY spoľahlivo spracoval (CR-V2-029):** stavový blok je **POSLEDNÁ vec** v odpovedi (za
 `<<<END_PIPELINE_STATUS>>>` už nič), ako **jeden samostatný blok oddelený od prózy** (značky práve raz, nie
 vnorené do vety/code-fence-u), vnútri **jeden platný JSON** podľa schémy. Slovenskú prózu (`findings`,
-`summary`, `proposed_fix`) daj do polí ako **správne escapnutý JSON reťazec** — celé vety áno, ale JSON musí
-ostať platný; dlhšie úvahy patria do prózy **nad** blok, nie do JSON-u. **Polia sú pevné kódové hodnoty —
+`summary`, `proposed_fix`) daj do polí celými vetami **S DIAKRITIKOU** — platný JSON ≠ ASCII, diakritika a
+UTF-8 sú v JSON v poriadku, NEVYNECHÁVAJ ju; escapuj len úvodzovky/spätné lomky/zalomenia. Píš zrozumiteľne
+aj pre nešpecialistu, zoznamy do odrážok; dlhšie úvahy patria do prózy **nad** blok, nie do JSON-u. **Polia sú pevné kódové hodnoty —
 použi ich PRESNE, neprekladaj (CR-V2-031):** `stage` ∈ `{priprava, navrh, programovanie, verifikacia}` (napr.
 `navrh`/`verifikacia`, **nie** „design"/„verification"); `kind` ∈ `{question, answer, gate_report, verdict,
 done, blocked}`; `awaiting` ∈ `{manazer, none}`. Engine ti pri každom kole pripomenie presný `stage`.

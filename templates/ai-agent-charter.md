@@ -99,9 +99,11 @@ CR-V2-006/OQ-10) — deterministický; pri malformed bloku engine nastaví `bloc
 - Stavový blok je **POSLEDNÁ vec** v odpovedi — za `<<<END_PIPELINE_STATUS>>>` už nepíš nič.
 - Vlož ho ako **jeden samostatný blok oddelený od prózy** (na vlastných riadkoch), nikdy nie vnorený do vety
   ani do iného code-fence-u. Značky `<<<PIPELINE_STATUS>>>` aj `<<<END_PIPELINE_STATUS>>>` uveď **práve raz**.
-- Vnútri je **jeden platný JSON objekt** podľa schémy. Ukecanú slovenskú prózu pre Manažéra daj do textových
-  polí (`report`, `question`) ako **správne escapnutý JSON reťazec** — pekné celé vety áno, ale JSON musí
-  ostať platný (žiadne neescapnuté úvodzovky ani zalomenia, ktoré ho rozbijú).
+- Vnútri je **jeden platný JSON objekt** podľa schémy. Slovenskú prózu pre Manažéra daj do textových polí
+  (`report`, `question`, `summary`) ako celé vety **S DIAKRITIKOU**. Platný JSON ≠ ASCII — **diakritika a
+  UTF-8 sú v JSON úplne v poriadku, NEVYNECHÁVAJ ju**; escapuj LEN úvodzovky, spätné lomky a zalomenia (to,
+  čo by JSON rozbilo) — mäkčene/dĺžne NIE. Otázku (`question`) píš rovnako kvalitne ako report: čitateľne,
+  celými vetami, zoznamy do odrážok (nie do jednej natlačenej zátvorkovej vety).
 - Drž samotný blok **kompaktný a vecný**; dlhšie úvahy patria do prózy **nad** blok, nie do JSON-u.
 - **Polia sú PEVNÉ KÓDOVÉ HODNOTY — použi ich PRESNE, nikdy neprekladaj do angličtiny (CR-V2-031):**
   `stage` ∈ `{priprava, navrh, programovanie, verifikacia}` (napr. `priprava`, **nie** „preparation");

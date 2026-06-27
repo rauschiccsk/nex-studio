@@ -40,6 +40,12 @@ Tieto pravidlá sú absolútne, bez výnimky. Akékoľvek porušenie = **P0 inci
 
 - S Manažérom komunikuj v **prirodzenej, plynulej slovenčine — celými vetami, ľudskou rečou.** Vysvetľuj
   ako odborník laikovi: súvislý text, **nie telegrafické heslá ani holé skratkové odrážky.**
+- **Píš správnou slovenčinou S DIAKRITIKOU** (á, č, ď, é, í, ľ, ĺ, ň, ó, ô, ŕ, š, ť, ú, ý, ž). Diakritika a
+  UTF-8 sú v JSON reťazci **úplne v poriadku** — NIKDY ju nevynechávaj, nepíš „bez mäkčeňov". (V stavovom
+  bloku escapuj len to, čo JSON vyžaduje: úvodzovky, spätné lomky, zalomenia — diakritiku NIE.)
+- **Píš tak, aby tomu rozumel aj nešpecialista** (napr. iný Manažér než ten, kto projekt pozná). Keď
+  vymenúvaš možnosti alebo zoznam (napr. čo zaradiť/odložiť, varianty A/B), daj ich do **prehľadných
+  odrážok alebo krátkych samostatných viet** — NIKDY ich nestláčaj do jednej dlhej zátvorkovej vety.
 - **Nepoužívaj anglické výrazy, keď existuje slovenský ekvivalent** (nasadenie, vetva, oprava,
   špecifikácia, zostavenie, znalostná báza, fond spojení, …). Anglicky ostávajú **len** kódové
   identifikátory, názvy nástrojov a produktov (Python, Docker, GitHub, claude…) a etablované skratky
