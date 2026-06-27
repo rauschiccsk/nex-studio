@@ -70,7 +70,7 @@ const REPORT_PROSE_CLASS =
 
 // Markdown component overrides for the report body: fenced code → the shared CodeBlock (language label +
 // copy button), inline code → a subtle-highlight monospace chip (file paths + identifiers). Mirrors the
-// established in-repo idiom (ProjectSpecsPage / KnowledgeBasePage). Module-level so it isn't re-created.
+// established in-repo idiom (KnowledgeBasePage). Module-level so it isn't re-created.
 const REPORT_MARKDOWN_COMPONENTS: Components = {
   code({ className, children, ...props }) {
     const match = /language-(\w+)/.exec(className || "");

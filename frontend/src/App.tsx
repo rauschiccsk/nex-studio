@@ -16,7 +16,6 @@ import VersionDetailPage from "./pages/VersionDetailPage";
 import BacklogPage from "./pages/BacklogPage";
 import MetricsPage from "./pages/MetricsPage";
 import KnowledgeBasePage from "./pages/KnowledgeBasePage";
-import ProjectSpecsPage from "./pages/ProjectSpecsPage";
 import UpdatesPage from "./pages/UpdatesPage";
 import AgentTerminalPage from "./pages/AgentTerminalPage";
 import CockpitPage from "./pages/CockpitPage";
@@ -48,7 +47,11 @@ function App() {
             <Route path="projects/:slug/backlog" element={<BacklogPage />} />
             <Route path="projects/:slug/metrics" element={<MetricsPage />} />
             <Route path="kb" element={<KnowledgeBasePage />} />
-            <Route path="project-specs" element={<ProjectSpecsPage />} />
+            {/* v2 (CR-V2-020): /project-specs (📖 Špecifikácie) removed — the
+                page is retired. The single design doc now lives in Vývoj →
+                Návrh (CR-V2-021); /kb remains for ICC-wide knowledge. The
+                wildcard route below redirects any stale /project-specs link
+                to the dashboard. */}
             {/* v2 (CR-V2-019, OQ-7): the AI Agent live terminal route renamed
                 /coordinator → /ai-agent (matches the new vocabulary); the
                 interactive AI Agent chrome lands in CR-V2-022. The page still
