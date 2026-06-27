@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -160,7 +161,57 @@ def provision_v2_agent_charters(project_root: Path, slug: str, project_name: str
     for v1_dir in _V1_AGENT_DIRS:
         shutil.rmtree(claude_dir / "agents" / v1_dir, ignore_errors=True)
 
+    # CR-V2-030: mark the project trusted so claude — the interactive "Surový terminál" OR the headless
+    # dispatch — never hits its first-run "Do you trust this folder?" dialog. A NEX-Studio-created project
+    # is trusted by construction. Best-effort (never raises); only sets the trust flag, never disables the
+    # permission system.
+    _mark_project_trusted(project_root)
+
     logger.info("v2 agent charters provisioned + project normalised to v2 shape (slug=%s)", slug)
+
+
+def _mark_project_trusted(project_root: Path) -> None:
+    """CR-V2-030: set ``hasTrustDialogAccepted=True`` for ``project_root`` in the claude CLI config
+    (``$CLAUDE_CONFIG_DIR/.claude.json``), so neither a headless ``claude -p`` dispatch nor the interactive
+    raw terminal blocks on claude's first-run "Do you trust this folder?" dialog.
+
+    This is EXACTLY what clicking "Yes, I trust this folder" writes — it does NOT disable the permission
+    system (the agent's ``settings.json`` allow/deny still apply; we never pass ``--dangerously-skip-
+    permissions``). Best-effort: a missing / unreadable / unwritable config is logged, never raised (the
+    headless build works regardless — only the interactive terminal would re-show the dialog). Idempotent:
+    skips the write when already trusted. Atomic write (temp + ``os.replace``) so a crash can never
+    truncate the shared config; the read-modify-write window is tiny but not locked (acceptable for a
+    boolean flag — re-applied on the next provision if a concurrent claude write ever loses it)."""
+    config_dir = os.environ.get("CLAUDE_CONFIG_DIR") or str(Path.home() / ".claude")
+    config_path = Path(config_dir) / ".claude.json"
+    if not config_path.is_file():
+        logger.warning("trust mark SKIPPED — claude config not found at %s", config_path)
+        return
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("trust mark SKIPPED — claude config unreadable (%s): %s", config_path, exc)
+        return
+    if not isinstance(data, dict):
+        logger.warning("trust mark SKIPPED — claude config is not a JSON object (%s)", config_path)
+        return
+    projects = data.setdefault("projects", {})
+    key = str(project_root)
+    entry = projects.get(key)
+    if not isinstance(entry, dict):
+        entry = {}
+        projects[key] = entry
+    if entry.get("hasTrustDialogAccepted") is True:
+        return  # already trusted — never rewrite the shared config needlessly
+    entry["hasTrustDialogAccepted"] = True
+    try:
+        tmp = config_path.with_name(config_path.name + ".nexstudio-tmp")
+        tmp.write_text(json.dumps(data), encoding="utf-8")
+        os.replace(tmp, config_path)
+    except OSError as exc:
+        logger.warning("trust mark write failed for %s: %s", project_root, exc)
+        return
+    logger.info("project marked trusted in claude config (%s)", project_root)
 
 
 def run_post_scaffold_steps(

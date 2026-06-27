@@ -8,6 +8,8 @@ cover the provisioning function, the v2-shape normalisation, and the engine's de
 
 from __future__ import annotations
 
+import json
+import os
 from pathlib import Path
 
 import pytest
@@ -15,8 +17,21 @@ import pytest
 from backend.services.claude_agent import ClaudeAgentError, _load_charter
 from backend.services.create_project_postscaffold import (
     ProvisioningError,
+    _mark_project_trusted,
     provision_v2_agent_charters,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_claude_config(monkeypatch, tmp_path_factory):
+    """Point CLAUDE_CONFIG_DIR at an isolated dir so provisioning's trust-mark (CR-V2-030) never touches
+    the real ``~/.claude/.claude.json``. With no config file there, the trust step is a no-op for the
+    charter tests; the trust-specific tests below write their own config into this dir."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path_factory.mktemp("claude-cfg")))
+
+
+def _claude_config_path() -> Path:
+    return Path(os.environ["CLAUDE_CONFIG_DIR"]) / ".claude.json"
 
 
 def _make_v1_scaffold(root: Path) -> None:
@@ -123,3 +138,46 @@ def test_load_charter_returns_content(tmp_path: Path) -> None:
     charter = tmp_path / "CLAUDE.md"
     charter.write_text("Pravidlá agenta\n", encoding="utf-8")
     assert _load_charter(charter) == "Pravidlá agenta\n"
+
+
+# ─── CR-V2-030: pre-trust the project in the claude config ──────────────────────
+
+
+def test_mark_project_trusted_sets_flag_and_preserves_rest() -> None:
+    cfg = _claude_config_path()
+    cfg.write_text(
+        json.dumps(
+            {
+                "projects": {"/opt/projects/other": {"hasTrustDialogAccepted": True, "x": 1}},
+                "oauthAccount": "KEEP-ME",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _mark_project_trusted(Path("/opt/projects/demo"))
+
+    data = json.loads(cfg.read_text(encoding="utf-8"))
+    assert data["projects"]["/opt/projects/demo"]["hasTrustDialogAccepted"] is True
+    # untouched: other projects + unrelated top-level keys (e.g. the account/token) survive verbatim.
+    assert data["projects"]["/opt/projects/other"] == {"hasTrustDialogAccepted": True, "x": 1}
+    assert data["oauthAccount"] == "KEEP-ME"
+
+
+def test_mark_project_trusted_is_idempotent() -> None:
+    cfg = _claude_config_path()
+    cfg.write_text(
+        json.dumps({"projects": {"/opt/projects/demo": {"hasTrustDialogAccepted": True}}}),
+        encoding="utf-8",
+    )
+    before = cfg.read_text(encoding="utf-8")
+
+    _mark_project_trusted(Path("/opt/projects/demo"))
+
+    assert cfg.read_text(encoding="utf-8") == before  # already trusted → no needless rewrite
+
+
+def test_mark_project_trusted_missing_config_does_not_raise() -> None:
+    # No .claude.json in CLAUDE_CONFIG_DIR → best-effort no-op (headless build works regardless).
+    assert not _claude_config_path().exists()
+    _mark_project_trusted(Path("/opt/projects/demo"))  # must not raise
