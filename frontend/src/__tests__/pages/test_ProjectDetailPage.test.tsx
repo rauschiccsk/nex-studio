@@ -20,19 +20,25 @@ import type { Version } from "@/types/version";
 const {
   navigateMock,
   listProjectsApiMock,
+  getProjectApiMock,
+  deleteProjectApiMock,
   listVersionsMock,
   getVersionMock,
   startFastFixApiMock,
   setSelectedProjectMock,
   setSelectedVersionMock,
+  authStateMock,
 } = vi.hoisted(() => ({
   navigateMock: vi.fn(),
   listProjectsApiMock: vi.fn(),
+  getProjectApiMock: vi.fn(),
+  deleteProjectApiMock: vi.fn(),
   listVersionsMock: vi.fn(),
   getVersionMock: vi.fn(),
   startFastFixApiMock: vi.fn(),
   setSelectedProjectMock: vi.fn(),
   setSelectedVersionMock: vi.fn(),
+  authStateMock: { user: { role: "ri" } as { role: string } | null },
 }));
 
 vi.mock("react-router-dom", async (importOriginal) => {
@@ -45,12 +51,19 @@ vi.mock("react-router-dom", async (importOriginal) => {
   };
 });
 
-vi.mock("@/services/api/projects", () => ({ listProjectsApi: listProjectsApiMock }));
+vi.mock("@/services/api/projects", () => ({
+  listProjectsApi: listProjectsApiMock,
+  getProjectApi: getProjectApiMock,
+  deleteProjectApi: deleteProjectApiMock,
+}));
 vi.mock("@/services/api/versions", () => ({ listVersions: listVersionsMock, getVersion: getVersionMock }));
 vi.mock("@/services/api/pipeline", () => ({ startFastFixApi: startFastFixApiMock }));
 vi.mock("@/store/activeContextStore", () => ({
   useActiveContextStore: (selector: (s: Record<string, unknown>) => unknown) =>
     selector({ setSelectedProject: setSelectedProjectMock, setSelectedVersion: setSelectedVersionMock }),
+}));
+vi.mock("@/store/authStore", () => ({
+  useAuthStore: (selector: (s: Record<string, unknown>) => unknown) => selector(authStateMock),
 }));
 
 // ── Fixtures ───────────────────────────────────────────────────────────────────
@@ -74,6 +87,7 @@ const project: ProjectRead = {
   owner_id: null,
   created_at: "2026-06-01T00:00:00Z",
   updated_at: "2026-06-01T00:00:00Z",
+  has_prod_deploy: false,
 };
 
 const baseVersion: Version = {
@@ -97,9 +111,12 @@ const patchVersion: Version = { ...baseVersion, id: "v2", version_number: "v0.6.
 beforeEach(() => {
   vi.clearAllMocks();
   listProjectsApiMock.mockResolvedValue({ items: [project], total: 1, skip: 0, limit: 100 });
+  getProjectApiMock.mockResolvedValue(project);
+  deleteProjectApiMock.mockResolvedValue(undefined);
   listVersionsMock.mockResolvedValue([baseVersion]);
   getVersionMock.mockResolvedValue(patchVersion);
   startFastFixApiMock.mockResolvedValue({ version_id: "v2", board: { state: null, recent_messages: [] } });
+  authStateMock.user = { role: "ri" }; // admin by default; individual tests may override
 });
 
 async function importPage() {
@@ -157,5 +174,51 @@ describe("ProjectDetailPage — Fast-Fix Lane (CR-NS-095)", () => {
 
     expect(await screen.findByText(/no semver version to patch/i)).toBeInTheDocument();
     expect(navigateMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("ProjectDetailPage — guarded delete (CR-V2-027)", () => {
+  it("requires typing DELETE, then deletes (GitHub by default) and returns to the list", async () => {
+    const ProjectDetailPage = await importPage();
+    render(<ProjectDetailPage />);
+
+    await userEvent.click(await screen.findByRole("button", { name: /^zmazať projekt$/i }));
+
+    const confirm = screen.getByRole("button", { name: /zmazať natrvalo/i });
+    expect(confirm).toBeDisabled();
+
+    await userEvent.type(screen.getByLabelText(/na potvrdenie napíš/i), "DELETE");
+    expect(confirm).toBeEnabled();
+    await userEvent.click(confirm);
+
+    await waitFor(() => expect(deleteProjectApiMock).toHaveBeenCalledWith("p1", true));
+    await waitFor(() => expect(navigateMock).toHaveBeenCalledWith("/projects"));
+  });
+
+  it("does not delete on a wrong confirmation word", async () => {
+    const ProjectDetailPage = await importPage();
+    render(<ProjectDetailPage />);
+
+    await userEvent.click(await screen.findByRole("button", { name: /^zmazať projekt$/i }));
+    await userEvent.type(screen.getByLabelText(/na potvrdenie napíš/i), "delete"); // wrong case
+
+    expect(screen.getByRole("button", { name: /zmazať natrvalo/i })).toBeDisabled();
+    expect(deleteProjectApiMock).not.toHaveBeenCalled();
+  });
+
+  it("disables delete for a non-admin (role shu)", async () => {
+    authStateMock.user = { role: "shu" };
+    const ProjectDetailPage = await importPage();
+    render(<ProjectDetailPage />);
+
+    expect(await screen.findByRole("button", { name: /^zmazať projekt$/i })).toBeDisabled();
+  });
+
+  it("disables delete once the project has a PROD deploy", async () => {
+    getProjectApiMock.mockResolvedValue({ ...project, has_prod_deploy: true });
+    const ProjectDetailPage = await importPage();
+    render(<ProjectDetailPage />);
+
+    expect(await screen.findByRole("button", { name: /^zmazať projekt$/i })).toBeDisabled();
   });
 });

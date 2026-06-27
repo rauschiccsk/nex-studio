@@ -856,3 +856,92 @@ def sa_select_project_by_slug(slug: str):
     from backend.db.models.projects import Project as _Project
 
     return _select(_Project).where(_Project.slug == slug)
+
+
+def _seed_prod_deploy(db_session, project_id) -> None:
+    """Seed a successful PROD deploy event (with its required customer) for a project — the state that
+    must block deletion (CR-V2-027). ``seq`` is a Postgres IDENTITY, generated on insert."""
+    from backend.db.models.customers import Customer
+    from backend.db.models.deploy import DeployEvent
+
+    customer = Customer(project_id=project_id, name="ICC s.r.o.", slug=f"cust-{uuid.uuid4().hex[:6]}")
+    db_session.add(customer)
+    db_session.flush()
+    db_session.add(
+        DeployEvent(
+            customer_id=customer.id,
+            project_id=project_id,
+            version_number="v1.0.0",
+            environment="prod",
+            event_type="deploy",
+            status="ok",
+        )
+    )
+    db_session.flush()
+
+
+class TestProjectDeletionGuards:
+    """CR-V2-027 — guarded project deletion: admin-only + blocked once PROD-deployed."""
+
+    def test_delete_requires_ri_role(self, router_client, creator, db_session):
+        """A non-``ri`` user (here ``shu``) is rejected with 403 — deletion is admin-only."""
+        created = router_client.post("/api/v1/projects", json=_payload(creator.id)).json()
+
+        from backend.core.security import get_current_user, require_ri_role
+
+        shu = User(
+            username=f"shu_{uuid.uuid4().hex[:8]}",
+            email=f"{uuid.uuid4().hex[:8]}@test.local",
+            password_hash="x",
+            role="shu",
+            is_active=True,
+        )
+        db_session.add(shu)
+        db_session.flush()
+        # Point auth at the shu user and let the REAL ri-gate run (drop the fixture's blanket ri override).
+        router_client.app.dependency_overrides[get_current_user] = lambda: shu
+        del router_client.app.dependency_overrides[require_ri_role]
+
+        resp = router_client.delete(f"/api/v1/projects/{created['id']}")
+        assert resp.status_code == 403
+
+    def test_delete_blocked_after_prod_deploy_returns_409(self, router_client, creator, db_session):
+        """A project with a successful PROD deploy can only be archived — delete returns 409."""
+        created = router_client.post("/api/v1/projects", json=_payload(creator.id)).json()
+        _seed_prod_deploy(db_session, uuid.UUID(created["id"]))
+
+        resp = router_client.delete(f"/api/v1/projects/{created['id']}")
+        assert resp.status_code == 409
+        assert "PROD" in resp.json()["detail"]
+        # The project row survives the blocked delete.
+        assert router_client.get(f"/api/v1/projects/{created['id']}").status_code == 200
+
+    def test_delete_allowed_without_prod_deploy(self, router_client, creator):
+        """No PROD deploy → admin delete still succeeds (204) with the new guards in place."""
+        created = router_client.post("/api/v1/projects", json=_payload(creator.id)).json()
+        resp = router_client.delete(f"/api/v1/projects/{created['id']}")
+        assert resp.status_code == 204
+        assert router_client.get(f"/api/v1/projects/{created['id']}").status_code == 404
+
+    def test_get_project_exposes_has_prod_deploy_flag(self, router_client, creator, db_session):
+        """The detail endpoint computes ``has_prod_deploy`` — False before, True after a PROD deploy."""
+        created = router_client.post("/api/v1/projects", json=_payload(creator.id)).json()
+        assert router_client.get(f"/api/v1/projects/{created['id']}").json()["has_prod_deploy"] is False
+
+        _seed_prod_deploy(db_session, uuid.UUID(created["id"]))
+        assert router_client.get(f"/api/v1/projects/{created['id']}").json()["has_prod_deploy"] is True
+
+
+def test_workspace_safe_to_remove(tmp_path):
+    """The rmtree guard: only an existing dir strictly under the root is removable (CR-V2-027)."""
+    from backend.api.routes.projects import _workspace_safe_to_remove
+
+    root = tmp_path / "projects"
+    (root / "demo").mkdir(parents=True)
+    (tmp_path / "outside").mkdir()
+
+    assert _workspace_safe_to_remove(str(root / "demo"), root) is True  # dir strictly under root
+    assert _workspace_safe_to_remove(str(root), root) is False  # the root itself — never
+    assert _workspace_safe_to_remove(str(tmp_path / "outside"), root) is False  # exists but outside root
+    assert _workspace_safe_to_remove(str(root / "missing"), root) is False  # under root but not a dir
+    assert _workspace_safe_to_remove("", root) is False  # empty path

@@ -269,3 +269,7 @@ class ProjectRead(BaseModel):
     owner_id: Optional[UUID] = None
     created_at: datetime
     updated_at: datetime
+    # Computed on the project-detail endpoint (GET /{id}); ``False`` on list / create / patch responses
+    # (not computed there). Drives the FE guard that blocks deleting a PROD-deployed project (CR-V2-027):
+    # a project graduates to PROD on its first successful prod deploy and can then only be archived.
+    has_prod_deploy: bool = False

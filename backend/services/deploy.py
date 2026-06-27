@@ -163,7 +163,7 @@ def current_version(db: Session, customer_id: UUID, environment: str) -> Optiona
     return db.execute(stmt).scalar_one_or_none()
 
 
-def _project_had_prod_deploy(db: Session, project_id: UUID) -> bool:
+def project_had_prod_deploy(db: Session, project_id: UUID) -> bool:
     """True iff ANY customer of the project has ever had a successful PROD deploy (§3.6).
 
     The version bump to v1.0.0 happens on the project's FIRST PROD deploy — across
@@ -442,7 +442,7 @@ async def deploy(
     # version is what is provisioned + recorded so the audit row reflects PROD reality.
     deployed_version = version_number
     bumped_to: Optional[str] = None
-    if environment == "prod" and not _project_had_prod_deploy(db, project.id):
+    if environment == "prod" and not project_had_prod_deploy(db, project.id):
         deployed_version = FIRST_PROD_VERSION
         bumped_to = FIRST_PROD_VERSION
         # Reflect the graduation on the project's own version record set: ensure a

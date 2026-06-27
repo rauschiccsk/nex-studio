@@ -23,6 +23,15 @@ export function getProjectApi(projectId: string): Promise<ProjectRead> {
   return api.get<ProjectRead>(`/projects/${projectId}`);
 }
 
+/**
+ * Hard-delete a project (CR-V2-027). Admin-only (role `ri`) and rejected with 409 once the project
+ * has had a PROD deploy — both enforced by the backend. When `deleteGithub` is true the backing
+ * GitHub repository is removed too; otherwise it is left in place.
+ */
+export function deleteProjectApi(projectId: string, deleteGithub: boolean): Promise<void> {
+  return api.delete<void>(`/projects/${projectId}?delete_github=${deleteGithub}`);
+}
+
 export function suggestPortApi(
   type: "backend" | "frontend" | "db",
 ): Promise<{ suggested_port: number }> {

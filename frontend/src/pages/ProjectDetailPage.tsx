@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { Loader2, Zap } from "lucide-react";
-import { listProjectsApi } from "@/services/api/projects";
+import { AlertTriangle, Loader2, Trash2, Zap } from "lucide-react";
+import { deleteProjectApi, getProjectApi, listProjectsApi } from "@/services/api/projects";
 import { getVersion, listVersions } from "@/services/api/versions";
 import { startFastFixApi } from "@/services/api/pipeline";
 import { useActiveContextStore } from "@/store/activeContextStore";
+import { useAuthStore } from "@/store/authStore";
 import type { ProjectRead } from "@/types";
 import type { Version } from "@/types/version";
 
@@ -117,6 +118,29 @@ export default function ProjectDetailPage() {
   const [fastFixSubmitting, setFastFixSubmitting] = useState(false);
   const [fastFixError, setFastFixError] = useState("");
 
+  // Guarded project deletion (CR-V2-027): admin-only (role `ri`) + only before any PROD deploy. The
+  // backend enforces both; the UI mirrors them (disabled-over-hidden) and adds a type-DELETE confirm.
+  const user = useAuthStore((s) => s.user);
+  const isAdmin = user?.role === "ri";
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteGithub, setDeleteGithub] = useState(true);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+
+  const handleDelete = async () => {
+    if (!project || deleteConfirmText !== "DELETE" || deleting) return;
+    setDeleting(true);
+    setDeleteError("");
+    try {
+      await deleteProjectApi(project.id, deleteGithub);
+      navigate("/projects");
+    } catch (e: unknown) {
+      setDeleteError(e instanceof Error ? e.message : "Projekt sa nepodarilo zmazať.");
+      setDeleting(false);
+    }
+  };
+
   const submitFastFix = async () => {
     const directive = fastFixDirective.trim();
     if (!project || !directive || fastFixSubmitting) return;
@@ -162,13 +186,14 @@ export default function ProjectDetailPage() {
     let cancelled = false;
     listProjectsApi({ limit: 100 })
       .then((res) => {
-        if (cancelled) return;
+        if (cancelled) return undefined;
         const found = res.items.find((p) => p.slug === slug);
-        if (!found) { setError("Projekt nebol nájdený."); setLoading(false); return; }
-        setProject(found);
-        return listVersions(found.id).then((vs) => {
-          if (!cancelled) setVersions(vs);
-        });
+        if (!found) { setError("Projekt nebol nájdený."); setLoading(false); return undefined; }
+        // Fetch the DETAIL (computes has_prod_deploy — drives the delete guard) + the versions.
+        return Promise.all([
+          getProjectApi(found.id).then((detail) => { if (!cancelled) setProject(detail); }),
+          listVersions(found.id).then((vs) => { if (!cancelled) setVersions(vs); }),
+        ]);
       })
       .catch(() => { if (!cancelled) setError("Nepodarilo sa načítať projekt."); })
       .finally(() => { if (!cancelled) setLoading(false); });
@@ -398,6 +423,125 @@ export default function ProjectDetailPage() {
           </>
         )}
       </div>
+
+      {/* Danger zone — guarded project deletion (CR-V2-027): admin-only + only before any PROD deploy
+          (disabled-over-hidden with a tooltip explaining why); type-DELETE confirm in the modal. */}
+      <div className="mt-8 rounded-xl border border-[var(--color-status-error)]/30 p-5">
+        <h2 className="text-xs font-semibold text-[var(--color-status-error)] uppercase tracking-widest mb-1">
+          Nebezpečná zóna
+        </h2>
+        <p className="text-xs text-[var(--color-text-muted)] mb-3">
+          Zmazanie projektu je trvalé a nevratné. Ak chceš projekt len odložiť, archivuj ho.
+        </p>
+        {(() => {
+          const blockedReason = !isAdmin
+            ? "Mazať projekt smie len admin (rola Ri)."
+            : project.has_prod_deploy
+              ? "Projekt už bol nasadený do PROD — namiesto mazania ho archivuj."
+              : null;
+          return (
+            <>
+              <button
+                onClick={() => {
+                  setDeleteError("");
+                  setDeleteConfirmText("");
+                  setDeleteGithub(true);
+                  setDeleteOpen(true);
+                }}
+                disabled={blockedReason !== null}
+                title={blockedReason ?? undefined}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-status-error)]/50 text-[var(--color-status-error)] hover:bg-[var(--color-status-error)]/10 text-xs font-medium px-3 py-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Zmazať projekt
+              </button>
+              {blockedReason && (
+                <p className="text-[11px] text-[var(--color-text-muted)] mt-2">{blockedReason}</p>
+              )}
+            </>
+          );
+        })()}
+      </div>
+
+      {/* Delete confirmation modal (CR-V2-027): enumerates exactly what is removed, an opt-out for the
+          GitHub repo, and a mandatory type-DELETE gate before the irreversible action. */}
+      {deleteOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-title"
+        >
+          <div className="w-full max-w-lg rounded-xl border border-[var(--color-status-error)]/40 bg-[var(--color-canvas)] p-5 shadow-xl">
+            <div className="flex items-center gap-2 mb-2">
+              <AlertTriangle className="w-4 h-4 text-[var(--color-status-error)]" />
+              <h3 id="delete-title" className="text-sm font-bold text-[var(--color-text-primary)]">
+                Zmazať projekt {project.name}?
+              </h3>
+            </div>
+            <p className="text-xs text-[var(--color-text-secondary)] mb-2">
+              Táto akcia natrvalo a <span className="font-semibold">nevratne</span> odstráni:
+            </p>
+            <ul className="text-xs text-[var(--color-text-secondary)] list-disc pl-5 space-y-0.5 mb-3">
+              <li>projekt a všetky jeho verzie, špecifikácie, návrhy, epiky, úlohy a chyby</li>
+              <li>jeho priečinok v znalostnej báze (KB)</li>
+              <li>
+                jeho pracovný adresár na disku (vrátane <span className="font-mono">MEMORY.md</span>)
+              </li>
+              <li>jeho UAT prostredie (kontajnery + port), ak existuje</li>
+              {project.repo_url && (
+                <li>
+                  {deleteGithub ? "aj jeho GitHub repozitár " : "GitHub repozitár zostane zachovaný: "}
+                  <span className="font-mono">{project.repo_url}</span>
+                </li>
+              )}
+            </ul>
+            {project.repo_url && (
+              <label className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)] mb-3">
+                <input
+                  type="checkbox"
+                  checked={deleteGithub}
+                  onChange={(e) => setDeleteGithub(e.target.checked)}
+                />
+                Zmazať aj GitHub repozitár <span className="font-mono">{project.repo_url}</span>
+              </label>
+            )}
+            <label htmlFor="delete-confirm" className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1">
+              Na potvrdenie napíš <span className="font-mono font-bold">DELETE</span>
+            </label>
+            <input
+              id="delete-confirm"
+              autoFocus
+              value={deleteConfirmText}
+              onChange={(e) => setDeleteConfirmText(e.target.value)}
+              placeholder="DELETE"
+              className="w-full rounded-lg border border-[var(--color-border-default)] bg-[var(--color-surface)] px-3 py-2 text-sm font-mono text-[var(--color-text-primary)] focus:border-[var(--color-status-error)] focus:outline-none"
+            />
+            {deleteError && (
+              <div className="mt-2 rounded-lg bg-[var(--color-state-error-bg)] border border-[var(--color-state-error-bg)] px-3 py-2 text-xs text-[var(--color-state-error-fg)]">
+                {deleteError}
+              </div>
+            )}
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                onClick={() => setDeleteOpen(false)}
+                disabled={deleting}
+                className="text-xs font-medium px-3 py-1.5 rounded-lg border border-[var(--color-border-default)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors disabled:opacity-50"
+              >
+                Zrušiť
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={deleteConfirmText !== "DELETE" || deleting}
+                className="inline-flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                Zmazať natrvalo
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Fast-Fix Lane modal (F-009 §4 CR-B): the Director types the fix directive (the whole brief);
           submit auto-creates a PATCH version + starts the short `fast_fix` pipeline, then opens its board. */}

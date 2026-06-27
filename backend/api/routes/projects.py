@@ -23,6 +23,7 @@ applied in ``backend/main.py`` via ``app.include_router``.
 from __future__ import annotations
 
 import logging
+import shutil
 from pathlib import Path
 from typing import Optional
 from uuid import UUID
@@ -32,7 +33,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
 from backend.api.dependencies import get_knowledge_base_writer
-from backend.core.security import require_ha_or_above
+from backend.core.security import require_ha_or_above, require_ri_role
 from backend.db.models.foundation import User
 from backend.db.session import get_db
 from backend.schemas.pagination import PaginatedResponse
@@ -49,6 +50,7 @@ from backend.schemas.project import (
     ProjectUpdate,
 )
 from backend.schemas.version import VersionCreate
+from backend.services import deploy as deploy_service
 from backend.services import github_validation as github_validation_service
 from backend.services import port_registry as port_registry_service
 from backend.services import project as project_service
@@ -272,6 +274,18 @@ def _map_value_error(exc: ValueError) -> HTTPException:
     return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=message)
 
 
+def _workspace_safe_to_remove(source_path: str, root: Path) -> bool:
+    """True iff ``source_path`` is an existing directory strictly UNDER ``root`` — never ``root`` itself,
+    never a path outside it (CR-V2-027). The guard before ``shutil.rmtree`` of a deleted project's
+    workspace: ``source_path`` is system-set, but an rmtree on the wrong path is catastrophic, so this is
+    defence-in-depth."""
+    if not source_path:
+        return False
+    ws = Path(source_path).resolve()
+    r = root.resolve()
+    return ws != r and ws.is_relative_to(r) and ws.is_dir()
+
+
 @router.get("", response_model=PaginatedResponse[ProjectRead])
 def list_projects(
     status_filter: Optional[ProjectStatus] = Query(
@@ -389,7 +403,11 @@ def get_project(
         project = project_service.get_by_id(db, project_id)
     except ValueError as exc:
         raise _map_value_error(exc) from exc
-    return ProjectRead.model_validate(project)
+    result = ProjectRead.model_validate(project)
+    # CR-V2-027: compute the PROD-deploy flag here (one query) so the FE can disable + explain the
+    # delete control without a second round-trip. Only authoritative on this detail endpoint.
+    result.has_prod_deploy = deploy_service.project_had_prod_deploy(db, project.id)
+    return result
 
 
 @router.post(
@@ -646,6 +664,7 @@ def update_project(
 def delete_project(
     project_id: UUID,
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_ri_role),
     kb_writer: KnowledgeBaseWriter = Depends(get_knowledge_base_writer),
     delete_github: bool = Query(
         default=False,
@@ -658,20 +677,24 @@ def delete_project(
 ) -> Response:
     """Hard-delete a project by primary key.
 
+    Guards (CR-V2-027): **admin only** (role ``ri`` via ``require_ri_role``; others get 403), and
+    **only a project that has never had a successful PROD deploy** — once a project graduates to PROD it
+    can only be archived (409 otherwise). Archiving is the preferred soft-disable path generally — callers
+    should prefer ``PATCH`` with ``status='archived'`` and reserve delete for early/throwaway projects.
+
     Every inbound FK to ``projects.id`` uses ``ON DELETE CASCADE``, so
     dependent rows (modules, specifications, design documents,
     KB docs, architect sessions, epics, bugs, delegations, migration
-    tables, report configs) are removed automatically. Archiving is the
-    preferred soft-disable path — callers should prefer ``PATCH`` with
-    ``status='archived'`` and reserve delete for test fixtures / admin
-    tooling.
+    tables, report configs) are removed automatically.
 
     Side effects on success:
 
+    * The on-disk project workspace ``{source_path}`` (= ``/opt/projects/{slug}``, incl. the per-project
+      ``MEMORY.md``) is removed so the slug can be cleanly re-created (best-effort, guarded to a path
+      strictly under PROJECTS_ROOT).
     * The KB folder ``{knowledge_base_path}/projects/{slug}/`` (any
       project-scoped KB docs) is removed so a deleted project leaves no
-      orphaned KB tree. (The per-project ``MEMORY.md`` lives in the
-      project workspace, not the KB, and goes with the workspace.)
+      orphaned KB tree.
     * If ``delete_github=true`` is passed, the backing GitHub
       repository is deleted too. Off by default — the DB row and KB
       folder go, but the repo stays in case the caller wants to
@@ -687,7 +710,18 @@ def delete_project(
 
     slug = project.slug
     repo_url = project.repo_url
+    source_path = project.source_path  # capture before delete for workspace cleanup (CR-V2-027)
     uat_slug = project.uat_slug  # capture before delete for UAT teardown (v0.9.0 Phase 3 CR-2)
+
+    # CR-V2-027: a project graduates to PROD on its first successful prod deploy; from then on it can
+    # only be archived, never hard-deleted (the deploy audit trail + any live customers must survive).
+    if deploy_service.project_had_prod_deploy(db, project_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Projekt {slug!r} už bol nasadený do PROD — namiesto mazania ho archivuj (PATCH status='archived')."
+            ),
+        )
 
     try:
         project_service.delete(db, project_id)
@@ -713,6 +747,26 @@ def delete_project(
         kb_writer.delete_project(slug)
     except OSError as exc:
         logger.warning("KB cleanup failed for deleted project %r: %s", slug, exc)
+
+    # Workspace cleanup — best-effort (CR-V2-027). Remove the on-disk project workspace so a deleted
+    # project leaves no orphaned tree and the slug can be cleanly re-created (the per-project MEMORY.md
+    # lives here and goes with it). Guarded: only an existing dir strictly UNDER PROJECTS_ROOT is removed,
+    # never the root itself or a path outside it. A failure does not undo the committed DB delete.
+    if source_path:
+        from backend.services.claude_agent import PROJECTS_ROOT
+
+        if _workspace_safe_to_remove(source_path, PROJECTS_ROOT):
+            try:
+                shutil.rmtree(source_path)
+            except OSError as exc:
+                logger.warning("Workspace cleanup failed for deleted project %r (%s): %s", slug, source_path, exc)
+        else:
+            logger.warning(
+                "Workspace cleanup SKIPPED for deleted project %r — %r not a dir strictly under %s",
+                slug,
+                source_path,
+                PROJECTS_ROOT,
+            )
 
     # GitHub repo cleanup — opt-in.
     if delete_github and repo_url:

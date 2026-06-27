@@ -106,4 +106,10 @@ export interface ProjectRead {
   created_at: string;
   /** ISO-8601 timestamp. */
   updated_at: string;
+  /**
+   * True iff the project has ever had a successful PROD deploy (CR-V2-027). Computed only on the
+   * detail endpoint (GET /projects/{id}); `false` on list responses. Gates the delete control:
+   * a PROD-graduated project can only be archived, never hard-deleted.
+   */
+  has_prod_deploy: boolean;
 }
