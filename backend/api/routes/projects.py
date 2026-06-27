@@ -513,6 +513,29 @@ def create_project(
                 detail=f"Filesystem bootstrap failed: {exc}",
             ) from exc
 
+        # CR-V2-018: provision the v2 two-agent ``Pravidlá agenta`` charters into the just-bootstrapped
+        # workspace + normalise it to v2 shape. HARD step (unlike the best-effort post-scaffold seeds):
+        # the engine fail-closes on a missing ai-agent/auditor charter, so a silent skip would block the
+        # pipeline at first dispatch with "Agent dispatch failed". Rolls back + 500s on failure (mirrors
+        # Stage 3); no-ops when there is no checkout on disk (dry-run / disabled bootstrap). Bound to the
+        # engine's project root (``PROJECTS_ROOT / slug`` = the agent's cwd + charter-read root), NOT
+        # ``source_path`` — equal under the invariant, but binding here keeps charters + deny globs aligned
+        # with where the engine actually reads/runs.
+        from backend.services.claude_agent import PROJECTS_ROOT
+        from backend.services.create_project_postscaffold import (
+            ProvisioningError,
+            provision_v2_agent_charters,
+        )
+
+        try:
+            provision_v2_agent_charters(PROJECTS_ROOT / project.slug, project.slug, project.name)
+        except ProvisioningError as exc:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"v2 agent charter provisioning failed: {exc}",
+            ) from exc
+
         # CR-V2-016: seed the AI Agent's per-project ``MEMORY.md`` (single source of
         # truth — replaces the retired STATUS.md/HISTORY.md DB-driven seeding). One-shot
         # scaffold in the just-bootstrapped workspace; the agent owns every later write

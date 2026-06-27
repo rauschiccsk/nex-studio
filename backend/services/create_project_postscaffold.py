@@ -18,7 +18,13 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
-NEX_STUDIO_TEMPLATES = Path("/opt/projects/nex-studio/templates")
+# Container-correct templates dir: parents[2] of this file is the repo root — ``/app`` inside the backend
+# image (Dockerfile ``COPY templates/ ./templates/``), ``/opt/projects/nex-studio`` in dev. The previous
+# hardcoded host path ``/opt/projects/nex-studio/templates`` does NOT exist inside the container (where
+# ``/opt/projects`` is the bind-mounted PROJECT workspace), so every template seed below silently logged
+# "template missing" and skipped. Mirrors ``uat_provisioner.NEX_STUDIO_ROOT``.
+NEX_STUDIO_ROOT = Path(__file__).resolve().parents[2]
+NEX_STUDIO_TEMPLATES = NEX_STUDIO_ROOT / "templates"
 CICD_TEMPLATE = NEX_STUDIO_TEMPLATES / "github-actions-workflow.yml"
 # gate-g-hardening GAP 1 (CR-B): the behavioural release-acceptance script the engine runs at gate_g.
 RELEASE_SMOKE_TEMPLATE = NEX_STUDIO_TEMPLATES / "release_smoke_test.sh"
@@ -50,6 +56,111 @@ _ARCHETYPE_SURFACES: dict[str, tuple[str, ...]] = {
     "standard": ("app-frontend",),
     "web": ("admin-frontend", "public-site"),
 }
+
+
+# --- CR-V2-018 v2 two-agent charter provisioning ----------------------------
+class ProvisioningError(RuntimeError):
+    """v2 agent-charter provisioning failed. Unlike the best-effort post-scaffold seeds this is a HARD
+    failure the caller surfaces (500 + rollback): the engine fail-closes on a missing ai-agent/auditor
+    charter (``claude_agent._load_charter``), so a silent skip would re-introduce the "Agent dispatch
+    failed — pipeline blocked" bug at first dispatch."""
+
+
+#: charter-path slug → (role charter template, role settings template) under ``templates/``.
+_V2_AGENTS: dict[str, tuple[str, str]] = {
+    "ai-agent": ("ai-agent-charter.md", "ai-agent-settings.json"),
+    "auditor": ("auditor-charter.md", "auditor-settings.json"),
+}
+_AGENT_SHARED_BASE = "agent-shared-base.md"
+_UNIVERSAL_CLAUDE_MD = "project-claude-md.md"
+_CHARTER_SEP = "\n\n---\n\n"
+#: v1-era charter dirs the v1 ``init.sh`` still emits but the v2 two-agent engine never reads (it reads
+#: ONLY ``.claude/agents/{ai-agent,auditor}/CLAUDE.md``) — removed so a v2 project is clean v2 shape.
+_V1_AGENT_DIRS = ("designer", "implementer", "customer")
+
+
+def provision_v2_agent_charters(project_root: Path, slug: str, project_name: str) -> None:
+    """Write the v2 two-agent ``Pravidlá agenta`` charters into the freshly-scaffolded project and
+    normalise it to v2 shape. HARD requirement (raises :class:`ProvisioningError` on failure).
+
+    ``project_root`` MUST be the path the engine treats as the project root — ``PROJECTS_ROOT / slug``
+    (= the agent's cwd + the charter-read root at dispatch, ``claude_agent``). Callers pass that, NOT
+    ``project.source_path``: the two are equal under the system invariant, but the engine hardcodes
+    ``PROJECTS_ROOT / slug``, so binding here guarantees the charter files land where the engine reads
+    them AND the absolute deny/allow globs in ``settings.json`` match the agent's actual cwd.
+
+    For each v2 role (``ai-agent``, ``auditor``): write ``.claude/agents/<role>/CLAUDE.md`` =
+    shared base + role charter (concatenated — the engine reads the single file via
+    ``--append-system-prompt``, so the join MUST happen here at scaffold time), and ``settings.json``
+    with the ``<PROJECT_ROOT>`` placeholder substituted to ``project_root``. Then replace the v1
+    universal ``CLAUDE.md`` (which the ``claude`` CLI auto-loads from cwd) with the v2-native one and
+    remove the v1-only charter dirs (designer/implementer/customer) the engine never reads.
+
+    No-op (info log, no raise) when there is no checkout on disk (dry-run / disabled bootstrap),
+    mirroring ``project_memory.seed_memory`` and Stage 4."""
+    claude_dir = project_root / ".claude"
+    if not project_root.is_dir() or not claude_dir.is_dir():
+        logger.info(
+            "v2 charter provisioning SKIPPED — no scaffold on disk for slug=%s (dry-run / disabled bootstrap)",
+            slug,
+        )
+        return
+
+    base_tpl = NEX_STUDIO_TEMPLATES / _AGENT_SHARED_BASE
+    if not base_tpl.is_file():
+        raise ProvisioningError(
+            f"v2 charter provisioning failed (slug={slug}): shared base template missing at {base_tpl}"
+        )
+    base_text = base_tpl.read_text(encoding="utf-8").rstrip()
+    # <PROJECT_ROOT> = the project root = the agent's cwd at dispatch (claude_agent runs with
+    # cwd=PROJECTS_ROOT/slug), so the absolute deny/allow globs match the files the agent touches.
+    project_root_str = str(project_root)
+
+    for role_slug, (charter_tpl_name, settings_tpl_name) in _V2_AGENTS.items():
+        charter_tpl = NEX_STUDIO_TEMPLATES / charter_tpl_name
+        settings_tpl = NEX_STUDIO_TEMPLATES / settings_tpl_name
+        if not charter_tpl.is_file() or not settings_tpl.is_file():
+            raise ProvisioningError(
+                f"v2 charter provisioning failed (slug={slug}): missing template(s) for role "
+                f"{role_slug} (expected {charter_tpl} + {settings_tpl})"
+            )
+        role_dir = claude_dir / "agents" / role_slug
+        try:
+            role_dir.mkdir(parents=True, exist_ok=True)
+            (role_dir / "CLAUDE.md").write_text(
+                base_text + _CHARTER_SEP + charter_tpl.read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            (role_dir / "settings.json").write_text(
+                settings_tpl.read_text(encoding="utf-8").replace("<PROJECT_ROOT>", project_root_str),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            raise ProvisioningError(
+                f"v2 charter provisioning failed (slug={slug}): writing {role_slug} charter: {exc}"
+            ) from exc
+
+    universal_tpl = NEX_STUDIO_TEMPLATES / _UNIVERSAL_CLAUDE_MD
+    if not universal_tpl.is_file():
+        raise ProvisioningError(
+            f"v2 charter provisioning failed (slug={slug}): universal CLAUDE.md template missing at {universal_tpl}"
+        )
+    try:
+        (project_root / "CLAUDE.md").write_text(
+            universal_tpl.read_text(encoding="utf-8").replace("{{PROJECT_NAME}}", project_name),
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        raise ProvisioningError(
+            f"v2 charter provisioning failed (slug={slug}): writing universal CLAUDE.md: {exc}"
+        ) from exc
+
+    # Remove the v1-only charter dirs (cosmetic clutter the engine never reads) — best-effort within this
+    # hard step: a leftover dir does not block the build, so cleanup failure is swallowed, not raised.
+    for v1_dir in _V1_AGENT_DIRS:
+        shutil.rmtree(claude_dir / "agents" / v1_dir, ignore_errors=True)
+
+    logger.info("v2 agent charters provisioned + project normalised to v2 shape (slug=%s)", slug)
 
 
 def run_post_scaffold_steps(

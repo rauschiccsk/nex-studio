@@ -48,6 +48,23 @@ class ClaudeAgentError(RuntimeError):
     """claude CLI invocation failed (non-zero exit, timeout, decode failure)."""
 
 
+def _load_charter(charter_path: Path) -> str:
+    """Read a role's ``Pravidlá agenta`` charter for ``--append-system-prompt``.
+
+    The charter is a HARD requirement on the first session invocation. If it is missing we raise a
+    descriptive :class:`ClaudeAgentError` (NOT a raw ``FileNotFoundError``): a missing charter means the
+    project was never provisioned with this role's v2 charter (see
+    ``create_project_postscaffold._provision_v2_agent_charters``), and the actionable hint is to re-create
+    the project through NEX Studio v2 — not a CLI/runtime fault. ``pipeline_runner`` surfaces this message
+    verbatim ("Agent dispatch failed: … — pipeline blocked")."""
+    if not charter_path.is_file():
+        raise ClaudeAgentError(
+            f"Charter (Pravidlá agenta) missing at {charter_path} — this project was not provisioned "
+            f"with this role's v2 charter. Re-create the project through NEX Studio v2."
+        )
+    return charter_path.read_text(encoding="utf-8")
+
+
 #: Per-event callback type for streaming mode. Receives each parsed stream-json
 #: event (a dict); must never raise (the caller guards it anyway).
 EventCallback = Callable[[dict], Awaitable[None]]
@@ -212,8 +229,9 @@ async def _invoke_once(
         # `result` text the text path returned, so downstream parsing is unaffected.
         args = ["claude", "-p", "--output-format", "json"]
     if charter_path is not None:
-        # First invocation for this claude session — create it.
-        charter_text = charter_path.read_text(encoding="utf-8")
+        # First invocation for this claude session — create it. A missing charter raises a descriptive
+        # ClaudeAgentError (not a raw FileNotFoundError) → clear "re-create through NEX Studio v2" hint.
+        charter_text = _load_charter(charter_path)
         args += [
             "--session-id",
             str(claude_session_id),
