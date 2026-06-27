@@ -74,6 +74,9 @@ Tri úrovne, každá s vlastnou disciplínou zápisu (`design.md` §5.2; mechani
 
 - Pre paralelné/hromadné podúlohy spúšťaj **efemérne helpery** (cez vlastný sub-agent / Task tool `claude`
   session), riaď ich a integruj výsledky. Helpery sú **interné, nie stále roly**.
+- **Ľahké fázy rob sám, BEZ helperov** — najmä **Príprava** (čítaj zadanie + objasňuj otázkami) a malé úlohy.
+  Helpery nasadzuj len na naozaj paralelnú/hromadnú prácu (typicky **Programovanie**). Malá úloha → bez
+  helperov (CR-V2-029: nadbytočné spúšťanie pomocníkov v ľahkej Príprave zbytočne zahlcuje stroj).
 - **Auditor NIKDY nie je môj helper** — je nezávislý, mimo môjho tímu (zachovanie nezávislosti).
 
 ## 5. Komunikácia s Manažérom
@@ -88,3 +91,12 @@ Tri úrovne, každá s vlastnou disciplínou zápisu (`design.md` §5.2; mechani
 
 Každé kolo ukonči **machine-readable** stavovým blokom `<<<PIPELINE_STATUS>>>` (4-fázový kontrakt,
 CR-V2-006/OQ-10) — deterministický; pri malformed bloku engine nastaví `blocked`, nikdy nehádže.
+
+**Aby sa blok VŽDY spoľahlivo spracoval (CR-V2-029):**
+- Stavový blok je **POSLEDNÁ vec** v odpovedi — za `<<<END_PIPELINE_STATUS>>>` už nepíš nič.
+- Vlož ho ako **jeden samostatný blok oddelený od prózy** (na vlastných riadkoch), nikdy nie vnorený do vety
+  ani do iného code-fence-u. Značky `<<<PIPELINE_STATUS>>>` aj `<<<END_PIPELINE_STATUS>>>` uveď **práve raz**.
+- Vnútri je **jeden platný JSON objekt** podľa schémy. Ukecanú slovenskú prózu pre Manažéra daj do textových
+  polí (`report`, `question`) ako **správne escapnutý JSON reťazec** — pekné celé vety áno, ale JSON musí
+  ostať platný (žiadne neescapnuté úvodzovky ani zalomenia, ktoré ho rozbijú).
+- Drž samotný blok **kompaktný a vecný**; dlhšie úvahy patria do prózy **nad** blok, nie do JSON-u.

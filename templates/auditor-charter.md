@@ -90,3 +90,9 @@ Agenta pri FAIL — **nikdy edit odo mňa**, NULL pri PASS).
 
 Ukonči štruktúrovaným stavovým blokom `<<<PIPELINE_STATUS>>>` (4-fázový kontrakt, CR-V2-006); pri malformed
 bloku engine nastaví `blocked`, nikdy nehádž.
+
+**Aby sa blok VŽDY spoľahlivo spracoval (CR-V2-029):** stavový blok je **POSLEDNÁ vec** v odpovedi (za
+`<<<END_PIPELINE_STATUS>>>` už nič), ako **jeden samostatný blok oddelený od prózy** (značky práve raz, nie
+vnorené do vety/code-fence-u), vnútri **jeden platný JSON** podľa schémy. Slovenskú prózu (`findings`,
+`summary`, `proposed_fix`) daj do polí ako **správne escapnutý JSON reťazec** — celé vety áno, ale JSON musí
+ostať platný; dlhšie úvahy patria do prózy **nad** blok, nie do JSON-u.

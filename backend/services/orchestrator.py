@@ -365,6 +365,14 @@ _MAX_SCOPE_ESCALATIONS_PER_ITERATION = 1
 # Distinct from ``_VERIFY_RETRIES`` (which retries a *valid* report that failed
 # verification).
 _PARSE_RETRIES = 2
+# CR-V2-029: minimum wall-clock (seconds) that must remain in the per-turn budget before a parse-retry
+# is started. The whole turn (primary + re-emits) shares ONE budget; if less than this is left we stop
+# rather than launch a re-emit we can't finish (which previously let a turn run 3×900s = 45 min).
+_MIN_RETRY_BUDGET_S = 60
+# CR-V2-029: max length of the agent's raw-output excerpt carried on a ParseFailure + shown in the
+# parse-exhaustion notification (enough to diagnose a malformed status block, bounded so the message /
+# payload stays sane).
+_RAW_EXCERPT_LEN = 4000
 # Upper bound on the total feats in an incrementally-generated task plan (v0.7.3, CR-1; v2 the plan folds
 # into the Návrh phase — CR-V2-011). Each feat costs one bounded ``--resume`` per-feat pass, so this caps
 # the multi-pass loop. A coarse-grained plan (module ≈ task) is well under this even for a large app;
@@ -593,6 +601,45 @@ def _record_message(
     db.add(msg)
     db.flush()
     return msg
+
+
+async def _record_parse_exhaustion(
+    db: Session,
+    state: PipelineState,
+    *,
+    stage: str,
+    result: ParseFailure,
+    human_hint: str,
+    on_message: Optional[MessageCallback],
+) -> None:
+    """CR-V2-029: record a human-readable ``system→manazer`` notification when an agent turn produced no
+    parseable status block after the bounded retries.
+
+    Without this the FE — which renders the AI Agent tab purely from the persisted message stream — showed
+    an EMPTY 'awaiting' screen indistinguishable from a legitimate question (the agent's live output had
+    streamed then vanished). The notification names the parser reason and carries a raw-output excerpt in
+    its payload, so the failure is visible in both the AI Agent tab and the Vývoj board, and is debuggable
+    instead of silent. The caller still sets ``status='blocked'`` + ``block_reason='parse_exhaustion'``."""
+    msg = _record_message(
+        db,
+        version_id=state.version_id,
+        stage=stage,
+        author="system",
+        recipient="manazer",
+        kind="notification",
+        content=(
+            f"Blokované — agent po opakovaných pokusoch nevrátil platný stavový výstup "
+            f"(dôvod: {result.reason}). {human_hint}"
+        ),
+        payload={
+            "phase": stage,
+            "parse_failure_reason": result.reason,
+            "raw_excerpt": result.raw,
+            **(_failure_metrics_payload(result) or {}),
+        },
+    )
+    if on_message is not None:
+        await on_message(msg)
 
 
 def _directive_for(stage: str, flow_type: str = "new_version") -> str:
@@ -1764,7 +1811,14 @@ async def invoke_agent(
     if isinstance(parsed, ParseFailure):
         # WS-D (CR-NS-036): carry this turn's accumulated metrics on the ParseFailure so a terminal
         # escalation (which records the only message for this no-message turn) can fold them in.
-        return replace(parsed, usage=turn_metrics.usage_payload(), timing=turn_metrics.timing_payload())
+        # CR-V2-029: also carry a truncated raw-output excerpt so the terminal escalation can show WHAT
+        # the agent produced (the failed output otherwise vanishes — the empty-screen bug).
+        return replace(
+            parsed,
+            usage=turn_metrics.usage_payload(),
+            timing=turn_metrics.timing_payload(),
+            raw=(stdout or "")[:_RAW_EXCERPT_LEN],
+        )
 
     # Map the agent block.kind → message kind (question/blocked → question). The Auditor's ``verdict``
     # block (CR-V2-006 repurposed shape; emitted by the upfront review CR-V2-013 + the end Verifikácia
@@ -1879,13 +1933,19 @@ async def invoke_agent_with_parse_retry(
     # caller may pre-seed it (the Coordinator relay carries a failed worker's lost tokens into its
     # relay message — see _coordinator_relay_engine_failure).
     turn_metrics = metrics if metrics is not None else _DispatchMetrics()
+    # CR-V2-029: the whole turn (primary + every re-emit) shares ONE wall-clock budget. Previously each
+    # of the 1+_PARSE_RETRIES invocations got a fresh full timeout, so a turn could legally run up to
+    # 3×900s = 45 min. Now each retry gets only the time that REMAINS, and we never launch a re-emit with
+    # less than _MIN_RETRY_BUDGET_S left.
+    budget = timeout if timeout is not None else _timeout_for(stage)
+    turn_start = perf_counter()
     result = await invoke_agent(
         db,
         version_id=version_id,
         role=role,
         stage=stage,
         prompt=prompt,
-        timeout=timeout,
+        timeout=budget,
         on_event=on_event,
         recipient=recipient,
         on_message=on_message,
@@ -1895,12 +1955,22 @@ async def invoke_agent_with_parse_retry(
     attempts = 0
     while isinstance(result, ParseFailure) and attempts < _PARSE_RETRIES:
         attempts += 1
+        remaining = int(budget - (perf_counter() - turn_start))
+        if remaining < _MIN_RETRY_BUDGET_S:
+            logger.warning(
+                "parse-retry budget exhausted for version=%s role=%s (%ds left) — stopping after %d attempt(s)",
+                version_id,
+                role,
+                remaining,
+                attempts - 1,
+            )
+            break
         result = await invoke_agent(
             db,
             version_id=version_id,
             role=role,
             stage=stage,
-            timeout=timeout,
+            timeout=remaining,
             # R3 (v0.7.0): transport-agnostic — the status block may arrive as grammar-constrained
             # structured_output (--json-schema) OR the <<<PIPELINE_STATUS>>> fence fallback, so the
             # re-prompt names neither; it cites the validation reason and asks for a conforming object.
@@ -3064,11 +3134,19 @@ async def run_dispatch(
             db.flush()
             return state
         # Parse-retries exhausted (CR-NS-022 §2): settle blocked directly (no Coordinator relay — retired in
-        # v2; the AI Agent reports to the Manažér itself, design §2.2). The board shows a plain next_action,
-        # never the raw parser error.
+        # v2; the AI Agent reports to the Manažér itself, design §2.2). CR-V2-029: record a readable
+        # notification (+ raw-output excerpt) so the AI Agent tab is never left empty.
         state.status = "blocked"
         state.block_reason = "parse_exhaustion"  # R4 (D1): worker produced no parseable output after retries
         state.next_action = "Blokované — agent nevrátil platný výstup. Usmerni (Uprav) alebo odpovedz."
+        await _record_parse_exhaustion(
+            db,
+            state,
+            stage=stage,
+            result=result,
+            human_hint="Skús znova (Uprav) alebo upresni zadanie.",
+            on_message=on_message,
+        )
         db.flush()
         return state
 
@@ -3503,6 +3581,14 @@ async def _run_navrh_round(
         state.status = "blocked"
         state.block_reason = "parse_exhaustion"  # R4 (D1): no parseable design output after retries
         state.next_action = "Blokované — agent nevrátil platný návrh. Usmerni (Uprav) alebo odpovedz."
+        await _record_parse_exhaustion(
+            db,
+            state,
+            stage="navrh",
+            result=result,
+            human_hint="Skús znova (Uprav) alebo upresni návrh.",
+            on_message=on_message,
+        )
         db.flush()
         return state
     if result.kind in ("question", "blocked"):

@@ -11,7 +11,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
+import signal
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -272,6 +274,10 @@ async def _invoke_once(
         # gate's full openapi.yaml in one `result` line) can far exceed the 64 KB
         # default and would raise LimitOverrunError on readline (CR-NS-018).
         limit=_STREAM_LINE_LIMIT,
+        # CR-V2-029: make the agent its own session/process-group leader so a timeout can SIGKILL the
+        # WHOLE tree (parent + the helper sub-agents the claude CLI spawns via its Task tool). Killing
+        # only ``proc.pid`` orphaned those helpers — they kept a Príprava turn alive at ~1200% CPU.
+        start_new_session=True,
     )
 
     if on_event is not None:
@@ -283,8 +289,7 @@ async def _invoke_once(
             timeout=timeout,
         )
     except asyncio.TimeoutError as exc:
-        proc.kill()
-        await proc.wait()
+        await _kill_process_tree(proc)
         raise ClaudeAgentError(
             f"claude invocation timed out after {timeout}s",
         ) from exc
@@ -304,6 +309,24 @@ async def _invoke_once(
     if not isinstance(envelope, dict) or "result" not in envelope:
         raise ClaudeAgentError("claude json output has no 'result' field")
     return str(envelope["result"]).strip(), _usage_from(envelope), _structured_from(envelope)
+
+
+async def _kill_process_tree(proc) -> None:
+    """SIGKILL the agent process AND its children (CR-V2-029). The claude CLI spawns helper sub-agents
+    (Task tool) as child processes; killing only ``proc.pid`` orphans them. The process is a session
+    leader (``start_new_session=True``), so its PID is the process-group id — one ``killpg`` reaps the
+    whole tree. Falls back to a plain ``proc.kill()`` if the group is already gone."""
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=5)
+    except asyncio.TimeoutError:
+        pass  # the OS will reap it; never hang the dispatch on cleanup
 
 
 async def _invoke_streaming(
@@ -344,8 +367,7 @@ async def _invoke_streaming(
     try:
         result_text, result_usage, result_structured = await asyncio.wait_for(_consume(), timeout=timeout)
     except asyncio.TimeoutError as exc:
-        proc.kill()
-        await proc.wait()
+        await _kill_process_tree(proc)
         raise ClaudeAgentError(f"claude invocation timed out after {timeout}s") from exc
 
     await proc.wait()

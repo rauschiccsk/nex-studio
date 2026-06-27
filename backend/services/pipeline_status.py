@@ -242,6 +242,11 @@ class ParseFailure:
     reason: str
     usage: Optional[dict[str, Any]] = None
     timing: Optional[dict[str, Any]] = None
+    #: CR-V2-029: a truncated excerpt of the agent's raw output for this failed turn, attached by
+    #: ``invoke_agent`` via :func:`dataclasses.replace`. A parse-exhausted turn records no agent message,
+    #: so the terminal escalation folds this excerpt into its Manažér notification — the failure is then
+    #: visible + debuggable instead of vanishing (it previously left the screen empty). ``None`` until set.
+    raw: Optional[str] = None
     #: R1-c (v0.7.0 dispatch resilience): set when this failure is an agent envelope-loss (a
     #: ``ClaudeAgentError`` — timeout / crash) for which the engine ran the ``baseline..HEAD`` commit
     #: audit. Carries ``{dispatch_baseline_sha, post_timeout_head_sha, timeout_seconds,

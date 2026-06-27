@@ -529,3 +529,93 @@ async def test_invoke_agent_timeout_no_baseline_no_audit(db_session, monkeypatch
     assert isinstance(result, ParseFailure)
     assert result.lost_work is None
     assert _lost_work_notifs(db_session, version.id) == []
+
+
+# ── CR-V2-029: runaway containment + visible failure ────────────────────────────
+
+
+async def test_kill_process_tree_kills_the_whole_group(monkeypatch):
+    """Timeout must SIGKILL the process GROUP (parent + the helper sub-agents the CLI spawns), not just
+    the parent PID — orphaned helpers kept a Príprava turn alive at ~1200% CPU."""
+    seen: dict = {}
+    monkeypatch.setattr(claude_agent.os, "getpgid", lambda pid: 4242)
+    monkeypatch.setattr(claude_agent.os, "killpg", lambda pgid, sig: seen.update(pgid=pgid, sig=sig))
+
+    class _Proc:
+        pid = 999
+
+        async def wait(self):
+            return 0
+
+    await claude_agent._kill_process_tree(_Proc())
+    assert seen == {"pgid": 4242, "sig": claude_agent.signal.SIGKILL}
+
+
+async def test_kill_process_tree_falls_back_when_group_already_gone(monkeypatch):
+    """If the group is already gone, fall back to a plain proc.kill() — cleanup must never raise."""
+    killed = {"plain": False}
+
+    def _gone(*_a):
+        raise ProcessLookupError
+
+    monkeypatch.setattr(claude_agent.os, "getpgid", lambda pid: 4242)
+    monkeypatch.setattr(claude_agent.os, "killpg", _gone)
+
+    class _Proc:
+        pid = 999
+
+        def kill(self):
+            killed["plain"] = True
+
+        async def wait(self):
+            return 0
+
+    await claude_agent._kill_process_tree(_Proc())
+    assert killed["plain"] is True
+
+
+async def test_parse_retry_stops_when_wall_clock_budget_exhausted(db_session, monkeypatch):
+    """The whole turn shares ONE wall-clock budget — with too little left, no re-emit fires (previously
+    each of 1+_PARSE_RETRIES attempts got a fresh full timeout → up to 3×900s)."""
+    calls = {"n": 0}
+
+    async def _fake(*, prompt, **kwargs):
+        calls["n"] += 1
+        return ("garbage — not a valid status block", claude_agent.UsageMetadata(10, 5, "m"))
+
+    monkeypatch.setattr(orchestrator, "invoke_claude", _fake)
+    version, _ = _make_version(db_session)
+    # budget (10s) < _MIN_RETRY_BUDGET_S (60s) → after the primary, no re-emit is launched.
+    result = await orchestrator.invoke_agent_with_parse_retry(
+        db_session,
+        version_id=version.id,
+        role=orchestrator.AI_AGENT_ROLE,
+        stage="navrh",
+        prompt="go",
+        timeout=10,
+    )
+    assert isinstance(result, ParseFailure)
+    assert calls["n"] == 1  # primary only — the budget gate blocked the re-emits
+
+
+async def test_parse_exhaustion_records_readable_notification(db_session):
+    """A parse-exhausted turn records a system→manazer notification (parser reason + raw-output excerpt) so
+    the AI Agent tab is never left empty (it previously showed a blank 'awaiting' screen)."""
+    version, _ = _make_version(db_session)
+    state = _arm_dispatch_state(db_session, version, stage="priprava")
+    pf = ParseFailure("status block schema invalid — kind: Field required", raw="…surový výstup agenta…")
+
+    await orchestrator._record_parse_exhaustion(
+        db_session,
+        state,
+        stage="priprava",
+        result=pf,
+        human_hint="Skús znova (Uprav).",
+        on_message=None,
+    )
+
+    note = [m for m in _msgs(db_session, version.id) if m.kind == "notification"][-1]
+    assert note.author == "system" and note.recipient == "manazer"
+    assert "nevrátil platný" in note.content
+    assert note.payload["raw_excerpt"] == "…surový výstup agenta…"
+    assert note.payload["parse_failure_reason"].startswith("status block schema invalid")
