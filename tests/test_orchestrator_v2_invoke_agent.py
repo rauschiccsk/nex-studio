@@ -632,6 +632,9 @@ def test_status_block_instruction_names_exact_stage_and_enums():
     assert "preparation" not in msg.lower()  # the exact enum, not Opus's English translation
     assert "gate_report" in msg and "question" in msg  # kind enum listed
     assert "manazer" in msg  # awaiting enum listed
+    # CR-V2-034: also mandates formatted Markdown (no wall of text) — newlines are fine in JSON.
+    assert "Markdown" in msg
+    assert "PRÁZDNYM riadkom" in msg
 
 
 async def test_invoke_agent_appends_exact_stage_to_prompt(db_session, monkeypatch):

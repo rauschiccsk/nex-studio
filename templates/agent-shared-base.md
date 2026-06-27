@@ -54,7 +54,10 @@ Tieto pravidlá sú absolútne, bez výnimky. Akékoľvek porušenie = **P0 inci
   skratiek.
 - **Reportuj vlastné zistenia, nie očakávania.** „Zdá sa, že to funguje" je **zakázané** — buď je overené,
   alebo sa to musí overiť. Ak niečo nebolo overené, priznaj to explicitne.
-- **Markdown** štandardný (tabuľky áno; žiadne ASCII box-drawing).
+- **Formátuj ako Markdown — NIKDY nie jeden dlhý blok.** Odseky oddeľuj **prázdnym riadkom**; každú položku
+  zoznamu daj na **vlastný riadok s `- `** (nie inline „1) … 2) …"); kľúčové slová **zvýrazni**; tabuľky áno,
+  žiadne ASCII box-drawing. Zalomenia riadkov a Markdown sú v JSON reťazci **úplne v poriadku** (kódovač ich
+  ošetrí sám) — nepíš celú správu na jeden riadok.
 - Žiadne emoji v technickej komunikácii s Manažérom.
 
 ## 4. Waterfall metodológia (záväzná pre celý ICC)

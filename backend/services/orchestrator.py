@@ -643,18 +643,30 @@ async def _record_parse_exhaustion(
 
 
 def _status_block_instruction(stage: str) -> str:
-    """The status-block contract appended to EVERY agent turn's prompt (CR-V2-031).
+    """The status-block + message-formatting contract appended to EVERY agent turn's prompt (CR-V2-031,
+    extended CR-V2-034).
 
-    Names the EXACT enum literals the engine validates (``pipeline_status.STAGES`` / ``BLOCK_KINDS`` /
-    ``_AWAITING``) so the agent emits them verbatim instead of guessing/translating: Opus emitted
-    ``stage='preparation'`` (English) instead of the required ``stage='priprava'`` → an ``unknown stage``
-    ParseFailure that the re-emit (which never carried the exact value) could not fix. Injected at the
-    single :func:`invoke_agent` chokepoint, so the primary turn AND every parse-retry re-emit carry the
-    exact ``stage`` for the current phase. Keep the literals in sync with ``pipeline_status``."""
+    Two jobs, both injected at the single :func:`invoke_agent` chokepoint so they reach the primary turn
+    AND every parse-retry re-emit AND (crucially) the ONGOING ``--resume`` session — no charter reset
+    needed to take effect:
+
+    * Names the EXACT enum literals the engine validates (``pipeline_status.STAGES`` / ``BLOCK_KINDS`` /
+      ``_AWAITING``) so the agent emits them verbatim instead of guessing/translating (Opus emitted
+      ``stage='preparation'`` → an ``unknown stage`` ParseFailure). Keep the literals in sync.
+    * Mandates that the Manažér-facing fields (``report`` / ``question``) be FORMATTED Markdown with real
+      line breaks — the agent had been writing one un-broken wall of text (0 newlines), because a past
+      "escape newlines" instruction scared it off line breaks. Newlines + diacritics + Markdown are all
+      fine inside a JSON string (the encoder handles them)."""
     return (
+        "Text pre Manažéra (`report`, `question`) píš ako PEKNE FORMÁTOVANÝ Markdown, NIE jeden dlhý blok: "
+        "oddeľuj odseky PRÁZDNYM riadkom, každú položku zoznamu daj na vlastný riadok s `- `, dôležité "
+        "**zvýrazni**, ak pomôže pridaj krátky nadpis. Zalomenia riadkov, diakritika aj Markdown sú v JSON "
+        "reťazci ÚPLNE V PORIADKU — kódovač ich ošetrí sám; nikdy nepíš celú správu na jeden riadok ani bez "
+        "diakritiky.\n"
         "Ukonči odpoveď JEDNÝM štruktúrovaným stavovým blokom medzi značkami `<<<PIPELINE_STATUS>>>` a "
         "`<<<END_PIPELINE_STATUS>>>` (F-007-orchestration-cockpit.md §5.3), ako POSLEDNÚ vec v odpovedi. "
-        "Polia sú PEVNÉ KÓDOVÉ HODNOTY — použi ich PRESNE, NIKDY ich neprekladaj do angličtiny: "
+        "Polia stavového bloku sú PEVNÉ KÓDOVÉ HODNOTY — použi ich PRESNE, NIKDY ich neprekladaj do "
+        "angličtiny: "
         f"`stage` = `{stage}` (presne táto hodnota); "
         "`kind` je jedna z {question, answer, gate_report, verdict, done, blocked}; "
         "`awaiting` je `manazer` alebo `none`."
