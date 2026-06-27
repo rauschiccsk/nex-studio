@@ -29,12 +29,17 @@ def get_knowledge_base_writer() -> KnowledgeBaseWriter:
 
 
 def get_rag_indexer() -> RAGIndexer:
-    """Return a :class:`RAGIndexer` for live-document reindexing.
+    """Return a :class:`RAGIndexer` (fresh, un-cached instance per request).
 
-    Mirrors :func:`get_knowledge_base_writer` — a fresh, un-cached instance per
-    request so tests can substitute a mock (or disable indexing entirely) via
-    ``app.dependency_overrides``. Wired into the live-document write endpoints
-    (project create, task / feat completion, module events) so a write to
-    ``STATUS.md`` / ``HISTORY.md`` keeps the RAG store in sync (CLAUDE.md §13).
+    Mirrors :func:`get_knowledge_base_writer` — a fresh instance per request so
+    tests can substitute a mock (or disable indexing) via
+    ``app.dependency_overrides``.
+
+    CR-V2-016: the live-document write endpoints that used to depend on this
+    (project create, task / feat completion) are gone — the DB-driven
+    ``STATUS.md`` / ``HISTORY.md`` writers were retired (``MEMORY.md`` is the
+    single source of truth). This stays as a generic provider for any future
+    route needing a request-scoped indexer. The ``/knowledge`` routes carry
+    their own ``_get_indexer`` and do not use this one.
     """
     return RAGIndexer()

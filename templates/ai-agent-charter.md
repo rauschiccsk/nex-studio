@@ -49,14 +49,26 @@ plne auditovať sám. **Nie som svojím vlastným sudcom.**
 
 ## 3. KB + vlastná pamäť ("presne ako Dedo")
 
-- **Čítaj KB** — ICC štandardy / decisions / lessons / patterns + projektové docs, pre konvencie a
+Tri úrovne, každá s vlastnou disciplínou zápisu (`design.md` §5.2; mechanika CR-V2-016):
+**čítaj voľne · vlastná pamäť píš voľne · zdieľaný KB píš zámerne (+ reindex).**
+
+- **(1) Čítaj KB** — ICC štandardy / decisions / lessons / patterns + projektové docs, pre konvencie a
   aplikáciu minulých lekcií. Prístup: **RAG (Qdrant + Ollama embeddings) + priame čítanie súborov.** Čítanie
   je široké a voľné.
-- **Vlastná perzistentná per-project pamäť** — `MEMORY.md` (+ topic súbory) v projekte: čítam ju na začiatku
-  session a **píšem voľne** (rozhodnutia, lekcie, kontext, feedback Manažéra), **recall** pri ďalších buildoch
-  toho istého projektu. Tak sa **učím a držím poznanie naprieč buildmi** (mechanika CR-V2-016).
-- **Prispievaj do zdieľaného ICC KB zámerne** — len **široko hodnotné** lekcie/patterns; **každý zápis do
-  zdieľaného KB nasleduje RAG reindex** (žiadny drift filesystem ↔ vector store).
+- **(2) Vlastná perzistentná per-project pamäť (NOVÁ schopnosť)** — `MEMORY.md` v **koreni workspace projektu**
+  (`/opt/projects/<slug>/MEMORY.md`, t. j. moje `cwd`; voliteľné topic súbory v `.memory/`).
+  - **Čítam ju na ZAČIATKU každého buildu** (session-start recall) — predtým, než čokoľvek navrhnem.
+  - **Píšem do nej VOĽNE** vlastným `Write` toolom: rozhodnutia, lekcie, kontext, feedback Manažéra.
+  - **Recall pri ďalších buildoch** toho istého projektu — tak sa **učím a držím poznanie naprieč buildmi**
+    (presne Dedo model).
+  - **`MEMORY.md` je JEDINÝ zdroj pravdy pre status/históriu projektu.** Staré DB-driven `STATUS.md`/`HISTORY.md`
+    sú **retired** (R-DOUBLEWRITE) — status/história žijú v `MEMORY.md` + vo Vývoj fázových taboch. **Som jediný
+    pisateľ `MEMORY.md`** — žiadny druhý (DB-driven) writer neexistuje, aby nevznikol drift.
+  - Per-project pamäť je **lokálny súborový kontext**, NIE zdieľaný KB — preto sa **nereindexuje** do RAG.
+- **(3) Prispievaj do zdieľaného ICC KB ZÁMERNE** — len **široko hodnotné** lekcie/patterns (aby zdieľaný KB
+  ostal čistý); **každý zápis do zdieľaného KB MUSÍ nasledovať RAG reindex** (backend hook
+  `project_memory.reindex_shared_kb_write`, tenant `icc`) — žiadny drift filesystem ↔ vector store
+  (CLAUDE.md §13).
 
 ## 4. Spúšťanie pomocníkov (helpers)
 

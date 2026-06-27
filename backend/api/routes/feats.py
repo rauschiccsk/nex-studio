@@ -63,26 +63,18 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from backend.api.dependencies import get_knowledge_base_writer, get_rag_indexer
 from backend.core.security import require_ha_or_above
-from backend.db.models.projects import Project
-from backend.db.models.tasks import Epic, Feat, Task
 from backend.db.session import get_db
-from backend.rag.indexer import RAGIndexer
 from backend.schemas.feat import (
     FeatCreate,
     FeatRead,
     FeatStatus,
     FeatUpdate,
 )
-from backend.schemas.live_documents import FeatCompletionData
 from backend.schemas.pagination import PaginatedResponse
 from backend.services import feat as feat_service
-from backend.services.knowledge_base_writer import KnowledgeBaseWriter
-from backend.services.live_documents import LiveDocumentService
 
 router = APIRouter(
     tags=["Feats"],
@@ -104,50 +96,6 @@ def _map_value_error(exc: ValueError) -> HTTPException:
     if "already exists" in lowered or "duplicate" in lowered or "conflict" in lowered:
         return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=message)
     return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=message)
-
-
-def _feat_context(db: Session, feat_id: UUID) -> tuple[Feat, Project] | None:
-    """Return the ``(feat, project)`` pair for a feat via ``Epic → Project``.
-
-    Used by the live-document hook on ``PATCH`` to resolve the slug
-    for the KB writer. Returns ``None`` when the feat does not exist.
-    """
-    row = db.execute(
-        select(Feat, Project)
-        .join(Epic, Feat.epic_id == Epic.id)
-        .join(Project, Epic.project_id == Project.id)
-        .where(Feat.id == feat_id)
-    ).first()
-    if row is None:
-        return None
-    return row[0], row[1]
-
-
-def _build_feat_completion_data(db: Session, feat: Feat) -> FeatCompletionData:
-    """Aggregate phase-summary data for a completed feat.
-
-    ``total_tasks`` comes from ``COUNT(tasks WHERE feat_id=...)``.
-    ``duration_seconds`` prefers ``feat.actual_minutes``, falls back
-    to ``feat.estimated_minutes``, or 0 — converted to seconds so the
-    generator's ``_format_duration`` renders it in ``m`` / ``h m``.
-    ``audit_result`` / ``ci_result`` default to ``"na"`` — NEX Studio
-    has no remote CI yet (``CLAUDE.md §2.4``) and no phase-level
-    audit pipeline in place; callers can override when those become
-    available.
-    """
-    total_tasks = db.execute(select(func.count()).select_from(Task).where(Task.feat_id == feat.id)).scalar_one()
-
-    minutes = feat.actual_minutes if feat.actual_minutes is not None else (feat.estimated_minutes or 0)
-    duration_seconds = float(minutes * 60)
-
-    return FeatCompletionData(
-        feat_number=feat.number,
-        feat_title=feat.title,
-        total_tasks=total_tasks,
-        duration_seconds=duration_seconds,
-        audit_result="na",
-        ci_result="na",
-    )
 
 
 @router.get("", response_model=PaginatedResponse[FeatRead])
@@ -253,8 +201,6 @@ def update_feat(
     feat_id: UUID,
     payload: FeatUpdate,
     db: Session = Depends(get_db),
-    kb_writer: KnowledgeBaseWriter = Depends(get_knowledge_base_writer),
-    indexer: RAGIndexer = Depends(get_rag_indexer),
 ) -> FeatRead:
     """Partially update a feat's mutable fields.
 
@@ -267,36 +213,18 @@ def update_feat(
     ``onupdate=func.now()``. Fields omitted from the payload are left
     unchanged.
 
-    **Live documents side effect.** When a feat transitions to
-    ``status='done'`` (and was not already done), this endpoint
-    appends the phase-summary entry to ``HISTORY.md`` and regenerates
-    ``STATUS.md`` for the owning project. KB writes run before
-    ``db.commit`` so an I/O failure rolls the status change back —
-    the DB and the KB never diverge.
+    CR-V2-016: the old STATUS.md / HISTORY.md write side-effect on a
+    feat→done transition is RETIRED. Those DB-driven files were a second,
+    independent writer of project status / history; the single source of
+    truth is now the AI Agent's own ``MEMORY.md`` plus the Vývoj phase
+    tabs (R-DOUBLEWRITE). This endpoint is now a pure DB update.
     """
-    ctx = _feat_context(db, feat_id)
-    previous_status = ctx[0].status if ctx is not None else None
-
     try:
         feat = feat_service.update(db, feat_id, payload)
-
-        if ctx is not None and previous_status != "done" and feat.status == "done":
-            _, project = ctx
-            data = _build_feat_completion_data(db, feat)
-            svc = LiveDocumentService(project.slug, writer=kb_writer, indexer=indexer)
-            svc.append_phase_summary(data)
-            svc.regenerate_status(db, project.id)
-
         db.commit()
     except ValueError as exc:
         db.rollback()
         raise _map_value_error(exc) from exc
-    except OSError as exc:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update live documents: {exc}",
-        ) from exc
     db.refresh(feat)
     return FeatRead.model_validate(feat)
 

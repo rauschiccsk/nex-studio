@@ -515,10 +515,15 @@ class TestTaskRouter:
         resp = router_client.delete(f"/api/v1/tasks/{uuid.uuid4()}")
         assert resp.status_code == 404
 
-    # ------------------------------------------------------------- live docs
+    # ------------------------------------------- AI-Agent memory (CR-V2-016)
 
-    def test_patch_to_done_writes_history_and_status(self, router_client, feat, project, tmp_path):
-        """Transition to done appends HISTORY.md and rebuilds STATUS.md."""
+    def test_patch_to_done_writes_no_status_history(self, router_client, feat, project, tmp_path):
+        """CR-V2-016 (R-DOUBLEWRITE): a task -> done transition no longer writes
+        STATUS.md / HISTORY.md into the KB. That DB-driven side-effect was a
+        second independent writer of project status / history; the single source
+        of truth is now the AI Agent's own MEMORY.md plus the Vyvoj phase tabs.
+        The PATCH is now a pure DB update and must touch no KB project folder.
+        """
         created = router_client.post(
             "/api/v1/tasks",
             json=_payload(feat_id=feat.id, title="Implement login"),
@@ -529,167 +534,7 @@ class TestTaskRouter:
             json={"status": "done"},
         )
         assert resp.status_code == 200, resp.text
-
-        project_dir = tmp_path / "projects" / project.slug
-        history = (project_dir / "HISTORY.md").read_text(encoding="utf-8")
-        status_md = (project_dir / "STATUS.md").read_text(encoding="utf-8")
-
-        # HISTORY entry present — task title and done icon.
-        assert "Implement login" in history
-        assert "✅" in history
-
-        # STATUS reflects the done task with a check mark.
-        assert "- [x]" in status_md
-        assert "Implement login" in status_md
-
-    def test_patch_to_done_without_execution_log_seeds_history_only(self, router_client, feat, project, tmp_path):
-        """No execution log → HISTORY entry created, no ARCHITECT.md (deprecated)."""
-        created = router_client.post(
-            "/api/v1/tasks",
-            json=_payload(feat_id=feat.id, title="Docs update"),
-        ).json()
-
-        router_client.patch(
-            f"/api/v1/tasks/{created['id']}",
-            json={"status": "done"},
-        )
-
-        project_dir = tmp_path / "projects" / project.slug
-        assert (project_dir / "HISTORY.md").is_file()
-        assert (project_dir / "STATUS.md").is_file()
-        # ARCHITECT.md is deprecated — must not be created.
-        assert not (project_dir / "ARCHITECT.md").exists()
-
-    def test_patch_status_to_in_progress_does_not_fire_hook(self, router_client, feat, project, tmp_path):
-        created = router_client.post(
-            "/api/v1/tasks",
-            json=_payload(feat_id=feat.id, title="In flight"),
-        ).json()
-
-        router_client.patch(
-            f"/api/v1/tasks/{created['id']}",
-            json={"status": "in_progress"},
-        )
-
-        project_dir = tmp_path / "projects" / project.slug
-        # No hook fired → no KB directory for the project at all.
-        assert not project_dir.exists()
-
-    def test_patch_title_only_does_not_fire_hook(self, router_client, feat, project, tmp_path):
-        created = router_client.post(
-            "/api/v1/tasks",
-            json=_payload(feat_id=feat.id, title="Old title"),
-        ).json()
-
-        router_client.patch(
-            f"/api/v1/tasks/{created['id']}",
-            json={"title": "New title"},
-        )
+        assert resp.json()["status"] == "done"
 
         project_dir = tmp_path / "projects" / project.slug
         assert not project_dir.exists()
-
-    def test_patch_to_done_replayed_is_idempotent(self, router_client, feat, project, tmp_path):
-        """Second PATCH to done does not duplicate the HISTORY entry."""
-        created = router_client.post(
-            "/api/v1/tasks",
-            json=_payload(feat_id=feat.id, title="Once done, stays done"),
-        ).json()
-
-        router_client.patch(
-            f"/api/v1/tasks/{created['id']}",
-            json={"status": "done"},
-        )
-        router_client.patch(
-            f"/api/v1/tasks/{created['id']}",
-            json={"status": "done"},
-        )
-
-        project_dir = tmp_path / "projects" / project.slug
-        history = (project_dir / "HISTORY.md").read_text(encoding="utf-8")
-
-        # Second PATCH: previous_status is already "done" so the hook
-        # never fires — regardless, even if it had fired, writer-level
-        # dedup would strip the duplicate first line.
-        assert history.count("Once done, stays done") == 1
-
-    def test_patch_rolls_back_when_kb_write_fails(self, db_session, project, feat):
-        """OSError on KB write → 500 + task.status unchanged in DB."""
-        from backend.api.dependencies import get_knowledge_base_writer
-        from backend.services.knowledge_base_writer import KnowledgeBaseWriter
-
-        class _FailingWriter(KnowledgeBaseWriter):
-            def append(self, *args, **kwargs):  # type: ignore[override]
-                raise OSError("disk full simulation")
-
-        # Build a fresh app with the failing writer override.
-        from backend.db.models.tasks import Task as _Task
-
-        app = FastAPI()
-        app.include_router(tasks_router, prefix="/api/v1/tasks")
-
-        def _override_get_db():
-            yield db_session
-
-        def _override_kb_writer() -> KnowledgeBaseWriter:
-            return _FailingWriter("/tmp/unused")
-
-        app.dependency_overrides[get_db] = _override_get_db
-        app.dependency_overrides[get_knowledge_base_writer] = _override_kb_writer
-        # M2.D.2 RBAC overrides for inline TestClient.
-        import uuid as _uuid_inline
-
-        import bcrypt as _bcrypt_inline
-
-        from backend.core.security import (
-            get_current_user as _gcu_inline,
-        )
-        from backend.core.security import (
-            require_ha_or_above as _rha_inline,
-        )
-        from backend.core.security import (
-            require_ri_role as _rri_inline,
-        )
-        from backend.core.security import (
-            require_shu_or_above as _rshu_inline,
-        )
-        from backend.db.models.foundation import User as _UserInline
-
-        _suffix_inline = _uuid_inline.uuid4().hex[:8]
-        _ri_inline = _UserInline(
-            username=f"ri_inline_{_suffix_inline}",
-            email=f"ri_inline_{_suffix_inline}@test.local",
-            password_hash=_bcrypt_inline.hashpw(b"test", _bcrypt_inline.gensalt(rounds=4)).decode(),
-            role="ri",
-            is_active=True,
-        )
-        db_session.add(_ri_inline)
-        db_session.flush()
-
-        def _override_user_inline() -> _UserInline:
-            return _ri_inline
-
-        app.dependency_overrides[_gcu_inline] = _override_user_inline
-        app.dependency_overrides[_rri_inline] = _override_user_inline
-        app.dependency_overrides[_rha_inline] = _override_user_inline
-        app.dependency_overrides[_rshu_inline] = _override_user_inline
-
-        with TestClient(app) as client:
-            created = client.post(
-                "/api/v1/tasks",
-                json=_payload(feat_id=feat.id, title="Will fail"),
-            ).json()
-            resp = client.patch(
-                f"/api/v1/tasks/{created['id']}",
-                json={"status": "done"},
-            )
-
-        app.dependency_overrides.clear()
-
-        assert resp.status_code == 500
-        assert "Failed to update live documents" in resp.json()["detail"]
-
-        # Re-read the task straight from the DB — the status transition must
-        # have been rolled back so the task is still "todo".
-        reloaded = db_session.execute(sa_select(_Task).where(_Task.id == uuid.UUID(created["id"]))).scalar_one()
-        assert reloaded.status == "todo"

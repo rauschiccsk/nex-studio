@@ -432,28 +432,49 @@ class TestProjectRouter:
         assert resp.status_code == 204
         assert calls == []
 
-    # ---------------------------------------------------------------- live docs
+    # ----------------------------------------------- AI-Agent memory (CR-V2-016)
 
-    def test_create_seeds_two_live_documents(self, router_client, creator, tmp_path):
-        """POST creates STATUS.md and HISTORY.md in the KB (no ARCHITECT.md — deprecated)."""
-        payload = _payload(creator.id, name="Live Docs App", slug="live-docs-app")
+    def test_create_does_not_write_status_history_to_kb(self, router_client, creator, tmp_path):
+        """CR-V2-016 (R-DOUBLEWRITE): create no longer seeds DB-driven
+        STATUS.md / HISTORY.md into the KB. Those were a second independent
+        writer of project status / history; the single source of truth is now
+        the AI Agent's own ``MEMORY.md`` in the project workspace. The KB
+        project folder must therefore carry no STATUS.md / HISTORY.md from
+        create.
+        """
+        payload = _payload(creator.id, name="Memory App", slug="memory-app")
         resp = router_client.post("/api/v1/projects", json=payload)
         assert resp.status_code == 201, resp.text
 
-        project_dir = tmp_path / "projects" / "live-docs-app"
-        assert (project_dir / "STATUS.md").is_file()
-        assert (project_dir / "HISTORY.md").is_file()
-        # ARCHITECT.md is deprecated — replaced by per-agent session logs
-        # in docs/session-logs/<role>/. Must NOT be created.
+        project_dir = tmp_path / "projects" / "memory-app"
+        # No DB-driven live-docs seeding (the retired second writer).
+        assert not (project_dir / "STATUS.md").exists()
+        assert not (project_dir / "HISTORY.md").exists()
+        # ARCHITECT.md was already deprecated — still must not appear.
         assert not (project_dir / "ARCHITECT.md").exists()
 
-        # STATUS.md reflects the fresh state — no epics yet but header present.
-        status_md = (project_dir / "STATUS.md").read_text(encoding="utf-8")
-        assert "# Live Docs App — Status" in status_md
-        assert "No epics planned yet." in status_md
+    def test_create_seeds_agent_memory_in_workspace(self, router_client, creator, tmp_path, monkeypatch):
+        """CR-V2-016: create seeds the AI Agent's ``MEMORY.md`` in the project
+        workspace once the workspace exists (the single source of truth). We
+        point the workspace root at ``tmp_path`` and pre-create the slug dir so
+        the seed (which runs after the Stage-3 init script) has a checkout to
+        write into.
+        """
+        workspace_root = tmp_path / "workspaces"
+        monkeypatch.setattr("backend.services.project_memory.PROJECTS_ROOT", workspace_root)
+        (workspace_root / "mem-seed").mkdir(parents=True)
 
-        # HISTORY starts as bare header.
-        assert (project_dir / "HISTORY.md").read_text(encoding="utf-8") == ("# live-docs-app — History\n\n")
+        resp = router_client.post(
+            "/api/v1/projects",
+            json=_payload(creator.id, name="Mem Seed", slug="mem-seed"),
+        )
+        assert resp.status_code == 201, resp.text
+
+        memory = workspace_root / "mem-seed" / "MEMORY.md"
+        assert memory.is_file()
+        body = memory.read_text(encoding="utf-8")
+        assert "# Mem Seed — AI Agent pamäť" in body
+        assert "## Rozhodnutia" in body
 
     def test_create_auto_creates_v0_1_0_version(self, router_client, creator, db_session):
         """POST auto-creates initial Version v0.1.0 in planned status.
@@ -478,85 +499,34 @@ class TestProjectRouter:
         assert v.status == "planned"
         assert v.name == "Initial prototype"
 
-    def test_create_rolls_back_when_kb_write_fails(self, db_session, creator, tmp_path, monkeypatch):
-        """If KB write raises OSError, the project must not end up in the DB."""
-        from backend.api.dependencies import get_knowledge_base_writer
-        from backend.services.knowledge_base_writer import KnowledgeBaseWriter
+    def test_create_rolls_back_when_filesystem_write_fails(self, router_client, db_session, creator, monkeypatch):
+        """If a create-time filesystem write raises OSError, the project must
+        not end up in the DB (the transaction rolls back).
 
-        monkeypatch.setattr(
-            "backend.services.github_validation.create_github_repo",
-            lambda repo, **kwargs: True,
+        CR-V2-016: the create-time filesystem write is now the AI Agent's
+        ``MEMORY.md`` seed (``project_memory.seed_memory``), which replaced the
+        retired STATUS.md / HISTORY.md KB seeding. We make it raise OSError and
+        assert the same rollback invariant the old live-docs seed had. The
+        ``router_client`` and this test share the SAVEPOINT-isolated
+        ``db_session`` (the router's ``get_db`` override yields it).
+        """
+
+        def _boom(slug: str, name: str):
+            raise OSError("disk full simulation")
+
+        monkeypatch.setattr("backend.api.routes.projects.project_memory.seed_memory", _boom)
+
+        resp = router_client.post(
+            "/api/v1/projects",
+            json=_payload(creator.id, slug="rollback-test"),
         )
-
-        class _FailingWriter(KnowledgeBaseWriter):
-            def save(self, *args, **kwargs):  # type: ignore[override]
-                raise OSError("disk full simulation")
-
-        app = FastAPI()
-        app.include_router(projects_router, prefix="/api/v1/projects")
-
-        def _override_get_db():
-            yield db_session
-
-        def _override_kb_writer() -> KnowledgeBaseWriter:
-            return _FailingWriter(tmp_path)
-
-        app.dependency_overrides[get_db] = _override_get_db
-        app.dependency_overrides[get_knowledge_base_writer] = _override_kb_writer
-        app.dependency_overrides[get_rag_indexer] = lambda: None
-        # M2.D.2 RBAC overrides for inline TestClient.
-        import uuid as _uuid_inline
-
-        import bcrypt as _bcrypt_inline
-
-        from backend.core.security import (
-            get_current_user as _gcu_inline,
-        )
-        from backend.core.security import (
-            require_ha_or_above as _rha_inline,
-        )
-        from backend.core.security import (
-            require_ri_role as _rri_inline,
-        )
-        from backend.core.security import (
-            require_shu_or_above as _rshu_inline,
-        )
-        from backend.db.models.foundation import User as _UserInline
-
-        _suffix_inline = _uuid_inline.uuid4().hex[:8]
-        _ri_inline = _UserInline(
-            username=f"ri_inline_{_suffix_inline}",
-            email=f"ri_inline_{_suffix_inline}@test.local",
-            password_hash=_bcrypt_inline.hashpw(b"test", _bcrypt_inline.gensalt(rounds=4)).decode(),
-            role="ri",
-            is_active=True,
-        )
-        db_session.add(_ri_inline)
-        db_session.flush()
-
-        def _override_user_inline() -> _UserInline:
-            return _ri_inline
-
-        app.dependency_overrides[_gcu_inline] = _override_user_inline
-        app.dependency_overrides[_rri_inline] = _override_user_inline
-        app.dependency_overrides[_rha_inline] = _override_user_inline
-        app.dependency_overrides[_rshu_inline] = _override_user_inline
-
-        with TestClient(app) as client:
-            resp = client.post(
-                "/api/v1/projects",
-                json=_payload(creator.id, slug="rollback-test"),
-            )
-
-        app.dependency_overrides.clear()
 
         assert resp.status_code == 500
-        assert "Failed to initialise live documents" in resp.json()["detail"]
+        assert "Failed to create project filesystem state" in resp.json()["detail"]
 
-        # And verify nothing landed in the DB.
-
+        # Nothing landed in the DB — the transaction rolled back.
         remaining = db_session.execute(sa_select_project_by_slug("rollback-test")).scalar_one_or_none()
-        assert remaining is None, "Project row must have been rolled back on KB failure"
+        assert remaining is None, "Project row must have been rolled back on filesystem-write failure"
 
     # ------------------------------------------------------ GitHub repo create
 
@@ -736,10 +706,22 @@ class TestProjectRouter:
     # ------------------------------------------------------------- delete cleanup
 
     def test_delete_removes_kb_folder(self, router_client, creator, tmp_path):
-        """DELETE /{id} also removes the project's KB folder."""
+        """DELETE /{id} removes the project's KB folder (any project-scoped KB
+        docs), so a deleted project leaves no orphaned KB tree.
+
+        CR-V2-016: create no longer seeds the KB folder (STATUS.md / HISTORY.md
+        DB-driven seeding is retired). We pre-create a project-scoped KB doc to
+        stand in for whatever KB content a project may accumulate, then assert
+        delete cleans it up.
+        """
         payload = _payload(creator.id, slug="delete-cleanup")
         created = router_client.post("/api/v1/projects", json=payload).json()
+
+        # Stand-in project-scoped KB content (the writer is rooted at tmp_path by
+        # the router_client override).
         project_dir = tmp_path / "projects" / "delete-cleanup"
+        project_dir.mkdir(parents=True, exist_ok=True)
+        (project_dir / "notes.md").write_text("# Notes\n", encoding="utf-8")
         assert project_dir.is_dir()
 
         resp = router_client.delete(f"/api/v1/projects/{created['id']}")

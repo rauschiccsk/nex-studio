@@ -31,11 +31,10 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
-from backend.api.dependencies import get_knowledge_base_writer, get_rag_indexer
+from backend.api.dependencies import get_knowledge_base_writer
 from backend.core.security import require_ha_or_above
 from backend.db.models.foundation import User
 from backend.db.session import get_db
-from backend.rag.indexer import RAGIndexer
 from backend.schemas.pagination import PaginatedResponse
 from backend.schemas.project import (
     GitHubRepoNotFoundError,
@@ -53,11 +52,10 @@ from backend.schemas.version import VersionCreate
 from backend.services import github_validation as github_validation_service
 from backend.services import port_registry as port_registry_service
 from backend.services import project as project_service
+from backend.services import project_memory, uat_provisioner
 from backend.services import system_setting as system_setting_service
-from backend.services import uat_provisioner
 from backend.services import version as version_service
 from backend.services.knowledge_base_writer import KnowledgeBaseWriter
-from backend.services.live_documents import LiveDocumentService
 from backend.services.template_bootstrap import (
     GitPushVerificationError,
     TemplateBootstrapError,
@@ -406,8 +404,6 @@ def get_project(
 def create_project(
     payload: ProjectCreate,
     db: Session = Depends(get_db),
-    kb_writer: KnowledgeBaseWriter = Depends(get_knowledge_base_writer),
-    indexer: RAGIndexer = Depends(get_rag_indexer),
 ) -> ProjectRead:
     """Create a new project.
 
@@ -427,16 +423,17 @@ def create_project(
       changes. Failure → 500 and no further work is attempted. A repo
       that already exists is treated as success — reruns and
       deliberate reuse both work. Skipped when ``repo_url`` is NULL.
-    * **Seeds two live documents** (``STATUS.md`` / ``HISTORY.md``)
-      under ``{knowledge_base_path}/projects/{slug}/``. ARCHITECT.md
-      is no longer seeded — replaced by per-agent session logs in
-      ``docs/session-logs/<role>/`` (three-agent architecture).
+    * **Seeds the AI Agent's per-project ``MEMORY.md``** in the project
+      workspace (``/opt/projects/<slug>/``) once the Stage-3 init script
+      has created the checkout. This is the single source of truth for
+      project status / history (CR-V2-016, R-DOUBLEWRITE); the old
+      DB-driven STATUS.md / HISTORY.md seeding is retired. The agent owns
+      every later write (exactly one writer).
     * **Auto-creates initial version v0.1.0** in ``planned`` status —
       per main CLAUDE.md §2 (no spec change without a version binding).
-      Designer's Step 0 VERSION binding finds this version to start work.
-    * The DB insert, KB write, version creation and commit happen in a
-      single transaction — a failure at any step rolls the row back. If
-      KB write fails after GitHub repo was already created, the repo
+    * The DB insert, version creation and commit happen in a single
+      transaction — a failure at any step rolls the row back. If a later
+      stage fails after the GitHub repo was already created, the repo
       stays dangling (documented known-item; manual cleanup on the
       GitHub side).
     """
@@ -481,7 +478,10 @@ def create_project(
 
     try:
         project = project_service.create(db, payload)
-        LiveDocumentService(project.slug, writer=kb_writer, indexer=indexer).init_live_documents(db, project.id)
+        # CR-V2-016: STATUS.md/HISTORY.md DB-driven seeding is RETIRED — the AI Agent's
+        # own per-project ``MEMORY.md`` is the single source of truth (R-DOUBLEWRITE).
+        # The memory is seeded AFTER the workspace exists (Stage 3, ``invoke_init_script``),
+        # since it lives in the project workspace (``/opt/projects/<slug>/MEMORY.md``).
         # Auto-create initial version v0.1.0 (planned) per three-agent architecture.
         # Main CLAUDE.md §2: žiadna zmena dokumentu v docs/specs/ bez priradenia
         # ku konkrétnej verzii. Designer's Step 0 VERSION binding finds this
@@ -503,10 +503,7 @@ def create_project(
             logger.warning("uat_slug not set at create for slug=%s: %s", project.slug, exc)
         # Stage 3 — filesystem bootstrap via icc-claude-template/init.sh.
         # Runs BEFORE db.commit() so a bootstrap failure rolls back the
-        # DB row cleanly. KB live docs are already on disk at this point;
-        # if init.sh fails, they remain dangling — documented known-item
-        # alongside the GitHub-repo dangling case (see docstring above).
-        # Disabled when template_init_script_path is empty.
+        # DB row cleanly. Disabled when template_init_script_path is empty.
         try:
             invoke_init_script(db, project)
         except TemplateBootstrapError as exc:
@@ -515,6 +512,13 @@ def create_project(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Filesystem bootstrap failed: {exc}",
             ) from exc
+
+        # CR-V2-016: seed the AI Agent's per-project ``MEMORY.md`` (single source of
+        # truth — replaces the retired STATUS.md/HISTORY.md DB-driven seeding). One-shot
+        # scaffold in the just-bootstrapped workspace; the agent owns every later write
+        # (R-DOUBLEWRITE — exactly one writer). No-ops when there is no checkout on disk
+        # (dry-run / disabled bootstrap) or when a memory already exists.
+        project_memory.seed_memory(project.slug, project.name)
 
         # Stage 4 — F-004 K-001 push + verify, K-002 rollback on failure.
         # Runs only if payload.repo_url + source_path + .git directory exist.
@@ -583,7 +587,7 @@ def create_project(
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to initialise live documents: {exc}",
+            detail=f"Failed to create project filesystem state: {exc}",
         ) from exc
     db.refresh(project)
     return ProjectRead.model_validate(project)
@@ -641,9 +645,10 @@ def delete_project(
 
     Side effects on success:
 
-    * The KB folder ``{knowledge_base_path}/projects/{slug}/`` with
-      its live documents (STATUS.md / HISTORY.md) is removed — matches
-      the rest of the live-docs hooks.
+    * The KB folder ``{knowledge_base_path}/projects/{slug}/`` (any
+      project-scoped KB docs) is removed so a deleted project leaves no
+      orphaned KB tree. (The per-project ``MEMORY.md`` lives in the
+      project workspace, not the KB, and goes with the workspace.)
     * If ``delete_github=true`` is passed, the backing GitHub
       repository is deleted too. Off by default — the DB row and KB
       folder go, but the repo stays in case the caller wants to

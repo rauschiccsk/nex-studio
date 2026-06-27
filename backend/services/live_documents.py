@@ -1,36 +1,38 @@
-"""Live document service — deterministic markdown generators and
-persistence for per-project ``STATUS.md`` / ``HISTORY.md``.
+"""Live document service — deterministic, **read-only** markdown view
+generators for project status / history.
 
 Ported from NEX Command (``backend/services/live_documents.py``, see
 ``docs/architect/live-docs-port.md``).
 
-``HISTORY.md`` is append-only with a first-line dedup guard provided
-by :class:`KnowledgeBaseWriter` — replaying the same task completion
-is idempotent. ``STATUS.md`` is a full rebuild (``save``, overwrite)
-from the current ``Project → Version → Epic → Feat → Task`` tree;
-:meth:`LiveDocumentService.generate_status_md` produces the markdown
-and :meth:`regenerate_status` persists it.
+R-DOUBLEWRITE resolution (CR-V2-016)
+====================================
+v2.0.0 folds project status / history into the **AI Agent's own per-project
+memory** (``MEMORY.md`` — :mod:`backend.services.project_memory`), which is the
+**single source of truth** (build-plan OQ-4 / R-DOUBLEWRITE; design §5.2-§5.3).
+The old DB-driven **persistence** path here — ``append_history`` /
+``regenerate_status`` / ``append_phase_summary`` / ``init_live_documents``, which
+wrote ``STATUS.md`` / ``HISTORY.md`` into the KB via :class:`KnowledgeBaseWriter`
+plus a RAG reindex — was a **second, independent writer** of that content and is
+therefore **removed**. Keeping two independent writers would let the DB-rendered
+file and the agent's memory diverge.
 
-The service keeps a thin invariant: generators for history entries
-are pure functions of their input data; the STATUS generator is a
-DB-driven rebuild parameterised on ``(db, project_id)``. Persistence
-methods (``append_*`` / ``regenerate_status``) layer the writer on top.
-Pass ``writer=None`` to get string generation only (useful in tests and
-in call sites that want to preview an entry before commit).
+What survives is exactly the part that is **not** a writer: the pure markdown
+**generators** (:meth:`generate_status_md`, :meth:`generate_history_entry`,
+:meth:`generate_phase_summary_entry`). They render a view from their input —
+``generate_status_md`` is a DB-driven rebuild parameterised on
+``(db, project_id)``; the entry generators are pure functions of their data —
+and **persist nothing**. A caller that wants a *rendered view* of the current
+tree calls ``generate_status_md`` and renders it (e.g. in a Vývoj tab); no file
+is written, so no divergence is possible.
 
 ARCHITECT.md was deprecated as part of the three-agent architecture
-migration (Designer/Implementer/Auditor) — per-agent session logs in
-``docs/session-logs/<role>/`` replace it with granular, attributable
-records. Existing ARCHITECT.md files in the KB remain as historical
-artefacts but receive no new writes from this service.
+migration — per-agent session logs replaced it; existing ARCHITECT.md
+files in the KB remain historical and receive no writes from this service.
 """
 
 from __future__ import annotations
 
-import asyncio
-import logging
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy import select
@@ -43,47 +45,19 @@ from backend.schemas.live_documents import (
     FeatCompletionData,
     TaskCompletionData,
 )
-from backend.services.knowledge_base_writer import KnowledgeBaseWriter
-
-if TYPE_CHECKING:
-    from backend.rag.indexer import RAGIndexer
-
-logger = logging.getLogger(__name__)
-
-#: Qdrant tenant collection the per-project KB lives in. The live documents are
-#: written under ``{knowledge_base_path}/projects/{slug}/`` (the ``/home/icc/knowledge``
-#: tree) → the ``icc`` collection, matching the ``/knowledge`` routes' default tenant.
-_KB_TENANT = "icc"
 
 
 class LiveDocumentService:
-    """Per-project façade over the markdown generators and the KB writer.
+    """Per-project, **read-only** view generator for project status / history.
 
-    Instantiate with the project's slug and an optional
-    :class:`KnowledgeBaseWriter`. Without a writer the service is
-    pure string generation — useful for previewing entries or for
-    testing generators in isolation. With a writer, the
-    ``append_history`` / ``append_phase_summary`` methods persist
-    the generated entry under ``projects/{slug}/{FILE}.md``.
-
-    An optional :class:`RAGIndexer` (``indexer``) keeps the RAG vector store in
-    sync: every persisted ``STATUS.md`` / ``HISTORY.md`` write triggers a
-    reindex of that file (CLAUDE.md §13 — "žiadna KB zmena bez následného
-    reindexu"). Like ``writer`` it is optional — without it, writes persist to
-    disk only (the pre-existing behaviour, used by pure-generation tests and any
-    call site that does not wire RAG). A reindex failure is logged and swallowed
-    so it never fails the write path (mirrors the ``/knowledge`` routes).
+    Instantiate with the project's slug. The service is pure string
+    generation — it renders status / history markdown from its input and
+    **persists nothing** (the persistence writers were removed in CR-V2-016;
+    ``MEMORY.md`` is the single source of truth — see the module docstring).
     """
 
-    def __init__(
-        self,
-        project_slug: str,
-        writer: KnowledgeBaseWriter | None = None,
-        indexer: "RAGIndexer | None" = None,
-    ) -> None:
+    def __init__(self, project_slug: str) -> None:
         self._slug = project_slug
-        self._writer = writer
-        self._indexer = indexer
 
     # ── generators ────────────────────────────────────────────────────
 
@@ -240,126 +214,6 @@ class LiveDocumentService:
             f"Audit: {audit} | CI: {ci}\n"
             f"{'=' * 50}\n"
         )
-
-    # ── persistence ───────────────────────────────────────────────────
-
-    def append_history(self, data: TaskCompletionData) -> None:
-        """Persist a task completion entry to ``HISTORY.md``.
-
-        No-op when the writer is not configured (pure-generation mode).
-        """
-        entry = self.generate_history_entry(data)
-        if not entry or self._writer is None:
-            return
-        self._writer.append(
-            self._slug,
-            "HISTORY.md",
-            entry,
-            header_if_new=self._history_header(),
-        )
-        self._reindex("HISTORY.md")
-
-    def regenerate_status(self, db: Session, project_id: UUID) -> None:
-        """Rebuild ``STATUS.md`` from the DB and overwrite it in the KB.
-
-        Uses :meth:`KnowledgeBaseWriter.save` (overwrite), not append —
-        ``STATUS.md`` reflects the current DB state as a whole, so
-        patching is incorrect. No-op when the writer is not configured.
-        """
-        if self._writer is None:
-            return
-        content = self.generate_status_md(db, project_id)
-        self._writer.save(self._slug, "STATUS.md", content)
-        self._reindex("STATUS.md")
-
-    def init_live_documents(self, db: Session, project_id: UUID) -> None:
-        """Seed the two live documents for a freshly created project.
-
-        Writes ``STATUS.md`` (generated from the then-current DB state —
-        typically "no epics planned yet" right after creation) and
-        ``HISTORY.md`` (header only) under ``projects/{slug}/``. Uses
-        :meth:`KnowledgeBaseWriter.save` (overwrite) for both so the
-        operation is idempotent across crash-restart scenarios.
-
-        Unlike the other persistence wrappers this method **requires**
-        a writer — the caller explicitly asked to persist. Raises
-        :class:`RuntimeError` if the service was constructed without
-        one, rather than silently no-op'ing; the router catches I/O
-        failures as ``OSError`` and translates them into a 500.
-
-        ARCHITECT.md is no longer seeded — see module docstring for the
-        three-agent migration context.
-        """
-        if self._writer is None:
-            raise RuntimeError(
-                "init_live_documents requires a KnowledgeBaseWriter; none was configured on the service."
-            )
-        status_md = self.generate_status_md(db, project_id)
-        self._writer.save(self._slug, "STATUS.md", status_md)
-        self._reindex("STATUS.md")
-        self._writer.save(self._slug, "HISTORY.md", self._history_header())
-        self._reindex("HISTORY.md")
-
-    def append_phase_summary(self, data: FeatCompletionData) -> None:
-        """Append the feat-completion summary entry to ``HISTORY.md``.
-
-        No-op when the writer is not configured.
-        """
-        entry = self.generate_phase_summary_entry(data)
-        if not entry or self._writer is None:
-            return
-        self._writer.append(
-            self._slug,
-            "HISTORY.md",
-            entry,
-            header_if_new=self._history_header(),
-        )
-        self._reindex("HISTORY.md")
-
-    # ── RAG reindex ───────────────────────────────────────────────────
-
-    def _reindex(self, filename: str) -> None:
-        """Reindex a just-written live document into the RAG store.
-
-        DRY hook called after every ``STATUS.md`` / ``HISTORY.md`` persist so
-        Qdrant tracks the live KB files the same way the ``/knowledge`` routes
-        do. Re-reads the current file content (an ``append`` writes only the new
-        entry, but the whole document must be reindexed) and upserts it under the
-        KB-relative ``projects/{slug}/{filename}`` source id in the ``icc``
-        tenant — identical addressing to a ``/knowledge`` write of the same file.
-
-        No-op without an ``indexer`` (or ``writer``). **Graceful on failure**:
-        any error (re-read or Qdrant/Ollama) is logged and swallowed so the
-        reindex never fails the live-document write (mirrors ``knowledge.py``).
-
-        The enclosing persistence methods run in synchronous request handlers
-        (FastAPI runs ``def`` endpoints in a worker thread with no running event
-        loop), so ``asyncio.run`` safely drives the async indexer to completion.
-        """
-        if self._indexer is None or self._writer is None:
-            return
-        source_file = f"projects/{self._slug}/{filename}"
-        try:
-            content = self._writer.read(self._slug, filename)
-            asyncio.run(
-                self._indexer.index_document(
-                    file_path=source_file,
-                    tenant=_KB_TENANT,
-                    content=content,
-                )
-            )
-        except Exception as exc:  # noqa: BLE001 — reindex must never fail the write path
-            logger.warning(
-                "RAG reindex failed for %s (tenant=%s): %s — live document saved, index may be stale",
-                source_file,
-                _KB_TENANT,
-                exc,
-            )
-
-    # ── headers ───────────────────────────────────────────────────────
-
-    def _history_header(self) -> str:
-        return f"# {self._slug} — History\n\n"
 
 
 # ── module-level helpers ─────────────────────────────────────────────
