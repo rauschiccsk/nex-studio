@@ -39,6 +39,11 @@ _NOTIFY_STATUSES = ("awaiting_manazer", "blocked")
 # (mirrors the idle/retention tasks in ``main.py``). Discarded on completion.
 _BG_TASKS: set[asyncio.Task] = set()
 
+# Backstop on the per-task relay drain (CR-V2-015): how many queued Manažér relay messages a single
+# settled dispatch will drain as follow-up turns before returning (each drained relay still runs serially —
+# this only bounds a pathological flood so the single-flight task always returns).
+_MAX_RELAY_DRAIN = 20
+
 # At most one in-flight dispatch per version (CR-NS-027). The event loop is single-threaded, so the
 # check-and-set in ``schedule_dispatch`` is race-free. This is the concurrency fix for the incident:
 # an action that left ``agent_working`` (the no-op pause) re-dispatched while a build loop was already
@@ -180,6 +185,34 @@ async def _run(version_id: uuid.UUID, directive: str | None = None, gate_e_dispa
                     db, version_id, on_event, gate_e_dispatch=None, on_message=on_message
                 )
                 db.commit()
+            # Relay drain (CR-V2-015 / SPIKE-IO point (1)): a Manažér message typed into the read-only AI
+            # Agent tab WHILE a turn was in flight was ENQUEUED (never a concurrent writer). Now that the
+            # dispatch (incl. its auto-chain) has settled, drain queued relay(s) as the next turn(s) IN THIS
+            # SAME single-flight task — so a relayed turn and the autonomous turn never invoke
+            # ``invoke_claude`` concurrently on the session UUID. Bounded by the same backstop as the
+            # auto-chain (each drained relay may itself auto-chain). Broadcast each settled state live.
+            relay_guard = 0
+            while state is not None and orchestrator.has_pending_relay(version_id) and relay_guard < _MAX_RELAY_DRAIN:
+                relay_guard += 1
+                await _broadcast_state(version_id, state)
+                on_event = _activity_callback(version_id, state.current_stage, state.current_actor)
+                state = await orchestrator.drain_relay_turn(db, version_id, on_event, on_message)
+                db.commit()
+                # A drained relay may have left the build auto-advancing — let it settle before the next drain.
+                inner_guard = 0
+                chain_limit = (
+                    orchestrator.auto_chain_limit(db, version_id)
+                    if state is not None and state.status == "agent_working"
+                    else 0
+                )
+                while state is not None and state.status == "agent_working" and inner_guard < chain_limit:
+                    inner_guard += 1
+                    await _broadcast_state(version_id, state)
+                    on_event = _activity_callback(version_id, state.current_stage, state.current_actor)
+                    state = await orchestrator.run_dispatch(
+                        db, version_id, on_event, gate_e_dispatch=None, on_message=on_message
+                    )
+                    db.commit()
         except Exception as exc:  # noqa: BLE001 — unexpected; degrade to blocked, don't hang UI.
             logger.exception("run_dispatch failed for version %s", version_id)
             db.rollback()

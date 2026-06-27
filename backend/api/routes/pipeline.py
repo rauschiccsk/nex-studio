@@ -38,6 +38,8 @@ from backend.schemas.pipeline import (
     PipelineActionRequest,
     PipelineBoardRead,
     PipelineMessageRead,
+    PipelineRelayRequest,
+    PipelineRelayResponse,
     PipelineStateRead,
     RegateProposal,
 )
@@ -286,6 +288,56 @@ async def post_action(
     return _board(db, version_id)
 
 
+@router.post("/{version_id}/relay", response_model=PipelineRelayResponse)
+async def post_relay(
+    version_id: uuid.UUID,
+    payload: PipelineRelayRequest,
+    _current_user: User = Depends(require_ri_role),
+    db: Session = Depends(get_db),
+) -> PipelineRelayResponse:
+    """Relay a Manažér message to the AI Agent as the engine's next turn (CR-V2-015 / SPIKE-IO Model B).
+
+    This is the canonical Manažér→AI-Agent channel for the read-only AI Agent tab: the message is RELAYED
+    by the engine (the sole writer to the warm ``claude`` session) as the next ``--resume`` turn — it is
+    NEVER keystroked into the PTY (no concurrent second writer). When a turn is in flight the message is
+    enqueued behind it (``deferred=True``) and the in-flight dispatch drains it next; when the build is
+    settled it dispatches immediately as an ``ask``/``answer`` turn and we schedule the background run."""
+    if not _version_exists(db, version_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Version not found")
+
+    pre_ids = {
+        row for row in db.execute(select(PipelineMessage.id).where(PipelineMessage.version_id == version_id)).scalars()
+    }
+    try:
+        result = await orchestrator.relay_manazer_message(db, version_id=version_id, text=payload.text)
+    except OrchestratorError as exc:
+        db.rollback()
+        raise _map_orch_error(exc) from exc
+    db.commit()
+    db.refresh(result.state)
+
+    new_msgs = [m for m in _recent_messages(db, version_id, 200) if m.id not in pre_ids]
+    await registry.broadcast(
+        version_id,
+        {"type": "state_changed", "state": PipelineStateRead.model_validate(result.state).model_dump(mode="json")},
+    )
+    for m in new_msgs:
+        await registry.broadcast(
+            version_id,
+            {"type": "message_added", "message": PipelineMessageRead.model_validate(m).model_dump(mode="json")},
+        )
+
+    # Dispatched-now (settled build) → run the relay turn in the background, exactly like ``post_action``.
+    # Deferred (in-flight) → the running dispatch drains the queue itself; do NOT schedule a second loop.
+    if not result.deferred and result.state.status == "agent_working":
+        directive = orchestrator.dispatch_directive(
+            db, version_id, result.action or "ask", {"text": payload.text}, result.state.current_stage
+        )
+        pipeline_runner.schedule_dispatch(version_id, directive)
+
+    return PipelineRelayResponse(deferred=result.deferred, board=_board(db, version_id))
+
+
 @router.post("/{version_id}/debug-terminal", response_model=AgentTerminalSessionRead)
 async def open_debug_terminal(
     version_id: uuid.UUID,
@@ -293,12 +345,15 @@ async def open_debug_terminal(
     current_user: User = Depends(require_ri_role),
     db: Session = Depends(get_db),
 ) -> AgentTerminalSessionRead:
-    """Attach an interactive Director terminal to the headless agent session.
+    """Break-glass: attach an interactive Manažér terminal to the headless agent session (CR-V2-015).
 
-    Resumes the existing ``orchestrator_session.claude_session_id`` for
-    ``(project, role)`` into a Director-owned ``agent_terminal_sessions`` row
-    so the standard AgentTerminal WS can stream it (F-007 §10 debug hatch).
-    The Director observes; the orchestrator still drives the pipeline.
+    Resumes the existing ``orchestrator_session.claude_session_id`` for ``(project, role)`` into a
+    Manažér-owned ``agent_terminal_sessions`` row so the standard AgentTerminal WS can stream it. This is an
+    OUT-OF-BAND human break-glass ONLY — the first-class Manažér↔AI-Agent channel is the read-only tab +
+    the engine relay (:func:`post_relay`). To preserve the single-writer invariant (SPIKE-IO Model B), the
+    debug-attach PTY is **gated so it cannot open while the engine is driving the session** (an open
+    write-capable PTY mid-turn would be a second concurrent writer). When the engine IS driving, this
+    returns 409; otherwise it attaches (and ``write_input`` is still per-keystroke-guarded as a backstop).
     """
     if not _version_exists(db, version_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Version not found")
@@ -325,6 +380,19 @@ async def open_debug_terminal(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"No orchestrator session for role '{role}' in project '{slug}'",
+        )
+
+    # CR-V2-015 single-writer gate (SPIKE-IO Model B): refuse to open a write-capable break-glass PTY while
+    # the engine is currently driving this ``claude_session_id`` (an active ``invoke_claude`` turn). Opening
+    # one mid-turn would create a second concurrent writer that corrupts session memory. The first-class
+    # channel during an active turn is the engine relay (POST /relay), not a raw PTY.
+    if orchestrator.is_session_engine_busy(orch.claude_session_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Engine is driving this session — debug-attach refused mid-turn. "
+                "Use the AI Agent relay to message it, or attach when the build is idle."
+            ),
         )
 
     try:

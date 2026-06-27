@@ -63,6 +63,7 @@ from backend.services.agent_terminal import (
     AgentTerminalError,
     SessionConflictError,
     SessionNotFoundError,
+    WriteRejectedError,
 )
 
 logger = logging.getLogger(__name__)
@@ -233,7 +234,14 @@ async def terminal_ws(
                 if msg_type == "input":
                     data = msg.get("data", "")
                     if isinstance(data, str) and data:
-                        await service.write_input(session_id, data.encode("utf-8"))
+                        try:
+                            await service.write_input(session_id, data.encode("utf-8"))
+                        except WriteRejectedError as exc:
+                            # CR-V2-015 single-writer guard: the engine is driving this session; a raw
+                            # keystroke is REFUSED (would be a second concurrent writer). Drop it and
+                            # notify the client (the AI Agent tab routes messages through the engine relay
+                            # instead). Never break the WS loop — the read-only stream stays live.
+                            await websocket.send_json({"type": "write_rejected", "reason": str(exc)})
                 elif msg_type == "resize":
                     rows = int(msg.get("rows", 40))
                     cols = int(msg.get("cols", 120))

@@ -134,6 +134,93 @@ def db_role_for_charter_slug(slug: str) -> str:
 MessageCallback = Callable[[PipelineMessage], Awaitable[None]]
 
 
+# ── v2.0.0 single-writer guard (CR-V2-015 / SPIKE-IO Model B) ──────────────────────────────────────
+# SPIKE-IO confirmed Model B: the ENGINE is the SOLE writer to each warm ``claude`` session — it drives
+# every turn via ``invoke_claude(... --resume <claude_session_id>)`` (the proven headless primitive), and
+# a Manažér message typed in the AI Agent tab is NOT keystroked into the CLI — it is RELAYED by the engine
+# as the next ``-p --resume`` turn (the ``answer``/``ask``/``uprav`` directive path). One UUID, one writer.
+#
+# The chief residual two-writer hazard (SPIKE-IO Risk (a)): the legacy ``/debug-terminal`` break-glass
+# spawns a SEPARATE PTY that ``--resume``s the SAME ``claude_session_id`` and whose ``write_input`` feeds
+# keystrokes straight to the CLI — an independent second writer that corrupts session memory if used while
+# the engine drives. This registry is the enforcement primitive: every engine turn registers the
+# ``claude_session_id`` it is about to drive for the duration of the ``invoke_claude`` call;
+# :func:`is_session_engine_busy` lets the PTY layer (``agent_terminal.write_input``) REFUSE a concurrent
+# write to a session the engine owns. The registry is keyed by ``claude_session_id`` (the actual write
+# target — both writers contend for the same CLI session UUID, not the per-version pipeline_state), is a
+# plain ``set`` mutated only on the single-threaded asyncio loop (no lock needed, same invariant as the
+# runner's ``_ACTIVE_DISPATCH``), and counts re-entrant registrations so a turn that spans parse-retries
+# (which re-enter :func:`invoke_agent`) stays "busy" across the whole logical turn.
+_ENGINE_ACTIVE_SESSIONS: dict[uuid.UUID, int] = {}
+
+
+def is_session_engine_busy(claude_session_id: uuid.UUID) -> bool:
+    """True iff an engine turn is currently driving ``claude_session_id`` (CR-V2-015 single-writer guard).
+
+    The PTY layer (:func:`agent_terminal.write_input`) calls this to REFUSE a concurrent keystroke write
+    to a warm session the engine owns — the break-glass debug-attach PTY must never become a second writer
+    mid-turn (SPIKE-IO Risk (a)). Sole-writer-by-construction: only the engine ever registers here."""
+    return _ENGINE_ACTIVE_SESSIONS.get(claude_session_id, 0) > 0
+
+
+@contextlib.contextmanager
+def _engine_session_active(claude_session_id: uuid.UUID):
+    """Mark ``claude_session_id`` as engine-busy for the duration of one ``invoke_claude`` turn.
+
+    Re-entrant (a turn spanning parse-retries re-enters :func:`invoke_agent`); the count is decremented on
+    exit and the key removed at zero. Synchronous context manager around the ``await invoke_claude`` so the
+    busy window is exactly the live CLI write (the PTY guard reads it on the same loop)."""
+    _ENGINE_ACTIVE_SESSIONS[claude_session_id] = _ENGINE_ACTIVE_SESSIONS.get(claude_session_id, 0) + 1
+    try:
+        yield
+    finally:
+        remaining = _ENGINE_ACTIVE_SESSIONS.get(claude_session_id, 0) - 1
+        if remaining > 0:
+            _ENGINE_ACTIVE_SESSIONS[claude_session_id] = remaining
+        else:
+            _ENGINE_ACTIVE_SESSIONS.pop(claude_session_id, None)
+
+
+# ── v2.0.0 Manažér→AI-Agent relay queue (CR-V2-015 / SPIKE-IO point (1)) ───────────────────────────
+# SPIKE-IO point (1): "a per-(project, role) single serialized inbound queue in the orchestrator that
+# serializes Manažér messages + autonomous turns into the single ``invoke_agent``→``invoke_claude`` call
+# site (the single-writer enforcer)." A Manažér message typed in the read-only AI Agent tab is NOT a
+# keystroke — it is ENQUEUED here and RELAYED by the engine as the next ``-p --resume`` turn. The queue is
+# keyed per VERSION (the build is the relay unit; the actor is resolved at drain time). It is a plain dict
+# of FIFO lists mutated only on the single asyncio loop (lock-free, same invariant as the runner's
+# ``_ACTIVE_DISPATCH``). Two arrival cases:
+#   * the build is SETTLED (no turn in flight) → :func:`relay_manazer_message` dispatches the message
+#     immediately as an ``ask``/``answer`` turn (it never enqueues — there is nothing to wait for).
+#   * a turn is IN FLIGHT (``dispatch_in_flight``) → the message is ENQUEUED; the runner drains it as the
+#     next turn AFTER the current dispatch (incl. its auto-chain) settles, so a relayed turn and an
+#     autonomous turn can never invoke ``invoke_claude`` concurrently on the same session UUID.
+_RELAY_QUEUES: dict[uuid.UUID, list[str]] = {}
+
+
+def _enqueue_relay(version_id: uuid.UUID, text: str) -> None:
+    """Append a Manažér relay message to ``version_id``'s FIFO inbound queue (engine drains it next turn)."""
+    _RELAY_QUEUES.setdefault(version_id, []).append(text)
+
+
+def pop_relay_message(version_id: uuid.UUID) -> Optional[str]:
+    """Pop the oldest queued Manažér relay message for ``version_id`` (FIFO), or ``None`` if empty.
+
+    Drained by the runner after a dispatch settles so a relayed message becomes the NEXT engine turn —
+    never a concurrent writer (CR-V2-015)."""
+    queue = _RELAY_QUEUES.get(version_id)
+    if not queue:
+        return None
+    text = queue.pop(0)
+    if not queue:
+        _RELAY_QUEUES.pop(version_id, None)
+    return text
+
+
+def has_pending_relay(version_id: uuid.UUID) -> bool:
+    """True iff ``version_id`` has a queued Manažér relay message awaiting the next turn (CR-V2-015)."""
+    return bool(_RELAY_QUEUES.get(version_id))
+
+
 @dataclass
 class _DispatchMetrics:
     """Accumulates token usage + wall-clock across one logical agent turn (WS-D, CR-NS-036).
@@ -1490,6 +1577,94 @@ def dispatch_directive(
     return directive_for_action(action, payload, stage)
 
 
+@dataclass
+class RelayResult:
+    """Outcome of a Manažér relay (CR-V2-015). ``deferred`` → the message was ENQUEUED behind an in-flight
+    turn (it will become the next turn when the current dispatch settles; the route does NOT schedule a new
+    dispatch). ``state`` is the (possibly updated) pipeline state; ``action`` is the action verb the relay
+    mapped to when dispatched now (``ask``/``answer``), else ``None`` when deferred."""
+
+    state: PipelineState
+    deferred: bool
+    action: Optional[str] = None
+
+
+async def relay_manazer_message(db: Session, *, version_id: uuid.UUID, text: str) -> RelayResult:
+    """Relay a Manažér message typed in the read-only AI Agent tab as the engine's NEXT turn (CR-V2-015).
+
+    SPIKE-IO Model B single-writer enforcer: the message is NOT a keystroke into the warm ``claude``
+    session — the engine is the sole writer. Two cases (the per-version inbound queue serializes them):
+
+    * **A turn is in flight** (``dispatch_in_flight`` — the engine is mid-``invoke_claude``): ENQUEUE the
+      message (:func:`_enqueue_relay`) and return ``deferred=True``. The runner drains the queue AFTER the
+      current dispatch (incl. its auto-chain) settles and dispatches it as the next ``--resume`` turn, so a
+      relayed turn and the autonomous turn can never invoke ``invoke_claude`` concurrently on the session.
+    * **The build is settled** (no turn in flight): dispatch the message immediately via :func:`apply_action`
+      — ``answer`` when the agent is blocked on its own question (so the board's ``answer`` flow is honoured),
+      else ``ask`` (direct consult; threads the message into the actor's next turn). Both go through the
+      sole-mutator + ``dispatch_in_flight`` single-flight guard, so the relay is just another serialized turn.
+
+    Raises :class:`OrchestratorError` when the pipeline has not started for this version."""
+    if not text or not str(text).strip():
+        raise OrchestratorError("relay requires a non-empty message")
+    state = _get_state(db, version_id)
+    if state is None:
+        raise OrchestratorError("Pipeline not started for this version")
+    text = str(text).strip()
+
+    # In-flight → enqueue behind the running turn (the runner drains it next). NEVER dispatch concurrently:
+    # the durable ``dispatch_in_flight`` flag is the same guard ``apply_action`` enforces, made explicit here
+    # so the relay path defers instead of raising "Dispečer už beží".
+    if state.dispatch_in_flight or state.status == "agent_working":
+        _enqueue_relay(version_id, text)
+        # Record the Manažér's message immediately for the audit trail / read-only view; the engine will
+        # consume the queued text as the next turn's prompt. Recipient = the actor the engine will relay to.
+        _record_message(
+            db,
+            version_id=version_id,
+            stage=state.current_stage,
+            author="manazer",
+            recipient=state.current_actor,
+            kind="question",
+            content=text,
+            payload={"phase": state.current_stage, "relay_queued": True},
+        )
+        db.flush()
+        return RelayResult(state=state, deferred=True, action=None)
+
+    # Settled → dispatch now. ``answer`` when the agent is blocked on its own question; else ``ask``.
+    action = "answer" if (state.status == "blocked" and state.block_reason == "agent_question") else "ask"
+    new_state = await apply_action(db, version_id=version_id, action=action, payload={"text": text})
+    return RelayResult(state=new_state, deferred=False, action=action)
+
+
+async def drain_relay_turn(
+    db: Session,
+    version_id: uuid.UUID,
+    on_event: Optional[claude_agent.EventCallback] = None,
+    on_message: Optional[MessageCallback] = None,
+) -> Optional[PipelineState]:
+    """Drain ONE queued Manažér relay message and run it as the next engine turn (CR-V2-015).
+
+    Called by the runner after a dispatch settles. Pops the oldest queued relay (:func:`pop_relay_message`),
+    threads it as the actor's prompt via the SAME ``run_dispatch`` path every turn uses (so it is serialized
+    behind the just-settled turn — never concurrent), and returns the settled state. ``None`` when nothing
+    was queued or the version vanished. The relayed message is framed exactly like an interactive
+    ``ask``/``answer`` directive so the agent acts on it instead of re-running the generic phase directive."""
+    text = pop_relay_message(version_id)
+    if text is None:
+        return None
+    state = _get_state(db, version_id)
+    if state is None:
+        return None
+    # Re-arm the dispatch (sole-mutator: this mutates state as a CONSEQUENCE of the queued Manažér action,
+    # exactly like ``apply_action``'s ask/answer handlers do via ``_begin_dispatch``).
+    _begin_dispatch(db, state)
+    db.flush()
+    directive = f"Manažér ti počas behu napísal: {text}"
+    return await run_dispatch(db, version_id, on_event, directive, on_message=on_message)
+
+
 # ---------------------------------------------------------------------------
 # Agent invocation (records message, no state mutation)
 # ---------------------------------------------------------------------------
@@ -1571,21 +1746,25 @@ async def invoke_agent(
     turn_metrics = metrics if metrics is not None else _DispatchMetrics()
     _started = perf_counter()
     try:
-        text, usage, structured_output = _split_claude_result(
-            await invoke_claude(
-                project_slug=slug,
-                claude_session_id=session_id,
-                prompt=prompt,
-                charter_path=charter_path,
-                timeout=timeout if timeout is not None else _timeout_for(stage),
-                on_event=tagged_on_event,
-                model=model_override,
-                effort=effort_override,
-                # R3 (v0.7.0): grammar-constrain the agent's status block to the schema so a malformed
-                # block is impossible at the source; the validated object lands in structured_output.
-                json_schema=PIPELINE_STATUS_JSON_SCHEMA,
+        # CR-V2-015 single-writer guard: mark this ``claude_session_id`` engine-busy for the live CLI
+        # write so the break-glass debug-attach PTY (``agent_terminal.write_input``) cannot become a
+        # concurrent second writer mid-turn (SPIKE-IO Risk (a)). Re-entrant across parse-retries.
+        with _engine_session_active(session_id):
+            text, usage, structured_output = _split_claude_result(
+                await invoke_claude(
+                    project_slug=slug,
+                    claude_session_id=session_id,
+                    prompt=prompt,
+                    charter_path=charter_path,
+                    timeout=timeout if timeout is not None else _timeout_for(stage),
+                    on_event=tagged_on_event,
+                    model=model_override,
+                    effort=effort_override,
+                    # R3 (v0.7.0): grammar-constrain the agent's status block to the schema so a malformed
+                    # block is impossible at the source; the validated object lands in structured_output.
+                    json_schema=PIPELINE_STATUS_JSON_SCHEMA,
+                )
             )
-        )
     except ClaudeAgentError as exc:
         # A failed invocation still burned wall-clock (and counts as an attempt) — record it so the
         # turn's timing/parse_attempts reflect retries; no usage (no envelope was returned) (WS-D).
@@ -1845,19 +2024,23 @@ async def _plan_pass_once(
 
     _started = perf_counter()
     try:
-        text, usage, structured = _split_claude_result(
-            await invoke_claude(
-                project_slug=slug,
-                claude_session_id=session_id,
-                prompt=prompt,
-                charter_path=charter_path,
-                timeout=_timeout_for("navrh"),
-                on_event=tagged_on_event,
-                model=model_override,
-                effort=effort_override,
-                json_schema=json_schema,
+        # CR-V2-015 single-writer guard: a task_plan generation pass runs inside the AI Agent's warm
+        # session — mark it engine-busy so debug-attach can't write concurrently (same guard as
+        # :func:`invoke_agent`).
+        with _engine_session_active(session_id):
+            text, usage, structured = _split_claude_result(
+                await invoke_claude(
+                    project_slug=slug,
+                    claude_session_id=session_id,
+                    prompt=prompt,
+                    charter_path=charter_path,
+                    timeout=_timeout_for("navrh"),
+                    on_event=tagged_on_event,
+                    model=model_override,
+                    effort=effort_override,
+                    json_schema=json_schema,
+                )
             )
-        )
     except ClaudeAgentError as exc:
         # A failed invocation still burned wall-clock (no usage envelope) — count it (WS-D).
         metrics.record(None, perf_counter() - _started)

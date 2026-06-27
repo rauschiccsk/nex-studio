@@ -120,6 +120,17 @@ class SessionNotFoundError(AgentTerminalError):
     """No in-memory runtime AND no resumable DB row for the given id."""
 
 
+class WriteRejectedError(AgentTerminalError):
+    """CR-V2-015 single-writer guard: a keystroke write was REFUSED because the engine is currently
+    driving this PTY's underlying ``claude_session_id`` (an active ``invoke_claude`` turn).
+
+    The break-glass debug-attach PTY (``/debug-terminal``) ``--resume``s the SAME ``claude_session_id``
+    the engine drives; letting its ``write_input`` reach the CLI while an engine turn is in flight would
+    create a second concurrent writer and corrupt session memory (SPIKE-IO Risk (a)). The write is
+    dropped (not buffered) — the Manažér's canonical channel to a busy AI Agent is the engine RELAY
+    (``POST /pipeline/{version}/relay`` → next ``--resume`` turn), not raw keystrokes."""
+
+
 @dataclass
 class _RuntimeSession:
     """In-memory runtime state for one active session."""
@@ -555,10 +566,29 @@ async def attach(session_id: uuid.UUID) -> AsyncIterator[bytes]:
 
 
 async def write_input(session_id: uuid.UUID, data: bytes) -> None:
-    """Forward keystrokes from the WS client to the PTY master fd."""
+    """Forward keystrokes from the WS client to the PTY master fd.
+
+    CR-V2-015 single-writer guard (SPIKE-IO Model B): a break-glass debug-attach PTY ``--resume``s the
+    SAME ``claude_session_id`` the engine drives. If an engine turn is currently driving that session, a
+    raw keystroke here would be a SECOND concurrent writer that corrupts session memory — so the write is
+    REFUSED (:class:`WriteRejectedError`). The engine is the sole writer to a busy session; the Manažér's
+    canonical channel to a busy AI Agent is the engine RELAY (a relayed message becomes the next
+    ``--resume`` turn), never raw stdin. When the engine is NOT driving (idle session, out-of-band human
+    break-glass), the write proceeds exactly as before.
+    """
     runtime = _sessions.get(session_id)
     if runtime is None:
         raise SessionNotFoundError(f"No active session: {session_id}")
+    # Lazy import to avoid an import cycle (the pipeline route imports both modules; orchestrator does NOT
+    # import agent_terminal at module level). The guard reads an in-process set on the single asyncio loop.
+    if runtime.claude_session_id is not None:
+        from backend.services import orchestrator
+
+        if orchestrator.is_session_engine_busy(runtime.claude_session_id):
+            raise WriteRejectedError(
+                f"Engine is driving session {runtime.claude_session_id} — write refused "
+                "(use the engine relay to message the AI Agent during an active turn)"
+            )
     runtime.last_input_at = time.time()
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, runtime.process.write, data)

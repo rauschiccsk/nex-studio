@@ -189,6 +189,26 @@ class PipelineActionRequest(BaseModel):
     payload: Optional[dict[str, Any]] = None
 
 
+class PipelineRelayRequest(BaseModel):
+    """Body for ``POST /pipeline/{version_id}/relay`` (CR-V2-015) — a Manažér message typed in the
+    read-only AI Agent tab.
+
+    SPIKE-IO Model B: the message is RELAYED by the engine as the next ``--resume`` turn (the engine is the
+    sole writer to the warm ``claude`` session) — it is NEVER keystroked into the PTY. When a turn is in
+    flight the message is enqueued behind it; when settled it dispatches immediately as an ``ask``/``answer``.
+    """
+
+    text: str = Field(..., min_length=1, description="The Manažér's message to relay to the AI Agent.")
+
+
+class PipelineRelayResponse(BaseModel):
+    """Result of a relay: whether the message was ENQUEUED behind an in-flight turn (``deferred``) or
+    dispatched immediately, plus the current board snapshot."""
+
+    deferred: bool
+    board: PipelineBoardRead
+
+
 class FastFixStartRequest(BaseModel):
     """Body for ``POST /pipeline/fast-fix`` (F-009, CR-NS-094) — the "Rýchla oprava" entry.
 

@@ -353,6 +353,37 @@ class TestDebugAttachResume:
         await service.end_session(row.id, terminated_by="user", db=db_session)
 
 
+class TestWriteInputSingleWriterGuard:
+    """CR-V2-015: ``write_input`` is REFUSED while the engine drives the PTY's underlying
+    ``claude_session_id`` (no concurrent second writer); it proceeds when the engine is idle. Exercised
+    against the REAL PTY (cat_spawn) so the guard sits on the live write path."""
+
+    @pytest.mark.asyncio
+    async def test_write_refused_during_engine_turn(self, db_session, fake_project, cat_spawn):
+        from backend.services import orchestrator
+
+        user = seed_user(db_session, username="ri_writeguard", role="ri")
+        # A debug-attach row resuming a known claude_session_id (the engine drives THIS uuid).
+        claude_sid = uuid.uuid4()
+        row = await service.spawn(
+            user_id=user.id,
+            role="ai-agent",
+            project_slug=fake_project,
+            db=db_session,
+            claude_session_id=claude_sid,
+        )
+
+        # Engine driving the same session → write refused (would corrupt session memory).
+        with orchestrator._engine_session_active(claude_sid):
+            with pytest.raises(service.WriteRejectedError):
+                await service.write_input(row.id, b"x")
+
+        # Engine idle → break-glass write proceeds (cat echoes it; we only assert it does not raise).
+        await service.write_input(row.id, b"y")
+
+        await service.end_session(row.id, terminated_by="user", db=db_session)
+
+
 class TestIdleCleanup:
     """``idle_cleanup`` kills sessions past the TTL window."""
 
