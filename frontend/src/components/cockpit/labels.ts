@@ -8,6 +8,74 @@
 
 import type { BlockReason, PipelineParticipant, PipelineStage } from "../../services/api/pipeline";
 
+// ── v2.0.0 vocabulary (CR-V2-019) ─────────────────────────────────────────────
+// The v2 build pipeline is visible as FOUR phases (design §2.1) — the display now
+// shows *which stage the AI Agent is in*, not *which agent is active*. This is the
+// canonical v2 vocabulary; the Vývoj 4-phase board (CR-V2-021) and the AI Agent
+// tab strip (CR-V2-022) read it. Owned end-to-end by ONE doer (the AI Agent) and
+// checked by the independent Auditor — three participants only (design §1/§4.1):
+// AI Agent (does the work), Auditor (independent verifier), Manažér (approves).
+//
+// NOTE (deliberate, flagged): the legacy v1 STAGE_*/ROLE_LABELS + the coordinator/
+// triage/regate maps below are NOT yet removed. They are typed `Record<PipelineStage|
+// PipelineParticipant,…>` over the still-v1 generated enums (the FE openapi-typescript
+// regen for the v2 backend is CR-V2-021's dependency) and are still consumed by the v1
+// cockpit components (PipelineRail / ExchangePanel / PipelineActionBar / WhosTurnBoard /
+// PipelineMessageBubble) + SettingsPage role list — all of which CR-V2-021/022/010 re-
+// author. Dropping them here would break the type-check gate and reach into those CRs'
+// scope. They retire WITH their consumers; this CR establishes the v2 vocabulary they
+// migrate ONTO. The tone palette (TONE_*/StatusTone/DECISION_BANNER) is intact (salvaged).
+
+// The v2 build phase machine value (mirrors design §2.1; `done` is the terminal phase).
+export type BuildPhase = "priprava" | "navrh" | "programovanie" | "verifikacia" | "done";
+
+// Slovak human-facing label per v2 build phase — the 4-phase Vývoj board chips + the
+// AI Agent tab strip. Collapses the v1 11-stage STAGE_LABELS to the four real phases.
+export const PHASE_LABELS: Record<BuildPhase, string> = {
+  priprava: "Príprava",
+  navrh: "Návrh",
+  programovanie: "Programovanie",
+  verifikacia: "Verifikácia",
+  done: "Hotovo",
+};
+
+// Canonical v2 phase order — the horizontal phase bar (Príprava › Návrh › Programovanie
+// › Verifikácia › Hotovo). Replaces the v1 STAGE_ORDER for v2 surfaces.
+export const PHASE_ORDER: BuildPhase[] = ["priprava", "navrh", "programovanie", "verifikacia", "done"];
+
+// Raw machine code per phase — usable as a hover tooltip alongside the label.
+export const PHASE_CODES: Record<BuildPhase, string> = {
+  priprava: "priprava",
+  navrh: "navrh",
+  programovanie: "programovanie",
+  verifikacia: "verifikacia",
+  done: "done",
+};
+
+// The v2 pipeline participant machine value — exactly three (design §1/§4.1): the AI
+// Agent does the whole build, the Auditor independently verifies, the Manažér approves.
+// (No Coordinator / Designer / Customer / Implementer — those v1 roles collapse into
+// the single AI Agent; `system` stays for system-authored notices.)
+export type V2Participant = "ai_agent" | "auditor" | "manazer" | "system";
+
+// Slovak label per v2 participant — the 3-role vocabulary. Replaces the v1 7-role
+// ROLE_LABELS for v2 surfaces (who's-up status, the AI Agent header, message bubbles).
+export const V2_ROLE_LABELS: Record<V2Participant, string> = {
+  ai_agent: "AI Agent",
+  auditor: "Audítor",
+  manazer: "Manažér",
+  system: "Systém",
+};
+
+// Human label of the phase that follows `phase` (clamped at the terminal `done`). Drives
+// the "Schváliť → spustí sa ďalšia fáza (…)" consequence line on the v2 board.
+export function nextPhaseLabel(phase: BuildPhase): string {
+  const idx = PHASE_ORDER.indexOf(phase);
+  const next = idx >= 0 ? PHASE_ORDER[Math.min(idx + 1, PHASE_ORDER.length - 1)] : undefined;
+  return next ? PHASE_LABELS[next] : PHASE_LABELS[phase];
+}
+
+// ── v1 (legacy) vocabulary — retires WITH its consumers (CR-V2-021/022/010) ────────────
 export const STAGE_LABELS: Record<PipelineStage, string> = {
   kickoff: "Príprava",
   gate_a: "Rozsah",

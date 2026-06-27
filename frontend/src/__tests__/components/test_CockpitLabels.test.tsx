@@ -14,9 +14,15 @@ import {
   BLOCK_REASON_LABELS,
   DECISION_BANNER,
   DIRECTOR_BRIEF_LABEL,
+  nextPhaseLabel,
   nextStageLabel,
+  PHASE_CODES,
+  PHASE_LABELS,
+  PHASE_ORDER,
   TRIAGE_CLASS_LABELS,
+  V2_ROLE_LABELS,
 } from "@/components/cockpit/labels";
+import type { BuildPhase, V2Participant } from "@/components/cockpit/labels";
 import type { BlockReason } from "@/services/api/pipeline";
 import type { ActivityLine, PipelineBoard, PipelineMessage, PipelineState } from "@/services/api/pipeline";
 
@@ -152,6 +158,46 @@ describe("deriveActiveAgent (real active agent, not current_actor)", () => {
 
   it("ignores a system/director latest message at rest", () => {
     expect(deriveActiveAgent(board(gateEState("blocked"), [msg("system")]), [])).toBeNull();
+  });
+});
+
+// CR-V2-019: the v2.0.0 vocabulary — the v1 11-stage STAGE map collapses to FOUR build
+// phases and the 7-role map collapses to THREE participants (AI Agent / Auditor / Manažér).
+describe("CR-V2-019 v2 vocabulary collapse", () => {
+  it("PHASE_LABELS are exactly the four build phases + the terminal Hotovo", () => {
+    const phases: BuildPhase[] = ["priprava", "navrh", "programovanie", "verifikacia", "done"];
+    expect(Object.keys(PHASE_LABELS).sort()).toEqual([...phases].sort());
+    expect(PHASE_LABELS.priprava).toBe("Príprava");
+    expect(PHASE_LABELS.navrh).toBe("Návrh");
+    expect(PHASE_LABELS.programovanie).toBe("Programovanie");
+    expect(PHASE_LABELS.verifikacia).toBe("Verifikácia");
+    expect(PHASE_LABELS.done).toBe("Hotovo");
+  });
+
+  it("PHASE_ORDER is the horizontal bar order and PHASE_CODES covers every phase", () => {
+    expect(PHASE_ORDER).toEqual(["priprava", "navrh", "programovanie", "verifikacia", "done"]);
+    for (const p of PHASE_ORDER) expect(PHASE_CODES[p]).toBeTruthy();
+  });
+
+  it("nextPhaseLabel returns the following phase (clamped at Hotovo)", () => {
+    expect(nextPhaseLabel("priprava")).toBe("Návrh");
+    expect(nextPhaseLabel("navrh")).toBe("Programovanie");
+    expect(nextPhaseLabel("programovanie")).toBe("Verifikácia");
+    expect(nextPhaseLabel("verifikacia")).toBe("Hotovo");
+    expect(nextPhaseLabel("done")).toBe("Hotovo");
+  });
+
+  it("V2_ROLE_LABELS are exactly {AI Agent, Auditor, Manažér, system} — no v1 roles", () => {
+    const roles: V2Participant[] = ["ai_agent", "auditor", "manazer", "system"];
+    expect(Object.keys(V2_ROLE_LABELS).sort()).toEqual([...roles].sort());
+    expect(V2_ROLE_LABELS.ai_agent).toBe("AI Agent");
+    expect(V2_ROLE_LABELS.auditor).toBe("Audítor");
+    expect(V2_ROLE_LABELS.manazer).toBe("Manažér");
+    // the collapsed-away v1 roles are gone from the v2 map
+    expect(Object.keys(V2_ROLE_LABELS)).not.toContain("coordinator");
+    expect(Object.keys(V2_ROLE_LABELS)).not.toContain("designer");
+    expect(Object.keys(V2_ROLE_LABELS)).not.toContain("customer");
+    expect(Object.keys(V2_ROLE_LABELS)).not.toContain("implementer");
   });
 });
 
