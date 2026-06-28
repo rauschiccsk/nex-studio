@@ -1038,7 +1038,13 @@ def _task_plan_skeleton_directive(director_note: Optional[str] = None) -> str:
         "Objekt má pole `epics` (zoznam): KAŽDÝ epik má `title` a pole "
         "`feats` (zoznam, ≥1) — KAŽDÁ funkcia má `title`, `description` a `estimated_minutes` (Σ odhadov "
         "jej úloh). Navrch objektu pole `cross_cutting_rules` (markdown, regulované invarianty knihy, "
-        "kodifikované RAZ). Úlohy NEemituj — doplnia sa v ďalších prechodoch po jednej funkcii. "
+        "kodifikované RAZ). Úlohy NEemituj — doplnia sa v ďalších prechodoch po jednej funkcii.\n"
+        # CR-V2-036: the skeleton pass decides the FEAT COUNT, so the coarse-granularity rule MUST live here
+        # (not only in the per-feat task pass — too late). Without it the agent over-decomposed (46 feats >
+        # the hard cap) and the engine rejected the plan.
+        "GRANULARITA KOSTRY JE HRUBOZRNNÁ — modul ≈ úloha (F-007 §4): zlučuj súvisiace veci do JEDNEJ "
+        f"funkcie, nedeľ koherentný modul na drobné, a drž CELKOVÝ počet funkcií VÝRAZNE POD {MAX_PLAN_FEATS} "
+        "(tvrdý strop — jemnejší rozklad engine ODMIETNE a budeš musieť kostru prerobiť). "
         + _TASK_PLAN_ESTIMATE_NOTE
         + "\n\n"
         + _TASK_PLAN_FENCE_RULE

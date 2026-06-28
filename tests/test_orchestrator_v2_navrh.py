@@ -446,3 +446,13 @@ async def test_navrh_skeleton_parse_failure_blocks_writes_nothing(db_session, mo
 
 def test_navrh_design_doc_rel_path_convention():
     assert orchestrator._navrh_design_doc_rel("0.1.0") == "docs/specs/versions/v0.1.0/design.md"
+
+
+def test_task_plan_skeleton_directive_mandates_coarse_granularity():
+    """CR-V2-036: the skeleton pass decides the FEAT count, so the coarse-granularity rule + the hard cap
+    must be stated HERE (not only in the per-feat task pass — too late). Without it the agent over-
+    decomposed (46 feats > MAX_PLAN_FEATS) and the engine rejected the whole plan."""
+    d = orchestrator._task_plan_skeleton_directive()
+    assert "HRUBOZRNNÁ" in d  # coarse granularity mandated in the skeleton pass
+    assert "modul ≈ úloha" in d
+    assert str(orchestrator.MAX_PLAN_FEATS) in d  # the cap is named so the agent stays well under it
