@@ -34,12 +34,16 @@ class UserAgentSettingRead(BaseModel):
     agent_role: PipelineAgentRole
     model: Optional[AgentModel] = None
     effort: Optional[AgentEffort] = None
+    # CR-V2-038: the model the AI Agent spawns its dynamic HELPERS on (only meaningful for ai_agent).
+    # Unset → the dispatch default (Haiku — cheap bulk). Same enum as ``model``.
+    helper_model: Optional[AgentModel] = None
 
 
 class UserAgentSettingUpsert(BaseModel):
-    """PUT body — model and/or effort for a role (either may be unset = no flag)."""
+    """PUT body — model and/or effort (+ AI Agent helper_model) for a role (any may be unset = no flag)."""
 
     model_config = ConfigDict(protected_namespaces=())
 
     model: Optional[AgentModel] = None
     effort: Optional[AgentEffort] = None
+    helper_model: Optional[AgentModel] = None

@@ -416,3 +416,26 @@ async def test_no_json_schema_arg_when_schema_none(monkeypatch):
     monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
     await invoke_claude(project_slug="x", claude_session_id=uuid.uuid4(), prompt="go")
     assert "--json-schema" not in captured["args"]
+
+
+def test_usage_from_picks_dominant_model_not_first_key():
+    # CR-V2-038: with no top-level `model`, a multi-model turn (Opus main + Haiku helper) must be labeled by
+    # the DOMINANT model (most output tokens), not the arbitrary first modelUsage key. Mirrors the real
+    # envelope where Haiku (a helper) was listed first → the Auditor turn was mislabeled Haiku.
+    envelope = {
+        "usage": {"input_tokens": 2883, "output_tokens": 41845},
+        "modelUsage": {
+            "claude-haiku-4-5-20251001": {"inputTokens": 580, "outputTokens": 16},
+            "claude-opus-4-8": {"inputTokens": 4464, "outputTokens": 41800},
+        },
+    }
+    md = claude_agent._usage_from(envelope)
+    assert md is not None
+    assert md.model == "claude-opus-4-8"  # the main turn, not the first-listed Haiku helper
+    assert md.input_tokens == 2883 and md.output_tokens == 41845
+
+
+def test_usage_from_prefers_explicit_top_level_model():
+    # When the envelope carries a top-level `model`, use it verbatim (no modelUsage guessing).
+    md = claude_agent._usage_from({"model": "claude-opus-4-8", "usage": {"input_tokens": 10, "output_tokens": 20}})
+    assert md is not None and md.model == "claude-opus-4-8"

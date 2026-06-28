@@ -654,3 +654,39 @@ async def test_invoke_agent_appends_exact_stage_to_prompt(db_session, monkeypatc
     assert "BRIEF-XYZ" in captured["prompt"]  # the original directive is preserved
     assert "priprava" in captured["prompt"]  # the exact stage value is appended
     assert "PEVNÉ KÓDOVÉ" in captured["prompt"]  # the enum-contract instruction is present
+
+
+# ── CR-V2-038: AI-Agent helper model ─────────────────────────────────────────
+
+
+def test_resolve_helper_model_defaults_to_haiku_when_unset(db_session):
+    # No per-owner helper_model → the dispatch default (Haiku): the AI Agent does the hard core itself and
+    # delegates only bulk to cheap helpers.
+    version, _ = _make_version_with_owner_config(db_session, [("ai_agent", "claude-opus-4-8", "max")])
+    assert orchestrator._resolve_helper_model(db_session, version.id) == orchestrator.DEFAULT_HELPER_MODEL
+
+
+def test_resolve_helper_model_honours_explicit_owner_choice(db_session):
+    # The Manažér can raise the AI Agent's helpers to Opus for a high-stakes build ("identically to Dedo").
+    version, owner = _make_version_with_owner_config(db_session, [])
+    db_session.add(UserAgentSettings(user_id=owner.id, agent_role="ai_agent", helper_model="claude-opus-4-8"))
+    db_session.flush()
+    assert orchestrator._resolve_helper_model(db_session, version.id) == "claude-opus-4-8"
+
+
+async def test_invoke_agent_injects_helper_directive_for_ai_agent_only(db_session, monkeypatch):
+    # The helper-model directive is appended to the AI Agent's turn (the helper model can't be a CLI flag),
+    # carrying the resolved model — but the Auditor (which is not the helper-spawner) never gets it.
+    fake = _fake_claude(monkeypatch)
+    version, owner = _make_version_with_owner_config(db_session, [])
+    db_session.add(UserAgentSettings(user_id=owner.id, agent_role="ai_agent", helper_model="claude-opus-4-8"))
+    db_session.flush()
+
+    await orchestrator.invoke_agent(
+        db_session, version_id=version.id, role="ai_agent", stage="programovanie", prompt="go"
+    )
+    ai_prompt = fake.calls[-1]["prompt"]
+    assert "pomocné agenty" in ai_prompt.lower() and "claude-opus-4-8" in ai_prompt
+
+    await orchestrator.invoke_agent(db_session, version_id=version.id, role="auditor", stage="verifikacia", prompt="go")
+    assert "pomocné agenty" not in fake.calls[-1]["prompt"].lower()

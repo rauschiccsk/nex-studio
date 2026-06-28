@@ -56,10 +56,15 @@ def test_put_then_get_roundtrip(db_session):
         json={"model": "claude-sonnet-4-6", "effort": "high"},
     )
     assert r.status_code == 200, r.text
-    assert r.json() == {"agent_role": "ai_agent", "model": "claude-sonnet-4-6", "effort": "high"}
+    assert r.json() == {
+        "agent_role": "ai_agent",
+        "model": "claude-sonnet-4-6",
+        "effort": "high",
+        "helper_model": None,
+    }
 
     rows = client.get("/api/v1/user-agent-settings").json()
-    assert rows == [{"agent_role": "ai_agent", "model": "claude-sonnet-4-6", "effort": "high"}]
+    assert rows == [{"agent_role": "ai_agent", "model": "claude-sonnet-4-6", "effort": "high", "helper_model": None}]
 
 
 def test_put_is_upsert(db_session):
@@ -71,7 +76,9 @@ def test_put_is_upsert(db_session):
     assert r.status_code == 200, r.text
 
     rows = client.get("/api/v1/user-agent-settings").json()
-    assert rows == [{"agent_role": "auditor", "model": "claude-haiku-4-5-20251001", "effort": "max"}]
+    assert rows == [
+        {"agent_role": "auditor", "model": "claude-haiku-4-5-20251001", "effort": "max", "helper_model": None}
+    ]
 
 
 def test_per_user_isolation(db_session):
@@ -85,7 +92,7 @@ def test_per_user_isolation(db_session):
     # B sees nothing; A's config is unaffected by B existing.
     assert client_b.get("/api/v1/user-agent-settings").json() == []
     assert client_a.get("/api/v1/user-agent-settings").json() == [
-        {"agent_role": "ai_agent", "model": "claude-opus-4-8", "effort": "xhigh"}
+        {"agent_role": "ai_agent", "model": "claude-opus-4-8", "effort": "xhigh", "helper_model": None}
     ]
 
     # B sets their OWN ai_agent config — independent of A's.
@@ -99,7 +106,27 @@ def test_nullable_fields_accepted(db_session):
     client = _client_for(db_session, user)
     r = client.put("/api/v1/user-agent-settings/ai_agent", json={"model": None, "effort": "max"})
     assert r.status_code == 200, r.text
-    assert r.json() == {"agent_role": "ai_agent", "model": None, "effort": "max"}
+    assert r.json() == {"agent_role": "ai_agent", "model": None, "effort": "max", "helper_model": None}
+
+
+def test_helper_model_roundtrips(db_session):
+    # CR-V2-038: the AI Agent's helper_model is settable + round-trips (Opus option over the Haiku default).
+    user = _make_user(db_session)
+    client = _client_for(db_session, user)
+    r = client.put(
+        "/api/v1/user-agent-settings/ai_agent",
+        json={"model": "claude-opus-4-8", "effort": "max", "helper_model": "claude-opus-4-8"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["helper_model"] == "claude-opus-4-8"
+    assert client.get("/api/v1/user-agent-settings").json()[0]["helper_model"] == "claude-opus-4-8"
+
+
+def test_helper_model_rejects_non_dispatchable(db_session):
+    user = _make_user(db_session)
+    client = _client_for(db_session, user)
+    r = client.put("/api/v1/user-agent-settings/ai_agent", json={"helper_model": "gpt-4"})
+    assert r.status_code == 422
 
 
 @pytest.mark.parametrize(

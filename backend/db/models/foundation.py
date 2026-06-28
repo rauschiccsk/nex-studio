@@ -83,6 +83,10 @@ class UserAgentSettings(Base, UUIDMixin, TimestampMixin):
     agent_role = Column(String(16), nullable=False)
     model = Column(String(64), nullable=True)
     effort = Column(String(16), nullable=True)
+    # CR-V2-038: the model the AI Agent spawns its ephemeral HELPERS on (Agent/Task tool). NULL → the
+    # dispatch default (Haiku — cheap/fast bulk; the AI Agent does the hard core on its own model). Only
+    # the ai_agent row is consulted (only the AI Agent spawns helpers). Validated by the pydantic enum.
+    helper_model = Column(String(64), nullable=True)
 
     __table_args__ = (
         UniqueConstraint("user_id", "agent_role", name="uq_user_agent_settings_user_role"),

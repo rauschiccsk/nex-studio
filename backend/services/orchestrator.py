@@ -102,6 +102,12 @@ AUDITOR_ROLE = "auditor"
 #: default (which is a small/fast model). A per-user ``user_agent_settings`` row still overrides this.
 DEFAULT_AGENT_MODEL = "claude-opus-4-8"
 
+#: Default model the AI Agent spawns its ephemeral HELPERS on (Agent/Task tool) when the owner has set no
+#: explicit ``helper_model`` (CR-V2-038). Haiku by design: the AI Agent does the hard CORE itself on its own
+#: (Opus + max) turn and delegates only parallel/bulk grunt work to helpers — cheap + fast is the right
+#: default there. The Manažér can raise it to Opus per project (Nastavenia) for a high-stakes build.
+DEFAULT_HELPER_MODEL = "claude-haiku-4-5-20251001"
+
 #: DB role value → charter-path slug (underscore → hyphen). Identity for ``auditor``; explicit for the
 #: AI Agent (``ai_agent`` → ``ai-agent``). The ONLY place the two spellings are reconciled.
 _CHARTER_PATH_SLUG: dict[str, str] = {
@@ -573,6 +579,23 @@ def _resolve_dispatch_overrides(db: Session, version_id: uuid.UUID, role: str) -
     return model, effort
 
 
+def _resolve_helper_model(db: Session, version_id: uuid.UUID) -> str:
+    """Resolve the model the AI Agent should spawn its HELPERS on (CR-V2-038).
+
+    The AI Agent dynamically spawns ephemeral helper agents (Agent/Task tool) for parallel/bulk work;
+    those helpers' model can't be forced by a CLI flag (the spawning agent picks it), so the engine
+    instructs it via a per-turn directive (:func:`_helper_model_directive`). The value is the project
+    owner's ``user_agent_settings(ai_agent).helper_model``; unset → :data:`DEFAULT_HELPER_MODEL` (Haiku).
+    """
+    row = db.execute(
+        select(UserAgentSettings.helper_model)
+        .join(Project, Project.owner_id == UserAgentSettings.user_id)
+        .join(Version, Version.project_id == Project.id)
+        .where(Version.id == version_id, UserAgentSettings.agent_role == AI_AGENT_ROLE)
+    ).first()
+    return (row.helper_model if row is not None and row.helper_model else None) or DEFAULT_HELPER_MODEL
+
+
 def _resolve_orch_session(db: Session, project_slug: str, role: str) -> tuple[uuid.UUID, bool]:
     """Return ``(claude_session_id, is_first)`` for ``(project_slug, role)``.
 
@@ -662,6 +685,21 @@ async def _record_parse_exhaustion(
     )
     if on_message is not None:
         await on_message(msg)
+
+
+def _helper_model_directive(helper_model: str) -> str:
+    """The AI-Agent helper-model directive (CR-V2-038), appended to the AI Agent's turns.
+
+    The model a spawned helper runs on can't be forced by a CLI flag (the spawning agent picks it when it
+    calls the Agent/Task tool — left to itself it defaults to a small/fast model). So the engine tells the
+    AI Agent which model to use, honouring the project owner's ``helper_model`` Nastavenia choice (Haiku by
+    default, Opus for a high-stakes build). Harmless on the light phases (Príprava/Návrh) where the charter
+    tells it NOT to spawn helpers — it only takes effect when it actually spawns one (Programovanie)."""
+    return (
+        "KEĎ spúšťaš pomocné agenty (nástroj Agent / Task) pre paralelné/hromadné podúlohy, spúšťaj ich "
+        f"NA MODELI `{helper_model}` (parameter modelu pri spustení pomocníka). Ťažké jadro rob sám na "
+        "svojom modeli; pomocníkov používaj len na naozaj paralelnú/hromadnú prácu (typicky Programovanie)."
+    )
 
 
 def _status_block_instruction(stage: str) -> str:
@@ -1809,6 +1847,11 @@ async def invoke_agent(
     # The single chokepoint every dispatch + every parse-retry re-emit passes through, so the re-emit also
     # carries the exact `stage` and can actually recover.
     prompt = f"{prompt}\n\n{_status_block_instruction(stage)}"
+    # CR-V2-038: tell the AI Agent which model to spawn its dynamic helpers on (the helper model can't be a
+    # CLI flag — the spawning agent picks it). Owner's Nastavenia choice; Haiku default. Only the AI Agent
+    # spawns helpers, so the directive is AI-Agent-only (the Auditor never gets it).
+    if role == AI_AGENT_ROLE:
+        prompt = f"{prompt}\n\n{_helper_model_directive(_resolve_helper_model(db, version_id))}"
 
     # WS-D (CR-NS-036): time + meter this dispatch into the turn accumulator. A fresh local one for
     # single-shot direct callers; the shared one when threaded through the parse-retry loop.

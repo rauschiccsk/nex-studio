@@ -54,6 +54,7 @@ def upsert_my_agent_setting(
         agent_role=agent_role,
         model=payload.model,
         effort=payload.effort,
+        helper_model=payload.helper_model,
     )
     db.commit()
     return row

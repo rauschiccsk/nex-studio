@@ -104,7 +104,19 @@ def _usage_from(envelope: dict) -> Optional[UsageMetadata]:
     if not model:
         model_usage = envelope.get("modelUsage")
         if isinstance(model_usage, dict) and model_usage:
-            model = next(iter(model_usage))  # the model name is the key
+            # CR-V2-038: pick the DOMINANT model (most output tokens), NOT the first dict key. The
+            # ``modelUsage`` key order is arbitrary, so a turn that ran on Opus (the main agent) but spawned
+            # a Haiku helper would otherwise be mislabeled Haiku purely because it was listed first — which
+            # mis-attributed the Auditor's turn and would skew the role-based cost metrics. The model that
+            # produced the most output is the turn's primary model. (modelUsage entries use camelCase
+            # ``outputTokens``; tolerate snake_case too.)
+            def _model_output(name: str) -> int:
+                entry = model_usage.get(name)
+                if not isinstance(entry, dict):
+                    return 0
+                return int(entry.get("outputTokens") or entry.get("output_tokens") or 0)
+
+            model = max(model_usage, key=_model_output)
     return UsageMetadata(
         input_tokens=int(usage.get("input_tokens") or 0),
         output_tokens=int(usage.get("output_tokens") or 0),
