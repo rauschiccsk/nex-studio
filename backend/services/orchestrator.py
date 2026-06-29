@@ -984,7 +984,8 @@ def _consultation_directive(
         "- `consultation.intro`: 1-2 vety po ľudsky — čo a prečo treba rozhodnúť.\n"
         "- `consultation.decisions[]`: KAŽDÝ bod ako VLASTNÉ rozhodnutie (nezlučuj a nevynechaj žiadny). "
         "Každé rozhodnutie:\n"
-        "  • `key` — krátky stabilný identifikátor (napr. 'telegram', 'topologia').\n"
+        "  • `key` — krátky stabilný identifikátor, UNIKÁTNY v rámci konzultácie (napr. 'telegram', "
+        "'topologia'); dva rovnaké kľúče sú chyba.\n"
         "  • `question` — problém po ľudsky, BEZ žargónu (nie 'asyncpg/DDL/lockfile' — vysvetli podstatu "
         "tak, aby ju pochopil nešpecialista) a JASNE čo sa rozhoduje.\n"
         "  • `explanation` — 1 veta prečo to záleží.\n"
@@ -1802,31 +1803,41 @@ def _write_task_plan(db: Session, state: PipelineState, block: PipelineStatusBlo
     return None
 
 
-def _latest_consultation(db: Session, version_id: uuid.UUID) -> Optional[dict[str, Any]]:
-    """CR-V2-041: the ``consultation`` payload (id / intro / source / decisions[]) of the LATEST
-    kind=consultation message, or ``None``. The decision queue + the recorded ``decide`` answers ARE the
-    consultation's whole state — the "current" decision is derived (first ``decision.key`` with no answer),
-    so there is no mutable cursor column to drift."""
+def _latest_consultation(db: Session, version_id: uuid.UUID) -> Optional[tuple[dict[str, Any], int]]:
+    """CR-V2-041: the ``consultation`` payload (id / intro / source / decisions[]) + its message ``seq`` of
+    the LATEST kind=consultation message, or ``None``. The decision queue + the recorded ``decide`` answers
+    ARE the consultation's whole state — the "current" decision is derived (first ``decision.key`` with no
+    answer), so there is no mutable cursor column to drift.
+
+    Returns the seq so answers are SEQ-scoped (decide-records with a higher seq belong to THIS consultation):
+    a re-consultation gets a new, higher-seq message, so correctness never depends on the agent-supplied
+    ``consultation.id`` being unique (verify-round blocker fix)."""
     row = db.execute(
-        select(PipelineMessage.payload)
+        select(PipelineMessage.payload, PipelineMessage.seq)
         .where(PipelineMessage.version_id == version_id, PipelineMessage.kind == "consultation")
         .order_by(PipelineMessage.seq.desc())
         .limit(1)
-    ).scalar_one_or_none()
-    c = row.get("consultation") if isinstance(row, dict) else None
-    return c if isinstance(c, dict) and c.get("decisions") else None
+    ).first()
+    if row is None:
+        return None
+    payload, seq = row
+    c = payload.get("consultation") if isinstance(payload, dict) else None
+    return (c, seq) if isinstance(c, dict) and c.get("decisions") else None
 
 
-def _consultation_answers(
-    db: Session, version_id: uuid.UUID, consultation_id: Optional[str]
-) -> dict[str, dict[str, Any]]:
-    """CR-V2-041: map ``decision.key`` → its recorded ``decide`` answer for ``consultation_id`` (the durable
-    kind=answer messages carrying ``payload.consultation_decision``). Scoped to the consultation id so a
-    re-consultation never mixes answers."""
+def _consultation_answers(db: Session, version_id: uuid.UUID, after_seq: int) -> dict[str, dict[str, Any]]:
+    """CR-V2-041: map ``decision.key`` → its recorded ``decide`` answer for the consultation whose message
+    seq is ``after_seq`` — the durable kind=answer decide-records (``payload.consultation_decision``) with a
+    HIGHER seq. SEQ-scoped (not id-scoped) so a re-consultation that reuses an id or keys can NEVER mix old
+    answers into the new consultation (verify-round blocker fix)."""
     rows = (
         db.execute(
             select(PipelineMessage.payload)
-            .where(PipelineMessage.version_id == version_id, PipelineMessage.kind == "answer")
+            .where(
+                PipelineMessage.version_id == version_id,
+                PipelineMessage.kind == "answer",
+                PipelineMessage.seq > after_seq,
+            )
             .order_by(PipelineMessage.seq.asc())
         )
         .scalars()
@@ -1835,7 +1846,7 @@ def _consultation_answers(
     out: dict[str, dict[str, Any]] = {}
     for p in rows:
         cd = p.get("consultation_decision") if isinstance(p, dict) else None
-        if isinstance(cd, dict) and cd.get("consultation_id") == consultation_id and cd.get("key"):
+        if isinstance(cd, dict) and cd.get("key"):
             out[cd["key"]] = cd
     return out
 
@@ -1853,10 +1864,11 @@ def dispatch_directive(
     if action == "decide":
         # CR-V2-041: only the LAST decide re-dispatches (status went agent_working). APPLY = rework per ALL
         # captured decisions; aggregate them from the DB here (directive_for_action has no DB to do this).
-        c = _latest_consultation(db, version_id)
-        if c is None:
+        lc = _latest_consultation(db, version_id)
+        if lc is None:
             return None
-        answers = _consultation_answers(db, version_id, c.get("id"))
+        c, c_seq = lc
+        answers = _consultation_answers(db, version_id, c_seq)
         lines = [
             f"- {d.get('question', '')} → {a.get('label')}" + (f" (poznámka: {a['note']})" if a.get("note") else "")
             for d in c.get("decisions", [])
@@ -5474,9 +5486,10 @@ async def apply_action(
         # decisions (dispatch_directive aggregates them from the recorded answers).
         if not (state.status == "blocked" and state.block_reason == "decision_needed"):
             raise OrchestratorError("decide je platné len počas konzultácie (decision_needed)")
-        c = _latest_consultation(db, version_id)
-        if c is None:
+        lc = _latest_consultation(db, version_id)
+        if lc is None:
             raise OrchestratorError("Žiadna aktívna konzultácia.")
+        c, c_seq = lc
         decision_key = payload.get("decision_key")
         decision = next((d for d in c.get("decisions", []) if d.get("key") == decision_key), None)
         if decision is None:
@@ -5509,7 +5522,7 @@ async def apply_action(
             },
         )
         keys = [d.get("key") for d in c.get("decisions", [])]
-        answered = _consultation_answers(db, version_id, c.get("id"))
+        answered = _consultation_answers(db, version_id, c_seq)
         if len(answered) < len(keys):
             # more decisions remain → re-block, NO dispatch (status stays blocked → the route won't dispatch)
             state.next_action = f"Manažér: rozhodni {len(answered) + 1}/{len(keys)} (konzultácia)."

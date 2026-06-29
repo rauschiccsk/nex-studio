@@ -40,25 +40,32 @@ export interface DecidePayload {
   note?: string;
 }
 
-// The latest kind=consultation message's payload, narrowed — the ACTUAL blocking message (criterion 4).
-function latestConsultation(messages: PipelineMessage[]): Consultation | null {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i];
+// The latest kind=consultation message — the ACTUAL blocking message (criterion 4) — plus its `seq`, so
+// answers can be SEQ-scoped below (mirrors backend `_latest_consultation`). "Latest" = the highest seq, not
+// the array-last element, so ordering of `recent_messages` can't pick a stale consultation.
+function latestConsultation(messages: PipelineMessage[]): { consultation: Consultation; seq: number } | null {
+  let best: { consultation: Consultation; seq: number } | null = null;
+  for (const m of messages) {
     if (!m || m.kind !== "consultation") continue;
     const c = (m.payload as { consultation?: Consultation } | null)?.consultation;
-    if (c && Array.isArray(c.decisions) && c.decisions.length > 0) return c;
+    if (c && Array.isArray(c.decisions) && c.decisions.length > 0 && (best === null || m.seq > best.seq)) {
+      best = { consultation: c, seq: m.seq };
+    }
   }
-  return null;
+  return best;
 }
 
-// decision.key → the chosen label, from the durable kind=answer decide-records for THIS consultation.
-function answeredLabels(messages: PipelineMessage[], consultationId: string): Record<string, string> {
+// decision.key → the chosen label, from the durable kind=answer decide-records that belong to THIS
+// consultation — i.e. with a seq strictly AFTER the consultation message. SEQ-scoped (not consultation_id-
+// scoped) so a re-consultation that reuses an id or keys can NEVER fold an old answer into the new card
+// (mirrors backend `_consultation_answers` — the verify-round blocker fix).
+function answeredLabels(messages: PipelineMessage[], afterSeq: number): Record<string, string> {
   const out: Record<string, string> = {};
   for (const m of messages) {
-    if (!m || m.kind !== "answer") continue;
-    const cd = (m.payload as { consultation_decision?: { consultation_id?: string; key?: string; label?: string } } | null)
+    if (!m || m.kind !== "answer" || m.seq <= afterSeq) continue;
+    const cd = (m.payload as { consultation_decision?: { key?: string; label?: string } } | null)
       ?.consultation_decision;
-    if (cd && cd.consultation_id === consultationId && cd.key) out[cd.key] = cd.label ?? "—";
+    if (cd && cd.key) out[cd.key] = cd.label ?? "—";
   }
   return out;
 }
@@ -70,10 +77,11 @@ interface Props {
 }
 
 export function DecisionCardStack({ messages, onDecide, inFlight = false }: Props) {
-  const consultation = useMemo(() => latestConsultation(messages), [messages]);
+  const latest = useMemo(() => latestConsultation(messages), [messages]);
+  const consultation = latest?.consultation ?? null;
   const answered = useMemo(
-    () => (consultation ? answeredLabels(messages, consultation.id) : {}),
-    [messages, consultation],
+    () => (latest ? answeredLabels(messages, latest.seq) : {}),
+    [messages, latest],
   );
   const [picked, setPicked] = useState<string | null>(null);
   const [freeText, setFreeText] = useState("");

@@ -220,6 +220,18 @@ class ConsultationBlock(BaseModel):
     source: str = "auditor_upfront"
     decisions: list[ConsultDecision] = Field(min_length=1)
 
+    @model_validator(mode="after")
+    def _unique_decision_keys(self) -> "ConsultationBlock":
+        """``decision.key`` is what an answer is recorded against (and aggregated by in the apply directive);
+        a duplicate key would make two decisions indistinguishable → silently drop one decision's answer.
+        Reject at parse time (CR-V2-041 verify-round: the second of the three correctness invariants — the
+        first, cross-consultation isolation, is handled by SEQ-scoping the answers)."""
+        keys = [d.key for d in self.decisions]
+        if len(keys) != len(set(keys)):
+            dupes = sorted({k for k in keys if keys.count(k) > 1})
+            raise ValueError(f"consultation decision keys must be unique (duplicates: {', '.join(dupes)})")
+        return self
+
 
 class PipelineStatusBlock(BaseModel):
     """Validated agent status block. ``extra='ignore'`` drops derived fields.

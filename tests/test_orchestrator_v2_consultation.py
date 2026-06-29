@@ -14,7 +14,7 @@ import uuid
 import pytest
 
 from backend.db.models.foundation import User
-from backend.db.models.pipeline import PipelineMessage, PipelineState
+from backend.db.models.pipeline import PipelineState
 from backend.db.models.projects import Project
 from backend.db.models.versions import Version
 from backend.services import orchestrator
@@ -67,19 +67,18 @@ def _seed_consultation(db, *, status="blocked"):
     )
     db.add(state)
     db.flush()
-    db.add(
-        PipelineMessage(
-            version_id=version.id,
-            stage="navrh",
-            author="ai_agent",
-            recipient="manazer",
-            kind="consultation",
-            content="konzultácia",
-            payload={"consultation": {"id": "c1", "source": "auditor_upfront", "decisions": _DECISIONS}},
-            seq=1,
-        )
+    # Record via _record_message so ``seq`` comes from the same DB Identity counter as the decide answers
+    # (mirrors production) — explicit seq= would diverge from the independent Identity sequence.
+    orchestrator._record_message(
+        db,
+        version_id=version.id,
+        stage="navrh",
+        author="ai_agent",
+        recipient="manazer",
+        kind="consultation",
+        content="konzultácia",
+        payload={"consultation": {"id": "c1", "source": "auditor_upfront", "decisions": _DECISIONS}},
     )
-    db.flush()
     return version
 
 
@@ -105,8 +104,9 @@ async def test_decide_intermediate_reblocks_then_last_dispatches_and_aggregates(
     assert "Voľba A1" in directive and "Voľba B2" in directive  # d1→a (A1), d2→b (B2)
     assert "PREPRACUJ" in directive
 
-    # Both picks are durable kind=answer messages stamped with the consultation id (the audit trail).
-    answers = orchestrator._consultation_answers(db_session, version.id, "c1")
+    # Both picks are durable kind=answer messages; answers are SEQ-scoped to the consultation message.
+    _, c_seq = orchestrator._latest_consultation(db_session, version.id)
+    answers = orchestrator._consultation_answers(db_session, version.id, c_seq)
     assert set(answers) == {"d1", "d2"} and answers["d1"]["label"] == "Voľba A1"
 
 
@@ -118,7 +118,8 @@ async def test_decide_free_text_option_is_accepted(db_session):
         action="decide",
         payload={"decision_key": "d1", "free_text": "Vlastná odpoveď"},
     )
-    answers = orchestrator._consultation_answers(db_session, version.id, "c1")
+    _, c_seq = orchestrator._latest_consultation(db_session, version.id)
+    answers = orchestrator._consultation_answers(db_session, version.id, c_seq)
     assert answers["d1"]["label"] == "Vlastná odpoveď" and answers["d1"]["free_text"] == "Vlastná odpoveď"
 
 
@@ -144,3 +145,80 @@ def test_decision_needed_offers_only_decide_and_ask(db_session):
         orchestrator.select(PipelineState).where(PipelineState.version_id == version.id)
     ).scalar_one()
     assert orchestrator.determine_available_actions(state) == {"decide", "ask"}
+
+
+async def test_reconsultation_reusing_id_and_keys_does_not_inherit_old_answers(db_session):
+    """Verify-round BLOCKER regression: a re-consultation that REUSES the consultation id AND the same
+    decision keys must NOT count the prior consultation's answers. Answers are SEQ-scoped (decide-records
+    after the consultation message), so the new card starts unanswered — answering only ONE of its two
+    decisions must RE-BLOCK, never dispatch. Pre-fix (id-scoped) this would aggregate the old answers and
+    dispatch prematurely with an incomplete decision set."""
+    version = _seed_consultation(db_session)
+    # Resolve consultation #1 fully (d1=a, d2=b) → applies (agent_working).
+    await orchestrator.apply_action(
+        db_session, version_id=version.id, action="decide", payload={"decision_key": "d1", "option_id": "a"}
+    )
+    s = await orchestrator.apply_action(
+        db_session, version_id=version.id, action="decide", payload={"decision_key": "d2", "option_id": "b"}
+    )
+    assert s.status == "agent_working"
+
+    # A re-audit finds another hole → a SECOND consultation REUSING id 'c1' + the SAME keys, at a higher seq
+    # (recorded via _record_message so it gets the next Identity seq, > all prior messages).
+    state = db_session.execute(
+        orchestrator.select(PipelineState).where(PipelineState.version_id == version.id)
+    ).scalar_one()
+    orchestrator._record_message(
+        db_session,
+        version_id=version.id,
+        stage="navrh",
+        author="ai_agent",
+        recipient="manazer",
+        kind="consultation",
+        content="re-konzultácia",
+        payload={"consultation": {"id": "c1", "source": "auditor_upfront", "decisions": _DECISIONS}},
+    )
+    state.status = "blocked"
+    state.block_reason = "decision_needed"
+    db_session.flush()
+    _, c2_seq = orchestrator._latest_consultation(db_session, version.id)
+
+    # Answer ONLY d1 of consultation #2 → must RE-BLOCK (the prior answers are seq-isolated), not dispatch.
+    s = await orchestrator.apply_action(
+        db_session, version_id=version.id, action="decide", payload={"decision_key": "d1", "option_id": "a"}
+    )
+    assert s.status == "blocked" and s.block_reason == "decision_needed"
+    assert "2/2" in s.next_action
+
+    # The new consultation's answer scope (seq > #2's seq) sees ONLY its own d1 — not the old c1 answers.
+    answers = orchestrator._consultation_answers(db_session, version.id, c2_seq)
+    assert set(answers) == {"d1"}
+
+
+def test_consultation_block_rejects_duplicate_decision_keys():
+    """Verify-round MAJOR regression: a consultation with two decisions sharing a ``key`` is ambiguous (an
+    answer can't target one of them) → the model validator rejects it at parse time."""
+    from pydantic import ValidationError
+
+    from backend.services.pipeline_status import ConsultationBlock
+
+    good = ConsultationBlock(id="c1", source="auditor_upfront", decisions=_DECISIONS)
+    assert len(good.decisions) == 2
+
+    with pytest.raises(ValidationError, match="unique"):
+        ConsultationBlock(
+            id="c1",
+            source="auditor_upfront",
+            decisions=[
+                {
+                    "key": "dup",
+                    "question": "Q1?",
+                    "options": [{"id": "a", "label": "A", "recommended": True}, {"id": "b", "label": "B"}],
+                },
+                {
+                    "key": "dup",
+                    "question": "Q2?",
+                    "options": [{"id": "a", "label": "A", "recommended": True}, {"id": "b", "label": "B"}],
+                },
+            ],
+        )

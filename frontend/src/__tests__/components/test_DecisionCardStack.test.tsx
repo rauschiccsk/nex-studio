@@ -94,4 +94,25 @@ describe("DecisionCardStack (CR-V2-041)", () => {
     );
     expect(container).toBeEmptyDOMElement();
   });
+
+  it("a re-consultation reusing the id+keys starts fresh (old answers are seq-isolated)", () => {
+    // Verify-round blocker (FE side): consultation #1 (seq 1) fully answered, then a SECOND consultation
+    // (seq 4) REUSING id "c1" + the same keys. The prior answers (seq 2/3) must NOT count for #2 — they're
+    // seq-isolated — so #2's first card (d1) shows unanswered at (1/2), not skipped to "all decided".
+    const a1 = msg({
+      seq: 2,
+      kind: "answer",
+      payload: { consultation_decision: { consultation_id: "c1", key: "d1", label: "Voľba A" } },
+    });
+    const a2 = msg({
+      seq: 3,
+      kind: "answer",
+      payload: { consultation_decision: { consultation_id: "c1", key: "d2", label: "A2" } },
+    });
+    const reConsult = msg({ seq: 4, payload: { consultation: CONSULT } });
+    render(<DecisionCardStack messages={[consultMsg(), a1, a2, reConsult]} onDecide={vi.fn()} />);
+    expect(screen.getByText(/\(1\/2\)/)).toBeInTheDocument(); // back to the first card, not "all decided"
+    expect(screen.getByText("Otázka jedna?")).toBeInTheDocument();
+    expect(screen.queryByText(/✓/)).not.toBeInTheDocument(); // no inherited answered trail
+  });
 });
