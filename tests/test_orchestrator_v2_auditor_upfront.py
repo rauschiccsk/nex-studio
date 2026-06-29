@@ -121,10 +121,35 @@ def _audit_hole(findings, proposed_fix="Vyjasni dátový model a hraničné prí
 # ── Role-dispatching stub for the two invoke_agent_with_parse_retry turns ─────
 
 
-def _stub_turns(monkeypatch, *, design_block, audit_block):
-    """Make ``invoke_agent_with_parse_retry`` return *design_block* for the ai_agent turn and *audit_block*
-    for the auditor turn; capture what each was prompted with."""
-    captured = {}
+def _consult_block(decisions=None, intro="Treba vyjasniť pár vecí pred kódom."):
+    """A ``kind=consultation`` block (CR-V2-041) — the AI Agent's decision queue for the consult turn."""
+    decisions = decisions or [
+        {
+            "key": "dph",
+            "question": "Ako sa má počítať DPH pri reverse-charge?",
+            "explanation": "Ovplyvní to výpočty na faktúre.",
+            "options": [
+                {"id": "rc", "label": "Reverse charge (DPH platí príjemca)", "recommended": True},
+                {"id": "std", "label": "Štandardne (DPH na faktúre)"},
+            ],
+            "rationale": "Odporúčam reverse charge — sedí so zadaním.",
+        }
+    ]
+    return PipelineStatusBlock(
+        stage="navrh",
+        kind="consultation",
+        summary="Konzultácia (1 rozhodnutie).",
+        awaiting="manazer",
+        consultation={"id": "c1", "source": "auditor_upfront", "intro": intro, "decisions": decisions},
+    )
+
+
+def _stub_turns(monkeypatch, *, design_block, audit_block, consult_block=None):
+    """Make ``invoke_agent_with_parse_retry`` return *design_block* for the FIRST ai_agent turn (design),
+    *audit_block* for the auditor turn, and (CR-V2-041) *consult_block* for the SECOND+ ai_agent turn (the
+    consultation that a hole triggers). Records the verdict + consultation messages like invoke_agent would,
+    so the live DB sees real rows; captures what each was prompted with."""
+    captured = {"ai_calls": 0}
 
     async def _fake(db, *, version_id, role, stage, prompt, **_kw):
         if role == orchestrator.AUDITOR_ROLE:
@@ -149,9 +174,26 @@ def _stub_turns(monkeypatch, *, design_block, audit_block):
                     },
                 )
             return audit_block
-        captured["design_prompt"] = prompt
-        captured["design_role"] = role
-        return design_block
+        captured["ai_calls"] += 1
+        if captured["ai_calls"] == 1:
+            captured["design_prompt"] = prompt
+            captured["design_role"] = role
+            return design_block
+        # CR-V2-041: a subsequent ai_agent turn is the consultation (the hole→consult path).
+        captured["consult_prompt"] = prompt
+        block = consult_block if consult_block is not None else design_block
+        if not isinstance(block, ParseFailure) and block.kind == "consultation" and block.consultation is not None:
+            orchestrator._record_message(
+                db,
+                version_id=version_id,
+                stage=stage,
+                author=role,
+                recipient=_kw.get("recipient", "manazer"),
+                kind="consultation",
+                content=block.summary,
+                payload={"consultation": block.consultation.model_dump(mode="json"), "phase": stage},
+            )
+        return block
 
     monkeypatch.setattr(orchestrator, "invoke_agent_with_parse_retry", _fake)
     return captured
@@ -250,13 +292,14 @@ async def test_upfront_hole_escalates_and_overrides_plna_dial(db_session, monkey
     version, _ = _make_version(db_session, project_dial="plna")
     _seed_navrh(db_session, version.id)
     hole = _audit_hole(["Špecifikácia neuvádza, ako sa počíta DPH pri reverse-charge."])
-    _stub_turns(monkeypatch, design_block=_design_done(), audit_block=hole)
+    _stub_turns(monkeypatch, design_block=_design_done(), audit_block=hole, consult_block=_consult_block())
     _stub_plan_passes(monkeypatch)
     state = await orchestrator.run_dispatch(db_session, version.id)
-    # the dial would auto-continue on a clean review; the hole OVERRIDES it → stop for the Manažér
+    # CR-V2-041: the dial would auto-continue on a clean review; the hole OVERRIDES it → the AI Agent turns
+    # the findings into an interactive consultation (blocked/decision_needed), NEVER auto-continues.
     assert state.current_stage == "navrh", "a hole must NOT auto-continue into Programovanie"
-    assert state.status == "awaiting_manazer"
-    assert "Auditor našiel medzeru" in state.next_action
+    assert state.status == "blocked" and state.block_reason == "decision_needed"
+    assert "rozhodni" in state.next_action.lower()  # consultation in progress
     # the FAIL verdict landed with VALID v2 tokens (the live CHECK accepted it)
     verdicts = [m for m in _msgs(db_session, version.id) if m.kind == "verdict"]
     assert verdicts[-1].author == "auditor" and verdicts[-1].recipient == "manazer"
@@ -265,19 +308,29 @@ async def test_upfront_hole_escalates_and_overrides_plna_dial(db_session, monkey
     # the escalation notification (system→manazer) was recorded — surfaces on the board / Telegram
     notes = [m for m in _msgs(db_session, version.id) if m.payload and m.payload.get("upfront_review_hole")]
     assert notes and notes[-1].author == "system" and notes[-1].recipient == "manazer"
+    # the AI Agent's consultation (decision queue) was recorded for the Manažér's Decision Cards
+    consults = [m for m in _msgs(db_session, version.id) if m.kind == "consultation"]
+    assert consults and consults[-1].payload["consultation"]["decisions"]
     # plan was still materialized (the review runs AFTER the plan folds in)
     assert _epics(db_session, version.id)
 
 
 async def test_upfront_hole_stops_under_stopping_dial_too(db_session, monkeypatch):
-    # Even when the dial would stop anyway, a hole produces the HOLE next_action (clarify), not the plain one.
+    # CR-V2-041: even when the dial would stop anyway, a hole opens the interactive consultation
+    # (blocked/decision_needed), not a passive awaiting_manazer stop with raw findings.
     version, _ = _make_version(db_session, project_dial="po_kazdej_faze")
     _seed_navrh(db_session, version.id)
-    _stub_turns(monkeypatch, design_block=_design_done(), audit_block=_audit_hole(["Chýba auth-mode."]))
+    _stub_turns(
+        monkeypatch,
+        design_block=_design_done(),
+        audit_block=_audit_hole(["Chýba auth-mode."]),
+        consult_block=_consult_block(),
+    )
     _stub_plan_passes(monkeypatch)
     state = await orchestrator.run_dispatch(db_session, version.id)
-    assert state.current_stage == "navrh" and state.status == "awaiting_manazer"
-    assert "Auditor našiel medzeru" in state.next_action
+    assert state.current_stage == "navrh"
+    assert state.status == "blocked" and state.block_reason == "decision_needed"
+    assert "rozhodni" in state.next_action.lower()
 
 
 async def test_upfront_absent_verdict_is_treated_as_hole_fail_closed(db_session, monkeypatch):

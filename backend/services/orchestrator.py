@@ -412,6 +412,9 @@ _ACTIONS = frozenset(
         "ask",
         "answer",
         "pause",
+        # CR-V2-041: the Manažér picks an option for ONE consultation decision (Decision Card). Like
+        # ``answer`` it threads input + does not advance the phase; the LAST decide re-dispatches the apply.
+        "decide",
     }
 )
 # Actions that act on / advance past an agent's output — only valid once the agent has SETTLED
@@ -468,6 +471,13 @@ def determine_available_actions(state: PipelineState) -> set[str]:
         # A paused Programovanie loop: only the resume verb (CR-V2-009 collapses end_build away — a
         # paused build resumes via ``pokracovat`` or the Manažér steers it with ``uprav``).
         return {"pokracovat", "uprav"}
+
+    # CR-V2-041: a multi-decision CONSULTATION blocks with block_reason="decision_needed" — the Manažér
+    # resolves it via Decision Cards (``decide``), one decision at a time, NEVER the raw free-text
+    # answer/uprav box (a non-expert must not face a blank box). ``ask`` stays so the Manažér can probe a
+    # card before deciding; the card owns the action.
+    if status == "blocked" and state.block_reason == "decision_needed":
+        return {"decide", "ask"}
 
     # Settled (awaiting_manazer / blocked): ask + uprav are universally valid — ``uprav`` doubles as the
     # error-block "Skús znova" / re-work recovery at any phase, and ``ask`` opens a direct AI-Agent
@@ -947,6 +957,136 @@ def _auditor_upfront_directive(db: Session, version_id: uuid.UUID) -> str:
         "eskaluje Manažérovi — build sa zastaví na schvaľovacom bode po Návrhu.\n"
         "Ukonči odpoveď štruktúrovaným stavovým výstupom (F-007-orchestration-cockpit.md §5.3)."
     )
+
+
+def _consultation_directive(
+    db: Session, version_id: uuid.UUID, *, source: str, findings: list[str], proposed_fix: Optional[str]
+) -> str:
+    """CR-V2-041: brief the AI Agent to TRANSLATE a problem into a Manažér CONSULTATION (the production
+    "Dedo on the screen"). It must NOT fix anything yet — it emits ONE ``kind=consultation`` block whose
+    ``decisions[]`` the Manažér resolves one-at-a-time by click. First consumer: the Auditor's upfront
+    review found holes (``source="auditor_upfront"``); generalizes to any mid-build blocker later.
+
+    The AI Agent and the Auditor run in SEPARATE ``claude`` sessions, so the Auditor's findings are passed
+    in VERBATIM here (the AI Agent cannot read the Auditor's thread)."""
+    del db, version_id  # signature parity with the other directive builders; findings are passed in directly
+    findings_block = "\n".join(f"  - {f}" for f in findings) or "  (žiadne explicitné body)"
+    fix_block = (
+        f"\nNavrhovaný rozsah opravy (od Auditora, len ako kontext, NEvykonávaj ho): {proposed_fix}"
+        if proposed_fix
+        else ""
+    )
+    return (
+        "KONZULTÁCIA S MANAŽÉROM. Manažér je NEŠPECIALISTA — píš ĽUDSKOU rečou, bez technického žargónu.\n"
+        "Pri nezávislej previerke sa našli tieto body, ktoré treba ROZHODNÚŤ pred pokračovaním:\n"
+        f"{findings_block}{fix_block}\n\n"
+        "NEOPRAVUJ zatiaľ NIČ. Vráť JEDEN `kind=consultation` blok:\n"
+        "- `consultation.intro`: 1-2 vety po ľudsky — čo a prečo treba rozhodnúť.\n"
+        "- `consultation.decisions[]`: KAŽDÝ bod ako VLASTNÉ rozhodnutie (nezlučuj a nevynechaj žiadny). "
+        "Každé rozhodnutie:\n"
+        "  • `key` — krátky stabilný identifikátor (napr. 'telegram', 'topologia').\n"
+        "  • `question` — problém po ľudsky, BEZ žargónu (nie 'asyncpg/DDL/lockfile' — vysvetli podstatu "
+        "tak, aby ju pochopil nešpecialista) a JASNE čo sa rozhoduje.\n"
+        "  • `explanation` — 1 veta prečo to záleží.\n"
+        "  • `options` — 2-3 možnosti, každá `label` + `detail` (krátky dôsledok voľby).\n"
+        "  • práve JEDNU možnosť označ `recommended: true` a daj jednoriadkové `rationale` (prečo ju odporúčaš).\n"
+        "  • `allow_free_text: true` IBA ak sa bod nedá rozumne rozložiť na možnosti.\n"
+        f"- `consultation.source`: '{source}'.\n"
+        "`summary` daj krátke, po ľudsky. Ukonči štruktúrovaným stavovým výstupom."
+    )
+
+
+async def _consult_fallback(
+    db: Session,
+    state: PipelineState,
+    *,
+    note: str,
+    on_message: Optional[MessageCallback],
+    failure: Optional[ParseFailure] = None,
+) -> PipelineState:
+    """CR-V2-041 fail-open: when a consultation can't be produced (parse failure / non-consultation output /
+    re-consult cap), fall back to a plain ``awaiting_manazer`` stop (today's behaviour) so a flaky turn can
+    never wedge the build — the Manažér posúdi návrh klasicky (Schváliť / Uprav)."""
+    msg = _record_message(
+        db,
+        version_id=state.version_id,
+        stage=state.current_stage,
+        author="system",
+        recipient="manazer",
+        kind="notification",
+        content=note,
+        payload=(_failure_metrics_payload(failure) if failure is not None else None) or {"phase": state.current_stage},
+    )
+    if on_message is not None:
+        await on_message(msg)
+    state.status = "awaiting_manazer"
+    state.block_reason = None
+    state.next_action = note
+    db.flush()
+    return state
+
+
+async def _settle_for_consultation(
+    db: Session,
+    state: PipelineState,
+    *,
+    source: str,
+    verdict: Optional[PipelineStatusBlock] = None,
+    on_event: Optional[claude_agent.EventCallback] = None,
+    on_message: Optional[MessageCallback] = None,
+) -> PipelineState:
+    """CR-V2-041: turn a problem (Auditor findings, later any blocker) into an interactive Manažér
+    consultation. Dispatches ONE AI-Agent turn to translate it into a ``kind=consultation`` (decisions[]
+    the Manažér answers one-at-a-time). On success settles ``blocked``/``decision_needed``; on parse failure,
+    a non-consultation output, or the re-consult cap, FALLS BACK to a plain ``awaiting_manazer`` stop. Runs
+    inside the dispatch path (sole-mutator holds)."""
+    findings = list(verdict.findings) if verdict is not None else []
+    proposed_fix = verdict.proposed_fix if verdict is not None else None
+
+    # Re-consult cap (mirror AUDITOR_LOOP_MAX): bound verdict→consult→re-verdict so it can't loop forever.
+    consult_count = db.execute(
+        select(func.count())
+        .select_from(PipelineMessage)
+        .where(PipelineMessage.version_id == state.version_id, PipelineMessage.kind == "consultation")
+    ).scalar_one()
+    if consult_count >= AUDITOR_LOOP_MAX:
+        return await _consult_fallback(
+            db,
+            state,
+            note=(
+                f"Konzultácia sa zopakovala {AUDITOR_LOOP_MAX}× — eskalované Manažérovi. "
+                "Posúď návrh klasicky (Schváliť / Uprav)."
+            ),
+            on_message=on_message,
+        )
+
+    result = await invoke_agent_with_parse_retry(
+        db,
+        version_id=state.version_id,
+        role=AI_AGENT_ROLE,
+        stage=state.current_stage,
+        prompt=_consultation_directive(
+            db, state.version_id, source=source, findings=findings, proposed_fix=proposed_fix
+        ),
+        on_event=on_event,
+        recipient="manazer",
+        on_message=on_message,
+    )
+    if isinstance(result, ParseFailure) or result.kind != "consultation" or result.consultation is None:
+        return await _consult_fallback(
+            db,
+            state,
+            note="Konzultáciu sa nepodarilo pripraviť — posúď návrh klasicky (Schváliť / Uprav).",
+            on_message=on_message,
+            failure=result if isinstance(result, ParseFailure) else None,
+        )
+    n = len(result.consultation.decisions)
+    state.status = "blocked"
+    state.block_reason = "decision_needed"
+    word = "rozhodnutie" if n == 1 else ("rozhodnutia" if 2 <= n <= 4 else "rozhodnutí")
+    state.next_action = f"Manažér: rozhodni 1/{n} ({n} {word}, konzultácia)."
+    db.flush()
+    return state
 
 
 def _verifikacia_directive(
@@ -1662,18 +1802,71 @@ def _write_task_plan(db: Session, state: PipelineState, block: PipelineStatusBlo
     return None
 
 
+def _latest_consultation(db: Session, version_id: uuid.UUID) -> Optional[dict[str, Any]]:
+    """CR-V2-041: the ``consultation`` payload (id / intro / source / decisions[]) of the LATEST
+    kind=consultation message, or ``None``. The decision queue + the recorded ``decide`` answers ARE the
+    consultation's whole state — the "current" decision is derived (first ``decision.key`` with no answer),
+    so there is no mutable cursor column to drift."""
+    row = db.execute(
+        select(PipelineMessage.payload)
+        .where(PipelineMessage.version_id == version_id, PipelineMessage.kind == "consultation")
+        .order_by(PipelineMessage.seq.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    c = row.get("consultation") if isinstance(row, dict) else None
+    return c if isinstance(c, dict) and c.get("decisions") else None
+
+
+def _consultation_answers(
+    db: Session, version_id: uuid.UUID, consultation_id: Optional[str]
+) -> dict[str, dict[str, Any]]:
+    """CR-V2-041: map ``decision.key`` → its recorded ``decide`` answer for ``consultation_id`` (the durable
+    kind=answer messages carrying ``payload.consultation_decision``). Scoped to the consultation id so a
+    re-consultation never mixes answers."""
+    rows = (
+        db.execute(
+            select(PipelineMessage.payload)
+            .where(PipelineMessage.version_id == version_id, PipelineMessage.kind == "answer")
+            .order_by(PipelineMessage.seq.asc())
+        )
+        .scalars()
+        .all()
+    )
+    out: dict[str, dict[str, Any]] = {}
+    for p in rows:
+        cd = p.get("consultation_decision") if isinstance(p, dict) else None
+        if isinstance(cd, dict) and cd.get("consultation_id") == consultation_id and cd.get("key"):
+            out[cd["key"]] = cd
+    return out
+
+
 def dispatch_directive(
     db: Session, version_id: uuid.UUID, action: str, payload: dict[str, Any], stage: str
 ) -> Optional[str]:
     """Resolve the re-dispatch prompt for an ``agent_working`` transition, else ``None`` (CR-V2-009).
 
     Single entry point for the route (CR-NS-018): payload-framed for ``uprav`` / ``ask`` / ``answer``
-    (delegates to :func:`directive_for_action`), ``None`` for a fresh-phase dispatch (``start`` /
-    ``approve_spec`` / ``schvalit`` / ``verdict`` / ``pokracovat``). The v1 ``apply_coordinator_recommendation``
-    DB-fetch + the Gate-E sub-flow relay branches are REMOVED — the Coordinator hub-and-spoke is retired
-    (design §2.2) and the 4-phase model has no Gate E (the Auditor's upfront review replaces it, CR-V2-013).
-    ``db`` / ``version_id`` are kept (route call signature) for forward use; currently unused here.
+    (delegates to :func:`directive_for_action`), the aggregated decision brief for the FINAL ``decide``
+    (CR-V2-041 — reads ALL captured decisions from the DB), ``None`` for a fresh-phase dispatch (``start`` /
+    ``approve_spec`` / ``schvalit`` / ``verdict`` / ``pokracovat``).
     """
+    if action == "decide":
+        # CR-V2-041: only the LAST decide re-dispatches (status went agent_working). APPLY = rework per ALL
+        # captured decisions; aggregate them from the DB here (directive_for_action has no DB to do this).
+        c = _latest_consultation(db, version_id)
+        if c is None:
+            return None
+        answers = _consultation_answers(db, version_id, c.get("id"))
+        lines = [
+            f"- {d.get('question', '')} → {a.get('label')}" + (f" (poznámka: {a['note']})" if a.get("note") else "")
+            for d in c.get("decisions", [])
+            if (a := answers.get(d.get("key"))) is not None
+        ]
+        return (
+            "Manažér rozhodol v konzultácii:\n"
+            + "\n".join(lines)
+            + "\nTeraz PREPRACUJ Špecifikáciu/Návrh podľa týchto rozhodnutí a uzavri fázu (gate_report)."
+        )
     del db, version_id  # route-call signature parity; the v1 DB-fetch relay paths are retired (CR-V2-009)
     return directive_for_action(action, payload, stage)
 
@@ -1944,6 +2137,7 @@ async def invoke_agent(
         "gate_report",
         "verdict",
         "notification",
+        "consultation",  # CR-V2-041: the AI Agent's decision queue (kept as its own kind, not downgraded)
     ):
         msg_kind = "gate_report"
     msg = _record_message(
@@ -1981,6 +2175,9 @@ async def invoke_agent(
             "findings": parsed.findings,
             "gap_found": getattr(parsed, "gap_found", None),
             "proposed_fix": parsed.proposed_fix,
+            # CR-V2-041: the consultation decision queue (kind=consultation) — the FE DecisionCardStack reads
+            # decisions[] from here; mode="json" for JSONB. None on every other block.
+            "consultation": parsed.consultation.model_dump(mode="json") if parsed.consultation is not None else None,
             # task_plan decomposition (F-007 §4/§5, CR-NS-020 CR-2; v2: folds into Návrh — CR-V2-011).
             # Persisted so the audit trail / TaskPlanPanel can show the plan and CR-3 can re-read the
             # cross-cutting rules from this gate_report payload.
@@ -3608,7 +3805,7 @@ async def _run_auditor_upfront_review(
     *,
     on_event: Optional[claude_agent.EventCallback] = None,
     on_message: Optional[MessageCallback] = None,
-) -> bool:
+) -> Optional[PipelineStatusBlock]:
     """The Auditor's UPFRONT spec/design review (CR-V2-013; AUD-1(a), AUD-5, NAVRH-4, AUTON-5) — replaces
     the Gate-E Customer function. Runs ONCE inside :func:`_run_navrh_round` after the design doc + task plan
     are persisted, before the post-Návrh dial-settle.
@@ -3665,30 +3862,32 @@ async def _run_auditor_upfront_review(
         )
         if on_message is not None:
             await on_message(msg)
-        return False  # no hole on record → the dial governs the stop normally
+        return None  # no hole on record → the dial governs the stop normally
     # A clean review with no hole → verdict True (PASS). A hole → verdict not True (fail-closed on the
     # finding: an absent/False verdict on a verdict turn is a hole, mirroring _verifikacia_passed). The
     # ``kind=verdict`` message was already recorded by invoke_agent with author=auditor / recipient=manazer.
     hole_found = review.kind == "verdict" and not review.verdict
-    if hole_found:
-        # AUD-4: a spec/design hole escalates to the Manažér — record the escalation note (system→manazer)
-        # so the board / Telegram surfaces it; the caller forces the post-Návrh stop regardless of the dial.
-        note = _record_message(
-            db,
-            version_id=state.version_id,
-            stage="navrh",
-            author="system",
-            recipient="manazer",
-            kind="notification",
-            content=(
-                "Auditor našiel medzeru v Špecifikácii/Návrhu (upfront previerka) — eskalované Manažérovi; "
-                "build sa zastaví na schvaľovacom bode po Návrhu na vyjasnenie."
-            ),
-            payload={"phase": "navrh", "upfront_review_hole": True},
-        )
-        if on_message is not None:
-            await on_message(note)
-    return hole_found
+    if not hole_found:
+        return None  # PASS → the dial governs the post-Návrh stop normally
+    # AUD-4: a spec/design hole escalates to the Manažér — record the escalation note (system→manazer) so the
+    # board / Telegram surfaces it; the caller (CR-V2-041) turns the verdict into an interactive consultation.
+    note = _record_message(
+        db,
+        version_id=state.version_id,
+        stage="navrh",
+        author="system",
+        recipient="manazer",
+        kind="notification",
+        content=(
+            "Auditor našiel medzeru v Špecifikácii/Návrhu (upfront previerka) — spúšťa sa konzultácia "
+            "s Manažérom (rozhodnutia po jednom)."
+        ),
+        payload={"phase": "navrh", "upfront_review_hole": True},
+    )
+    if on_message is not None:
+        await on_message(note)
+    # Return the verdict block (carries findings / proposed_fix) so the caller can drive the consultation.
+    return review
 
 
 async def _run_navrh_round(
@@ -3786,20 +3985,22 @@ async def _run_navrh_round(
     # regardless of the dial, so a hole can never auto-continue into Programovanie. A parse failure of the
     # review is non-blocking (visible + metered) — it must never wedge the build; the dial then governs the
     # stop as if the review were clean (the AI Agent's own questions + the Manažér still gate Programovanie).
-    hole_found = await _run_auditor_upfront_review(db, state, on_event=on_event, on_message=on_message)
+    review_verdict = await _run_auditor_upfront_review(db, state, on_event=on_event, on_message=on_message)
 
-    # 5. SHARED dial-settle (Milestone-C): auto-continue to Programovanie vs stop at the post-Návrh
-    # schvaľovací bod (where the Manažér reviews the design + plan + the AI Agent's clarification questions +
-    # the Auditor's upfront findings). A hole the Auditor found OVERRIDES the dial → always stop (AUD-4).
-    if not hole_found and _settle_phase_boundary(db, state):
+    # 5. CR-V2-041: a spec/design HOLE → turn the Auditor's verdict into an INTERACTIVE Manažér consultation
+    # (the AI Agent translates the findings into plain-language decision cards the Manažér answers one-at-a-
+    # time). This OVERRIDES the dial (AUD-4 — a hole always escalates). Otherwise the SHARED dial-settle
+    # governs: auto-continue to Programovanie vs stop at the post-Návrh schvaľovací bod (design + plan +
+    # the AI Agent's own clarification questions).
+    if review_verdict is not None:
+        return await _settle_for_consultation(
+            db, state, source="auditor_upfront", verdict=review_verdict, on_event=on_event, on_message=on_message
+        )
+    if _settle_phase_boundary(db, state):
         return state  # agent_working at Programovanie — the auto-chain loop continues the build
     if state.status != "done":
         state.status = "awaiting_manazer"
-        state.next_action = (
-            "Manažér: Auditor našiel medzeru v Špecifikácii/Návrhu — vyjasni a oprav, potom schváľ (Uprav / Schváliť)."
-            if hole_found
-            else "Manažér: posúdiť návrh + plán úloh (Schváliť / Uprav)."
-        )
+        state.next_action = "Manažér: posúdiť návrh + plán úloh (Schváliť / Uprav)."
         db.flush()
     return state
 
@@ -5262,6 +5463,59 @@ async def apply_action(
             content=str(text),
             payload={"phase": state.current_stage},
         )
+        _begin_dispatch(db, state)
+        return state
+
+    if action == "decide":
+        # CR-V2-041: the Manažér picks an option for ONE consultation decision (a Decision Card). Record it
+        # (durable kind=answer with payload.consultation_decision); if more decisions remain → RE-BLOCK
+        # decision_needed WITHOUT dispatching (pure DB — the route only dispatches on agent_working, so zero
+        # tokens per intermediate click); only the LAST decide re-dispatches the AI Agent to apply ALL the
+        # decisions (dispatch_directive aggregates them from the recorded answers).
+        if not (state.status == "blocked" and state.block_reason == "decision_needed"):
+            raise OrchestratorError("decide je platné len počas konzultácie (decision_needed)")
+        c = _latest_consultation(db, version_id)
+        if c is None:
+            raise OrchestratorError("Žiadna aktívna konzultácia.")
+        decision_key = payload.get("decision_key")
+        decision = next((d for d in c.get("decisions", []) if d.get("key") == decision_key), None)
+        if decision is None:
+            raise OrchestratorError(f"Neznáme rozhodnutie {decision_key!r}.")
+        option_id = payload.get("option_id")
+        free_text = str(payload.get("free_text", "")).strip() or None
+        if not option_id and not free_text:
+            raise OrchestratorError("decide vyžaduje option_id alebo free_text")
+        label = free_text or next(
+            (o.get("label") for o in decision.get("options", []) if o.get("id") == option_id), option_id
+        )
+        _record_message(
+            db,
+            version_id=version_id,
+            stage=state.current_stage,
+            author="manazer",
+            recipient=state.current_actor,
+            kind="answer",
+            content=f"{decision.get('question', '')} → {label}",
+            payload={
+                "phase": state.current_stage,
+                "consultation_decision": {
+                    "consultation_id": c.get("id"),
+                    "key": decision_key,
+                    "option_id": option_id,
+                    "free_text": free_text,
+                    "label": label,
+                    "note": (str(payload.get("note", "")).strip() or None),
+                },
+            },
+        )
+        keys = [d.get("key") for d in c.get("decisions", [])]
+        answered = _consultation_answers(db, version_id, c.get("id"))
+        if len(answered) < len(keys):
+            # more decisions remain → re-block, NO dispatch (status stays blocked → the route won't dispatch)
+            state.next_action = f"Manažér: rozhodni {len(answered) + 1}/{len(keys)} (konzultácia)."
+            db.flush()
+            return state
+        # all decided → APPLY: re-dispatch the AI Agent (dispatch_directive frames every captured decision)
         _begin_dispatch(db, state)
         return state
 

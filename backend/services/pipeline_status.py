@@ -71,7 +71,7 @@ STAGES = frozenset(
 #: Kinds an *agent* may emit in a status block (subset of pipeline_message.kind;
 #: directive/approval/return/notification are orchestrator/Manažér-authored). ``verdict`` is
 #: the Auditor's Verifikácia/upfront-review verdict (CR-V2-006 repurposes the findings shape).
-BLOCK_KINDS = frozenset({"question", "answer", "gate_report", "verdict", "done", "blocked"})
+BLOCK_KINDS = frozenset({"question", "answer", "gate_report", "verdict", "done", "blocked", "consultation"})
 #: ``awaiting`` targets (CR-V2-004: Director → Manažér). The agent either hands back to the
 #: operator (``manazer``) or signals it keeps the turn (``none``).
 _AWAITING = frozenset({"manazer", "none"})
@@ -181,6 +181,46 @@ TASK_PLAN_SKELETON_JSON_SCHEMA = TaskPlanSkeleton.model_json_schema()
 TASK_PLAN_FEAT_TASKS_JSON_SCHEMA = TaskPlanFeatTasks.model_json_schema()
 
 
+# ── Interactive consultation (CR-V2-041) ─────────────────────────────────────────────────────────
+# When a problem needs the Manažér (Auditor upfront findings; later any mid-build blocker), the AI Agent
+# does NOT dump a verdict — it emits a ``kind=consultation`` block: a queue of plain-language DECISIONS,
+# each with options + a recommendation, that the Manažér answers ONE-AT-A-TIME by click (the production
+# "Dedo on the screen"). See docs/architecture/interactive-consultation-design.md.
+
+
+class ConsultOption(BaseModel):
+    """One choice for a decision. ``recommended`` marks the AI Agent's single recommended pick."""
+
+    id: str
+    label: str
+    detail: str = ""
+    recommended: bool = False
+
+
+class ConsultDecision(BaseModel):
+    """One decision the Manažér resolves: a plain-language (non-expert) problem + 2-3 options + the
+    AI Agent's recommendation. ``key`` is the stable id the Manažér's answer is recorded against (the
+    consultation cursor — first decision with no recorded answer — derives from it)."""
+
+    key: str
+    question: str
+    explanation: str = ""
+    options: list[ConsultOption] = Field(min_length=2)
+    rationale: str = ""
+    allow_free_text: bool = False
+
+
+class ConsultationBlock(BaseModel):
+    """A queue of decisions surfaced to the Manažér (CR-V2-041). ``source`` labels provenance
+    (``auditor_upfront`` | ``verifikacia_fail`` | ``build_blocker`` | ``agent_ambiguity``) — for the audit
+    trail + the apply-directive wording; the Manažér's experience is identical regardless."""
+
+    id: str
+    intro: str = ""
+    source: str = "auditor_upfront"
+    decisions: list[ConsultDecision] = Field(min_length=1)
+
+
 class PipelineStatusBlock(BaseModel):
     """Validated agent status block. ``extra='ignore'`` drops derived fields.
 
@@ -226,6 +266,10 @@ class PipelineStatusBlock(BaseModel):
     #: re-runs in the bounded fix↔re-verify loop (CR-V2-014). Never an edit by the Auditor itself
     #: (independence); ``None`` on a PASS verdict.
     proposed_fix: Optional[str] = None
+
+    #: CR-V2-041: a ``kind=consultation`` turn carries the AI Agent's decision queue here (plain-language
+    #: decisions + options + recommendation the Manažér answers one-at-a-time). ``None`` on every other block.
+    consultation: Optional[ConsultationBlock] = None
 
 
 @dataclass(frozen=True)
@@ -314,6 +358,19 @@ def _validate_block(data: dict) -> ParseResult:
     # a TaskPlanSkeleton/TaskPlanFeatTasks object, not a PipelineStatusBlock.)
     if block.stage == "navrh" and block.kind == "gate_report" and (block.plan is None or not block.plan.epics):
         return ParseFailure("navrh gate_report requires a non-empty 'plan' (EPIC→FEAT→TASK)")
+    # CR-V2-041: a consultation turn must carry the decision queue, and each decision must have EXACTLY
+    # one recommended option (so the card pre-highlights a default). decisions≥1 / options≥2 are enforced by
+    # the models; this adds the presence + "exactly one recommended" cross-field check. (consultation is NOT
+    # in _QUESTION_KINDS, so the question-required rule above never fires for it — it carries no 'question'.)
+    if block.kind == "consultation":
+        if block.consultation is None or not block.consultation.decisions:
+            return ParseFailure("kind='consultation' requires a non-empty 'consultation.decisions'")
+        for d in block.consultation.decisions:
+            n_rec = sum(1 for o in d.options if o.recommended)
+            if n_rec != 1:
+                return ParseFailure(
+                    f"consultation decision {d.key!r} must have exactly ONE recommended option (has {n_rec})"
+                )
 
     return block
 

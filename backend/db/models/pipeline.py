@@ -69,7 +69,10 @@ STATUS_VALUES = ("agent_working", "awaiting_manazer", "blocked", "paused", "done
 # after retries; ``system_error`` = an engine-side step failed (UAT deploy / release verify / task-plan
 # write / gate mechanical). SET deterministically at each block site (orchestrator), CLEARED when the
 # status leaves ``blocked`` (the set-listener below). NULL whenever the pipeline isn't blocked.
-BLOCK_REASON_VALUES = ("agent_question", "agent_error", "system_error", "parse_exhaustion")
+# CR-V2-041: ``decision_needed`` — the build is blocked on a multi-decision CONSULTATION (the AI Agent
+# translated a problem/Auditor-findings into a queue of plain-language decisions the Manažér answers by
+# click). Distinct from ``agent_question`` (a single free-text Q) so the FE renders Decision Cards.
+BLOCK_REASON_VALUES = ("agent_question", "decision_needed", "agent_error", "system_error", "parse_exhaustion")
 MESSAGE_KIND_VALUES = (
     "kickoff",
     "question",
@@ -80,6 +83,9 @@ MESSAGE_KIND_VALUES = (
     "return",
     "verdict",
     "notification",
+    # CR-V2-041: a CONSULTATION — the AI Agent's ai_agent→manazer queue of decisions (each plain-language,
+    # with options + a recommendation) the Manažér resolves one-at-a-time; payload carries the decisions[].
+    "consultation",
 )
 MESSAGE_STATUS_VALUES = ("pending", "delivered", "answered", "archived")
 

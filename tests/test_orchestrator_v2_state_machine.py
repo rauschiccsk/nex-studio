@@ -469,7 +469,8 @@ def test_apply_action_is_sole_mutator_grep_guard():
     """Belt-and-suspenders: the sole-mutator invariant is also grep-asserted in CI; here we assert the
     state-machine surface (the action verbs) matches the design vocabulary so a drift is caught early."""
     assert orchestrator._ACTIONS == frozenset(
-        {"start", "approve_spec", "schvalit", "uprav", "pokracovat", "verdict", "ask", "answer", "pause"}
+        # CR-V2-041: + "decide" (the Manažér picks a consultation Decision Card option).
+        {"start", "approve_spec", "schvalit", "uprav", "pokracovat", "verdict", "ask", "answer", "pause", "decide"}
     )
     # apply_coordinator_recommendation is REMOVED.
     assert "apply_coordinator_recommendation" not in orchestrator._ACTIONS
