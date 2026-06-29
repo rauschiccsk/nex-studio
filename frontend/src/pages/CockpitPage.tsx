@@ -12,6 +12,7 @@ import { usePipelineWs } from "../hooks/usePipelineWs";
 import { postPipelineActionApi, type PipelineActionName } from "../services/api/pipeline";
 import PipelineRail, { deriveActiveAgent, WhosUp } from "../components/cockpit/PipelineRail";
 import ExchangePanel from "../components/cockpit/ExchangePanel";
+import DecisionCardStack from "../components/cockpit/DecisionCardStack";
 import PipelineActionBar from "../components/cockpit/PipelineActionBar";
 import DebugTerminalDrawer from "../components/cockpit/DebugTerminalDrawer";
 import TaskPlanPanel from "../components/cockpit/TaskPlanPanel";
@@ -147,6 +148,17 @@ export default function CockpitPage() {
             agentSessions={board.agent_sessions}
             currentTask={board.current_task}
           />
+
+          {/* CR-V2-041: the interactive consultation — pinned ABOVE the phase content when the build is
+              blocked on a decision. The Decision Cards ARE the action surface (one decision at a time);
+              the buttons below are suppressed to {decide, ask} by the backend's available_actions. */}
+          {board.state?.block_reason === "decision_needed" && (
+            <DecisionCardStack
+              messages={board.recent_messages}
+              onDecide={(p) => handleAction("decide", p as unknown as Record<string, unknown>)}
+              inFlight={inFlight}
+            />
+          )}
 
           {/* The viewed phase's permanent content */}
           <div className="flex min-h-0 flex-1 flex-col">

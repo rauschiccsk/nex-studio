@@ -103,8 +103,11 @@ export function ExchangePanel({ board, viewedPhase, activity, taskPlanSlot }: Pr
 
       {/* CR-V2-039: the independent Auditor's UPFRONT verdict + findings, pinned above the design doc so
           the Manažér can't approve a holed spec without seeing them. Renders only when an upfront verdict
-          exists (durable record); no-op otherwise. */}
-      {viewedPhase === "navrh" && <AuditorUpfrontReview messages={recent_messages} />}
+          exists (durable record). CR-V2-041: SUPPRESSED during an active consultation (decision_needed) —
+          the DecisionCardStack is then the action surface (the findings are translated into cards). */}
+      {viewedPhase === "navrh" && state?.block_reason !== "decision_needed" && (
+        <AuditorUpfrontReview messages={recent_messages} />
+      )}
 
       {programovanieSplit ? (
         // Coding log LEFT + the task plan RIGHT (split view).

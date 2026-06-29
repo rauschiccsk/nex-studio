@@ -1045,20 +1045,24 @@ export interface paths {
          * Delete Project
          * @description Hard-delete a project by primary key.
          *
+         *     Guards (CR-V2-027): **admin only** (role ``ri`` via ``require_ri_role``; others get 403), and
+         *     **only a project that has never had a successful PROD deploy** — once a project graduates to PROD it
+         *     can only be archived (409 otherwise). Archiving is the preferred soft-disable path generally — callers
+         *     should prefer ``PATCH`` with ``status='archived'`` and reserve delete for early/throwaway projects.
+         *
          *     Every inbound FK to ``projects.id`` uses ``ON DELETE CASCADE``, so
          *     dependent rows (modules, specifications, design documents,
          *     KB docs, architect sessions, epics, bugs, delegations, migration
-         *     tables, report configs) are removed automatically. Archiving is the
-         *     preferred soft-disable path — callers should prefer ``PATCH`` with
-         *     ``status='archived'`` and reserve delete for test fixtures / admin
-         *     tooling.
+         *     tables, report configs) are removed automatically.
          *
          *     Side effects on success:
          *
+         *     * The on-disk project workspace ``{source_path}`` (= ``/opt/projects/{slug}``, incl. the per-project
+         *       ``MEMORY.md``) is removed so the slug can be cleanly re-created (best-effort, guarded to a path
+         *       strictly under PROJECTS_ROOT).
          *     * The KB folder ``{knowledge_base_path}/projects/{slug}/`` (any
          *       project-scoped KB docs) is removed so a deleted project leaves no
-         *       orphaned KB tree. (The per-project ``MEMORY.md`` lives in the
-         *       project workspace, not the KB, and goes with the workspace.)
+         *       orphaned KB tree.
          *     * If ``delete_github=true`` is passed, the backing GitHub
          *       repository is deleted too. Off by default — the DB row and KB
          *       folder go, but the repo stays in case the caller wants to
@@ -3341,7 +3345,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "kickoff" | "question" | "answer" | "gate_report" | "directive" | "approval" | "return" | "verdict" | "notification";
+            kind: "kickoff" | "question" | "answer" | "gate_report" | "directive" | "approval" | "return" | "verdict" | "notification" | "consultation";
             /** Payload */
             payload?: {
                 [key: string]: unknown;
@@ -3392,7 +3396,7 @@ export interface components {
          */
         PipelineStateRead: {
             /** Block Reason */
-            block_reason?: ("agent_question" | "agent_error" | "system_error" | "parse_exhaustion") | null;
+            block_reason?: ("agent_question" | "decision_needed" | "agent_error" | "system_error" | "parse_exhaustion") | null;
             /**
              * Created At
              * Format: date-time
@@ -3725,6 +3729,11 @@ export interface components {
             frontend_port?: number | null;
             /** Guardian Enabled */
             guardian_enabled: boolean;
+            /**
+             * Has Prod Deploy
+             * @default false
+             */
+            has_prod_deploy: boolean;
             /**
              * Id
              * Format: uuid
@@ -4245,16 +4254,20 @@ export interface components {
             agent_role: "ai_agent" | "auditor";
             /** Effort */
             effort?: ("low" | "medium" | "high" | "xhigh" | "max") | null;
+            /** Helper Model */
+            helper_model?: ("claude-opus-4-8" | "claude-sonnet-4-6" | "claude-haiku-4-5-20251001") | null;
             /** Model */
             model?: ("claude-opus-4-8" | "claude-sonnet-4-6" | "claude-haiku-4-5-20251001") | null;
         };
         /**
          * UserAgentSettingUpsert
-         * @description PUT body — model and/or effort for a role (either may be unset = no flag).
+         * @description PUT body — model and/or effort (+ AI Agent helper_model) for a role (any may be unset = no flag).
          */
         UserAgentSettingUpsert: {
             /** Effort */
             effort?: ("low" | "medium" | "high" | "xhigh" | "max") | null;
+            /** Helper Model */
+            helper_model?: ("claude-opus-4-8" | "claude-sonnet-4-6" | "claude-haiku-4-5-20251001") | null;
             /** Model */
             model?: ("claude-opus-4-8" | "claude-sonnet-4-6" | "claude-haiku-4-5-20251001") | null;
         };

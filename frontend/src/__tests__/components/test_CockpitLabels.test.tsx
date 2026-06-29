@@ -50,7 +50,14 @@ describe("Vývoj board Slovak phase labels", () => {
   });
 
   it("R4 (D1/D2): every block_reason maps to a distinct Slovak phrase", () => {
-    const reasons: BlockReason[] = ["agent_question", "agent_error", "system_error", "parse_exhaustion"];
+    // CR-V2-041: + "decision_needed" (an interactive consultation).
+    const reasons: BlockReason[] = [
+      "agent_question",
+      "decision_needed",
+      "agent_error",
+      "system_error",
+      "parse_exhaustion",
+    ];
     for (const r of reasons) expect(BLOCK_REASON_LABELS[r]).toBeTruthy();
     expect(BLOCK_REASON_LABELS.agent_question).toBe("Agent sa pýta");
     expect(BLOCK_REASON_LABELS.agent_error).toBe("Agent zlyhal");

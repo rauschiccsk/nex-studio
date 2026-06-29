@@ -101,6 +101,7 @@ export const ROLE_LABELS: Record<PipelineParticipant, string> = {
 // distinguishes an agent QUESTION from an agent ERROR from a SYSTEM error from a parse failure at a glance.
 export const BLOCK_REASON_LABELS: Record<BlockReason, string> = {
   agent_question: "Agent sa pýta",
+  decision_needed: "Treba tvoje rozhodnutie", // CR-V2-041: an interactive consultation (Decision Cards)
   agent_error: "Agent zlyhal",
   system_error: "Systémová chyba",
   parse_exhaustion: "Chyba spracovania výstupu",

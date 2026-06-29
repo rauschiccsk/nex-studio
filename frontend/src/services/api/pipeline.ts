@@ -112,7 +112,8 @@ export type PipelineActionName =
   | "verdict" // the Auditor's Verifikácia verdict (PASS / FAIL)
   | "ask" // open a direct AI-Agent consult
   | "answer" // answer an agent QUESTION on a blocked state
-  | "pause"; // cooperative pause of the Programovanie loop
+  | "pause" // cooperative pause of the Programovanie loop
+  | "decide"; // CR-V2-041: pick one consultation Decision Card option (decision_needed)
 
 export interface PipelineActionRequest {
   action: PipelineActionName;
