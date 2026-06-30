@@ -22,6 +22,14 @@ const _MAX_ACTIVITY = 50;
 // CR-V2-018: an empty helper feed (count 0) ⇒ the Helpers panel hides.
 const _EMPTY_HELPERS: HelpersFeed = { stage: "priprava", count: 0, line: "", helpers: [] };
 
+// Live-activity survives a route change (2026-06-30 fix). The agent_activity stream is ephemeral — the WS
+// never replays it on (re)connect — so when the Manažér leaves Vývoj (e.g. → Metriky) the CockpitPage
+// unmounts, the hook's `activity` state is destroyed, and on return it remounts empty → the feed flashed
+// "Agent štartuje…" and the streamed lines were lost. This module-level, per-version cache lets a remount
+// restore the buffer; it is kept in lock-step with `activity` and cleared (→ []) whenever a state change
+// ends the run (so a settled run never shows stale activity).
+const _activityCache = new Map<string, ActivityLine[]>();
+
 export interface UsePipelineWs {
   board: PipelineBoard | null;
   connected: boolean;
@@ -49,7 +57,9 @@ export function usePipelineWs(versionId: string | null): UsePipelineWs {
   const [board, setBoard] = useState<PipelineBoard | null>(null);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activity, setActivity] = useState<ActivityLine[]>([]);
+  // Restore the live-activity buffer on (re)mount so navigating away from Vývoj and back does not lose it
+  // (2026-06-30 fix). The initializer reads the per-version cache; a new run / settle clears it (sync effect).
+  const [activity, setActivity] = useState<ActivityLine[]>(() => (versionId ? (_activityCache.get(versionId) ?? []) : []));
   const [helpers, setHelpers] = useState<HelpersFeed>(_EMPTY_HELPERS);
   const [writeRejected, setWriteRejected] = useState<string | null>(null);
   const [reconnecting, setReconnecting] = useState(false);
@@ -231,6 +241,13 @@ export function usePipelineWs(versionId: string | null): UsePipelineWs {
       }
     }
   }, [isAway]);
+
+  // Keep the per-version activity cache in lock-step with `activity` (2026-06-30 fix) — so a remount after a
+  // route change restores the buffer (see _activityCache). A state change that resets `activity` to [] also
+  // clears the cache here, so a settled run never restores stale activity.
+  useEffect(() => {
+    if (versionId) _activityCache.set(versionId, activity);
+  }, [versionId, activity]);
 
   const replaceBoard = useCallback((b: PipelineBoard) => setBoard(b), []);
   const clearWriteRejected = useCallback(() => setWriteRejected(null), []);

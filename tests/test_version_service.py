@@ -580,3 +580,46 @@ class TestServiceCommitContract:
         # ``in_transaction()`` must be True — commit would clear it.
         assert db_session.in_transaction()
         assert service.get_by_id(db_session, created.id).id == created.id
+
+
+# ---------------------------------------------------------------------------
+# Zadanie read/write (the version-page editor's source of truth)
+# ---------------------------------------------------------------------------
+
+
+class TestZadanie:
+    """read_zadanie ↔ write_zadanie round-trip — the editor loads from the SAVED FILE (source of truth),
+    NOT version.description (2026-06-30 fix: description was never written → empty editor on re-open)."""
+
+    def test_read_empty_before_written(self, db_session, monkeypatch, tmp_path):
+        user = _make_user(db_session)
+        project = _make_project(db_session, user=user)
+        version = service.create(db_session, project.id, _payload("0.1.0"), user.id)
+        monkeypatch.setattr(service, "_PROJECTS_ROOT", tmp_path)
+        assert service.read_zadanie(db_session, version.id) == ""  # not created yet → empty, never crashes
+
+    def test_write_then_read_round_trips(self, db_session, monkeypatch, tmp_path):
+        user = _make_user(db_session)
+        project = _make_project(db_session, user=user)
+        version = service.create(db_session, project.id, _payload("0.1.0"), user.id)
+        monkeypatch.setattr(service, "_PROJECTS_ROOT", tmp_path)
+        service.write_zadanie(db_session, version.id, "Zadanie: postav appku X.")
+        assert service.read_zadanie(db_session, version.id) == "Zadanie: postav appku X."
+
+    def test_read_reflects_a_direct_file_edit(self, db_session, monkeypatch, tmp_path):
+        # The Director's case: the Zadanie was edited DIRECTLY on disk (an appended CSV-export spec). Because
+        # the editor loads from the file, that edit IS reflected — loading from version.description would miss it.
+        user = _make_user(db_session)
+        project = _make_project(db_session, user=user)
+        version = service.create(db_session, project.id, _payload("0.1.0"), user.id)
+        monkeypatch.setattr(service, "_PROJECTS_ROOT", tmp_path)
+        service.write_zadanie(db_session, version.id, "pôvodné zadanie")
+        f = tmp_path / project.slug / "docs/specs/versions/v0.1.0/customer-requirements.md"
+        f.write_text(f.read_text(encoding="utf-8") + "\n\nCSV-Export-Specifikacia\n…", encoding="utf-8")
+        content = service.read_zadanie(db_session, version.id)
+        assert "pôvodné zadanie" in content and "CSV-Export-Specifikacia" in content
+
+    def test_read_missing_version_raises(self, db_session, monkeypatch, tmp_path):
+        monkeypatch.setattr(service, "_PROJECTS_ROOT", tmp_path)
+        with pytest.raises(ValueError):
+            service.read_zadanie(db_session, uuid.uuid4())

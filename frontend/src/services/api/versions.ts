@@ -52,6 +52,14 @@ export function writeZadanie(
   );
 }
 
+/**
+ * Read a version's saved Zadanie (customer-requirements.md content, "" if not yet created). The editor loads
+ * from HERE — the saved file is the source of truth, NOT version.description (2026-06-30 fix).
+ */
+export function readZadanie(versionId: string): Promise<{ content: string }> {
+  return api.get<{ content: string }>(`/versions/${versionId}/zadanie`);
+}
+
 /** Partially update a version's mutable fields. */
 export function updateVersion(
   id: string,

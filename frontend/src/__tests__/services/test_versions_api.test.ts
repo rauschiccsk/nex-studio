@@ -13,6 +13,7 @@ import {
   createVersion,
   updateVersion,
   releaseVersion,
+  readZadanie,
 } from "@/services/api/versions";
 import type {
   Version,
@@ -104,6 +105,20 @@ describe("getVersion", () => {
     expect(url).toContain("/api/v1/versions/ver-1");
     expect(init.method).toBe("GET");
     expect(result).toEqual(version);
+  });
+});
+
+describe("readZadanie", () => {
+  it("sends GET /versions/{id}/zadanie and returns the saved file content", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ content: "Zadanie: postav X." }));
+
+    const result = await readZadanie("ver-1");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/api/v1/versions/ver-1/zadanie");
+    expect(init.method).toBe("GET");
+    expect(result).toEqual({ content: "Zadanie: postav X." });
   });
 });
 

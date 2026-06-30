@@ -379,6 +379,31 @@ def write_zadanie(
     return _ZadanieWriteResponse(relative_path=rel, status="saved")
 
 
+class _ZadanieReadResponse(BaseModel):
+    """Response for ``GET /versions/{version_id}/zadanie``."""
+
+    content: str
+
+
+@router.get("/versions/{version_id}/zadanie", response_model=_ZadanieReadResponse)
+def read_zadanie(
+    version_id: UUID,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_user),
+) -> _ZadanieReadResponse:
+    """Return a version's saved Zadanie — the ``customer-requirements.md`` content (``""`` if not yet created).
+
+    The version-page editor loads FROM HERE: the saved file is the source of truth, NOT ``Version.description``
+    (2026-06-30 fix — loading from ``description`` showed an empty editor on re-open even though the Zadanie was
+    saved, and never reflected a Zadanie edited directly on disk). **404** — the version/project does not exist.
+    """
+    try:
+        content = version_service.read_zadanie(db, version_id)
+    except ValueError as exc:
+        raise _map_value_error(exc) from exc
+    return _ZadanieReadResponse(content=content)
+
+
 @router.post("/versions/{version_id}/reset-tasks", status_code=status.HTTP_200_OK)
 def reset_tasks(
     version_id: UUID,

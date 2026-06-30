@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { listProjectsApi } from "@/services/api/projects";
-import { getVersion, writeZadanie } from "@/services/api/versions";
+import { getVersion, writeZadanie, readZadanie } from "@/services/api/versions";
 import { postPipelineActionApi } from "@/services/api/pipeline";
 import type { ProjectRead } from "@/types";
 import type { Version } from "@/types/version";
@@ -49,13 +49,16 @@ export default function VersionDetailPage() {
     Promise.all([
       listProjectsApi({ limit: 100 }).then((res) => res.items.find((p) => p.slug === slug) ?? null),
       getVersion(versionId),
+      // Load the Zadanie from the SAVED FILE (source of truth), not version.description (2026-06-30 fix):
+      // description was never written, so the editor showed empty on re-open + missed a directly-edited file.
+      readZadanie(versionId).catch(() => ({ content: "" })),
     ])
-      .then(([proj, ver]) => {
+      .then(([proj, ver, zad]) => {
         if (cancelled) return;
         if (!proj) { setError("Projekt nebol nájdený."); return; }
         setProject(proj);
         setVersion(ver);
-        setZadanie(ver.description ?? "");
+        setZadanie(zad.content ?? "");
       })
       .catch(() => { if (!cancelled) setError("Nepodarilo sa načítať dáta."); })
       .finally(() => { if (!cancelled) setLoading(false); });

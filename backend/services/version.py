@@ -281,6 +281,36 @@ def write_zadanie(db: Session, version_id: UUID, content: str) -> str:
     return rel_path
 
 
+def read_zadanie(db: Session, version_id: UUID) -> str:
+    """Read a version's saved **Zadanie** from ``customer-requirements.md`` — the SAME file
+    :func:`write_zadanie` writes and Príprava reads (the source of truth). Returns ``""`` when it has not
+    been created yet.
+
+    The version-page editor must load FROM THIS FILE, not from ``Version.description`` (2026-06-30 fix): the
+    Zadanie is persisted only to the file, so loading from ``description`` showed an empty editor on re-open
+    even though the Zadanie was saved — and a Zadanie edited directly on disk (e.g. an appended CSV-export
+    spec) would never appear. Path is computed identically to :func:`write_zadanie` (must never diverge).
+
+    Raises:
+        ValueError: the version (or its project) does not exist (the router maps this to HTTP 404)."""
+    row = db.execute(
+        select(Version.version_number, Project.slug)
+        .join(Project, Project.id == Version.project_id)
+        .where(Version.id == version_id)
+    ).first()
+    if row is None:
+        raise ValueError(f"Version {version_id} not found")
+    version_number, slug = row
+    rel_path = f"docs/specs/versions/v{version_number}/customer-requirements.md"
+    abs_path = (_PROJECTS_ROOT / slug / rel_path).resolve()
+    project_root = (_PROJECTS_ROOT / slug).resolve()
+    try:
+        abs_path.relative_to(project_root)
+    except ValueError as exc:
+        raise ValueError("Resolved Zadanie path escapes the project root") from exc
+    return abs_path.read_text(encoding="utf-8") if abs_path.is_file() else ""
+
+
 def update(db: Session, version_id: UUID, data: VersionUpdate) -> Version:
     """Partially update a version.
 
