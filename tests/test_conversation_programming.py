@@ -633,9 +633,16 @@ class TestSchvalitSuppressed:
         assert "verdict" not in actions
 
     def test_board_offers_schvalit_for_legacy_build(self, db_session):
-        # Control: a legacy (mode NULL) settled programovanie STILL offers schvalit (byte-identical).
-        version, _ = _make_version(db_session)
+        # Control: a legacy (mode NULL) settled programovanie with a COMPLETE build STILL offers schvalit.
+        # (Bug-1/step4 gates schvalit on build-readiness for BOTH registers — tasks REMAIN → pokracovat; all
+        # done → schvalit. The legacy path is not otherwise suppressed, unlike the conversation register. This
+        # seeds its own done build rather than relying on leaked cross-test DB state.)
+        version, project = _make_version(db_session)
         _seed_programovanie(db_session, version.id, status="awaiting_manazer", mode=None)
+        _, _, tasks = _seed_tasks(db_session, version, project, ["T1"])
+        for t in tasks:
+            t.status = "done"
+        db_session.flush()
         assert "schvalit" in _board_actions(db_session, version.id)
 
     async def test_apply_schvalit_raises_for_conversation_build(self, db_session):

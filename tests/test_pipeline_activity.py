@@ -27,10 +27,12 @@ def test_write_and_edit_tools():
 
 
 def test_bash_truncates():
-    long = "x" * 200
+    from backend.services.pipeline_activity import _MAX_CMD
+
+    long = "x" * (_MAX_CMD + 50)
     line, kind = activity_line(_assistant(_tool("Bash", command=long)))
     assert line.startswith("spúšťa: ")
-    assert len(line) <= len("spúšťa: ") + 60
+    assert len(line) <= len("spúšťa: ") + _MAX_CMD  # command clipped to _MAX_CMD (live-feed wrap+humanize)
     assert kind == "tool"
 
 
