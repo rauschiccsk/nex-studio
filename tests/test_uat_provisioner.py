@@ -278,9 +278,10 @@ def test_provision_renames_containers_and_built_images(tmp_path):
     assert data["services"]["qdrant"]["container_name"] == "uat-asistent-qdrant"
     # Pull-through image preserved (qdrant not rebuilt).
     assert data["services"]["qdrant"]["image"] == "qdrant/qdrant:v1.13.6"
-    # All services ephemeral.
+    # Long-running services survive a reboot (restart: unless-stopped); ASISTENT_COMPOSE has no
+    # one-shot service, so all persist.
     for svc in data["services"].values():
-        assert svc["restart"] == "no"
+        assert svc["restart"] == "unless-stopped"
 
 
 def test_provision_absolutizes_build_context(tmp_path):

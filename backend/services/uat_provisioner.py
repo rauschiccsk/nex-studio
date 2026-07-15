@@ -752,7 +752,7 @@ def build_uat_compose(
 
     Per-service transform: rename ``container_name`` + built-image tag to ``<name_base>-<svc>``
     (``name_base`` = ``uat-<slug>`` for UAT / ``<customer>-<app>`` for PROD, design §2), absolutize
-    build contexts, set ``restart`` (uat ``"no"`` / prod ``"unless-stopped"``), preserve
+    build contexts, set ``restart`` (``"unless-stopped"`` long-running / ``"no"`` one-shot), preserve
     environment/volumes/healthcheck/depends_on/extra_hosts/networks, and force the DB password to the
     synthetic ``${POSTGRES_PASSWORD}``. The FE + BE services additionally join ``nex-proxy-net`` and
     get the exact Traefik labels on the per-env host. Top-level ``name: <name_base>`` namespaces all
@@ -765,7 +765,10 @@ def build_uat_compose(
     src_services: dict[str, Any] = source["services"]
 
     name_base, host = _instance_naming(environment, slug, customer_slug, app)
-    restart_policy = "unless-stopped" if environment == "prod" else "no"
+    # Long-running services get "unless-stopped" in BOTH uat and prod so they survive a docker
+    # daemon restart / host reboot (2026-07-15 incident: UAT stacks left on "no" did not come back).
+    # One-shot services keep "no" via the per-service check below.
+    restart_policy = "unless-stopped"
 
     services: dict[str, Any] = {}
     for name, src_svc in src_services.items():
@@ -773,7 +776,7 @@ def build_uat_compose(
 
         svc["container_name"] = f"{name_base}-{name}"
         # One-shot services (e.g. migrate ``alembic upgrade head``) are marked ``restart: "no"``
-        # in the source and are depended on via ``service_completed_successfully``. Forcing PROD's
+        # in the source and are depended on via ``service_completed_successfully``. Forcing
         # ``unless-stopped`` on them makes docker restart them after exit 0 → the dependency never
         # satisfies → deploy hangs ("timeout waiting for dependencies"). Preserve the one-shot
         # marker; apply the env restart policy only to long-running services.
