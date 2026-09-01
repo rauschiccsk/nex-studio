@@ -53,3 +53,7 @@ migrations/versions/__pycache__/
 
 # Claude MAX OAuth session credentials (P0 — never commit)
 .claude/.credentials.json
+
+# WIP crash-recovery journal + auto action-log (session scratch, gitignored like state files)
+/WIP.md
+.claude/wip-actions.log

@@ -1,0 +1,61 @@
+# docker-compose.sandbox.yml
+# Isolated SAFE-SANDBOX override for the nex-studio-preview stack.
+# Run with:
+#   docker compose -p nex-studio-preview -f docker-compose.yml -f docker-compose.sandbox.yml ...
+#
+# Self-contained: carries BOTH the preview port remaps (9192/9193/9194)
+# AND the isolated volume set, so it REPLACES docker-compose.preview.yml
+# for the sandbox (use this file as the second -f, not preview.yml).
+#
+# Turns the preview backend into a box the AI-partner `claude` engine can
+# program a REAL project inside, WITHOUT reaching host real resources.
+# All in-container paths stay identical to production (PROJECTS_ROOT,
+# knowledge_base_path, credentials_storage_path are hardcoded in code —
+# claude_agent.py:27, settings.py:59/74) so the engine runs UNMODIFIED;
+# only the HOST side of each mount is dropped or swapped to a named volume.
+
+services:
+  db:
+    ports: !override
+      - "9192:5432"
+
+  backend:
+    ports: !override
+      - "9193:9176"
+    # REPLACE the entire base volume list (docker-compose.yml:32-73).
+    # !override => full replace, not append — WITHOUT it Compose would
+    # append and leave docker.sock / real /opt/projects in place.
+    volumes: !override
+      # KEEP + READ-WRITE (base is already rw — the claude CLI writes per-run
+      # session state into CLAUDE_CONFIG_DIR=/home/andros/.claude).
+      - /home/andros/.claude:/home/andros/.claude
+      # ISOLATE — fresh empty project root. The Manager-created sandbox
+      # project scaffolds here (init.sh --target=/opt/projects/<slug>);
+      # the real host projects are NOT present.
+      - sandbox_projects:/opt/projects:rw
+      # ISOLATE — fresh empty credentials store.
+      - sandbox_credentials:/opt/data/nex-studio/credentials:rw
+      # READ-ONLY — shared KB stays readable (template init.sh reads its own
+      # files; RAG/listing work) but the agent + backend cannot pollute it.
+      - /home/icc/knowledge:/home/icc/knowledge:ro
+      # KEEP — durable PTY logs (needed for `claude --resume`) + artifacts.
+      - terminal_logs:/var/lib/nex-studio/terminal-logs
+      - uploads:/app/uploads
+      # DROPPED (were host-escape surfaces):
+      #   /var/run/docker.sock  -> no host Docker daemon control
+      #   /opt/uat              -> no UAT compose tree
+      #   /opt/infra            -> no Telegram token / shared infra
+    environment:
+      # A sandbox demo must NOT create/push a real repo under rauschiccsk.
+      GITHUB_TOKEN: ""
+      GH_TOKEN: ""
+      # Marker so it is unmistakable this backend is the isolated sandbox.
+      NEX_STUDIO_SANDBOX: "1"
+
+  frontend:
+    ports: !override
+      - "9194:9177"
+
+volumes:
+  sandbox_projects:
+  sandbox_credentials:
