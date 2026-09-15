@@ -24,6 +24,16 @@
             "timeout": 60
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /opt/projects/nex-studio/scripts/hook_ticket_autostate.py",
+            "timeout": 60
+          }
+        ]
       }
     ],
     "PreToolUse": [
@@ -34,6 +44,17 @@
             "type": "command",
             "command": "python3 /opt/projects/nex-studio/scripts/hook_ticket_gate.py",
             "timeout": 15
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /opt/projects/nex-studio/scripts/hook_telegram_turn_end.py",
+            "timeout": 30
           }
         ]
       }
