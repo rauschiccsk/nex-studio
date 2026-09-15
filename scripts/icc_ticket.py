@@ -50,6 +50,17 @@ PROJEKTY: "dict[str, dict[str, object]]" = {
             "cancelled": "2a28d91f-6f39-4f77-b062-2c2fcc178f93",
         },
     },
+    "server": {
+        "id": "4f97bf75-07b3-4c9b-9119-ef1ed9e5778b",
+        "states": {
+            "backlog": "f917f120-c56c-44ad-b730-4e71b17f6203",
+            "todo": "ba253a62-a8d8-4afa-98c6-02e5f7cdb72b",
+            "inprogress": "86d3b47b-71fe-4957-bd02-f905761968c1",
+            "nakontrolu": "705d4faa-df90-4f90-9c3b-484d678c1f76",
+            "done": "09c1cbb2-e672-47c8-9b12-d0e7ad39ba75",
+            "cancelled": "97a39cb0-1568-474b-a93d-2402118f96c2",
+        },
+    },
     "mager": {
         "id": "47afb5db-747c-49b7-8809-02d1f51e7283",
         "states": {
@@ -207,6 +218,20 @@ def _html(text: str) -> str:
     return "<p>" + text.replace("\n\n", "</p><p>").replace("\n", "<br/>") + "</p>"
 
 
+def _html_meranie(m: Meranie) -> str:
+    """Blok merania pre bohatý editor Plane. Markdown by tam zostal ako text a ostré zátvorky
+    vo vypísanom príkaze by prehliadač spracoval ako značku — oboje musí ísť cez escape."""
+    import html as _h
+
+    e = _h.escape
+    return (
+        f'<h3 class="editor-heading-block">{NADPIS_MERANIA.lstrip("# ")}</h3>'
+        f"<pre><code>$ {e(m.prikaz)}\n{e(m.vystup[:4000])}</code></pre>"
+        "<p><em>Príkaz vyššie spustil nástroj; výstup je jeho skutočný výsledok. Pred prácou "
+        f"na tikete ho pusti znovu ({e('icc_ticket.py recheck <N>')}).</em></p>"
+    )
+
+
 def _telo(popis: str, m: Meranie) -> str:
     return (
         popis.rstrip() + f"\n\n{NADPIS_MERANIA}\n\n```\n$ {m.prikaz}\n{m.vystup[:4000]}\n```\n\n"
@@ -263,19 +288,32 @@ def cmd_nove(a) -> int:
     return 0 if stav_sedi else 1
 
 
+def _rozbor_merania(description_html: str) -> tuple[str, str] | tuple[None, None]:
+    """Vytiahnuť (príkaz, vtedajší výstup) z tiketu. Tiket ho môže niesť v dvoch podobách:
+    markdown ploty (zakladanie) alebo <pre><code> (úprava bohatého tiketu). Keď sa čítalo len
+    to prvé, rovnaký výstup sa vyhlásil za zmenený — falošný poplach, ktorý odnaučí pozerať sa."""
+    import html as _h
+
+    bloky = re.findall(r"<pre[^>]*>\s*<code[^>]*>(.*?)</code>\s*</pre>", description_html, re.S)
+    meraci = [b for b in bloky if "$ " in _h.unescape(b)]
+    zdroj = meraci[-1] if meraci else description_html
+    text = _h.unescape(re.sub(r"<[^>]+>", "\n", zdroj))
+
+    m = re.search(r"\$ (.+?)\n(.*?)\n```", text, re.S) or re.search(r"\$ (.+?)\n(.+)", text, re.S)
+    if not m:
+        return None, None
+    return m.group(1).strip(), m.group(2).strip()
+
+
 def cmd_recheck(a) -> int:
     base, _ = _zvol(a.projekt)
     i = _najdi(a.cislo, base)
-    import html as _h
-
-    text = _h.unescape(re.sub(r"<[^>]+>", "\n", i.get("description_html") or ""))
-    m = re.search(r"\$ (.+?)\n(.*?)\n```", text, re.S) or re.search(r"\$ (.+?)\n(.+)", text, re.S)
-    if not m:
-        print(f"ICCINT-{a.cislo}: tiket nenesie meranie — vznikol pred bránou. Premeraj ručne.")
+    prikaz, vtedy = _rozbor_merania(i.get("description_html") or "")
+    if prikaz is None:
+        print(f"{a.projekt.upper()}-{a.cislo}: tiket nenesie meranie — vznikol pred bránou. Premeraj ručne.")
         return 2
-    prikaz, vtedy = m.group(1).strip(), m.group(2).strip()
     r = porovnaj_meranie(prikaz, vtedy)
-    print(f"ICCINT-{a.cislo}: {i['name']}\n  príkaz: {prikaz}")
+    print(f"{a.projekt.upper()}-{a.cislo}: {i['name']}\n  príkaz: {prikaz}")
     if r.zmenilo_sa is None:
         print("  ⚠️  NEVIEM — premeranie sa nepodarilo. To NIE JE zhoda; pozri sa naň sám.")
         return 2
@@ -285,6 +323,39 @@ def cmd_recheck(a) -> int:
         return 1
     print("  ✓ sedí — svet je stále taký, ako tiket tvrdí.")
     return 0
+
+
+def cmd_uprav(a) -> int:
+    """Prepísať popis existujúceho tiketu. Popis je tvrdenie rovnako ako pri zakladaní, takže
+    prechádza tou istou bránou — inak by úprava bola dvierka vzadu."""
+    base, _ = _zvol(a.projekt)
+    popis = Path(a.popis_subor).read_text(encoding="utf-8")
+    m = vykonaj_meranie(a.meranie)
+    telo = _telo(popis, m)
+    html_telo = (popis.rstrip() + _html_meranie(m)) if a.surovy_html else _html(telo)
+
+    if a.dry_run:
+        print(f"── NASUCHO: úprava {a.projekt.upper()}-{a.cislo}\n")
+        if a.surovy_html:
+            print(html_telo)
+            return 0
+        print(telo)
+        return 0
+
+    i = _najdi(a.cislo, base)
+    _req(base + i["id"] + "/", {"description_html": html_telo}, "PATCH")
+
+    # Čítanie späť zo servera — nie z premennej, ktorú som práve poslal.
+    import html as _h
+
+    spat = _h.unescape(re.sub(r"<[^>]+>", " ", _najdi(a.cislo, base).get("description_html") or ""))
+    holy = re.sub(r"<[^>]+>", "\n", popis) if a.surovy_html else popis
+    kontrolna = next((r.strip() for r in holy.splitlines() if len(r.strip()) > 25), holy.strip()[:60])
+    sedi = " ".join(kontrolna.split()) in " ".join(spat.split())
+    print(
+        f"UPRAVENÉ {a.projekt.upper()}-{a.cislo} — popis prečítaný späť zo servera: {'SEDÍ' if sedi else '!!! NESEDÍ'}"
+    )
+    return 0 if sedi else 1
 
 
 def cmd_stav(a) -> int:
@@ -321,6 +392,19 @@ def main() -> int:
     r.add_argument("cislo", type=int)
     r.add_argument("--projekt", default="iccint", choices=sorted(PROJEKTY))
     r.set_defaults(fn=cmd_recheck)
+
+    u = sub.add_parser("uprav", help="prepísať popis existujúceho tiketu (vyžaduje meranie)")
+    u.add_argument("cislo", type=int)
+    u.add_argument("--popis-subor", required=True)
+    u.add_argument("--meranie", default="", help="PRÍKAZ, ktorý nástroj spustí a vloží jeho výstup")
+    u.add_argument(
+        "--surovy-html",
+        action="store_true",
+        help="súbor UŽ JE HTML — pošli ho tak, ako je (chirurgická oprava bohatého tiketu)",
+    )
+    u.add_argument("--dry-run", action="store_true")
+    u.add_argument("--projekt", default="iccint", choices=sorted(PROJEKTY))
+    u.set_defaults(fn=cmd_uprav)
 
     s = sub.add_parser("stav", help="posunúť stav + komentár")
     s.add_argument("cislo", type=int)

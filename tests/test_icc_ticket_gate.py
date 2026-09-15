@@ -23,6 +23,7 @@ from pathlib import Path
 import pytest
 
 TOOL = Path("/opt/projects/nex-studio/scripts/icc_ticket.py")
+sys.path.insert(0, str(TOOL.parent))
 
 
 def _run(*args: str, **kw) -> subprocess.CompletedProcess:
@@ -117,6 +118,118 @@ def test_prose_is_not_a_measurement(tmp_path):
     assert "nie je príkaz" in (r.stderr + r.stdout).lower(), (
         f"odmietnuté ako zlyhaný príkaz, nie ako veta: {r.stderr[:200]}"
     )
+
+
+def test_recheck_finds_the_measurement_among_other_code_blocks():
+    """Návody nesú vlastné bloky príkazov pre človeka. Rozbor musí nájsť blok merania medzi nimi —
+    nie prvý, na ktorý narazí. SERVER-3 má overovacie príkazy pre Tibora nad meraním."""
+    from icc_ticket import Meranie, _html_meranie, _rozbor_merania
+
+    cudzi = "<pre><code>lsb_release -ds     # ma vypisat: Ubuntu 24.04</code></pre>"
+    html = "<p>Telo.</p>" + cudzi + _html_meranie(Meranie(prikaz="echo ABC", vystup="ABC"))
+
+    prikaz, vtedy = _rozbor_merania(html)
+
+    assert prikaz == "echo ABC", f"rozbor chytil cudzí blok: {prikaz!r}"
+    assert vtedy == "ABC"
+
+
+def test_recheck_reads_back_what_uprav_wrote():
+    """uprav --surovy-html zapisuje meranie do <pre><code>, recheck ho čítal ako markdown ploty.
+    Výsledok: rovnaký výstup vyhlásený za zmenený, lebo do „vtedy" sa priberie aj veta pod blokom.
+    Falošný poplach je horší než žiadna kontrola — naučí človeka prestať sa pozerať."""
+    from icc_ticket import Meranie, _html_meranie, _rozbor_merania
+
+    m = Meranie(prikaz="echo ABC", vystup="ABC")
+    html = "<p>Telo tiketu.</p>" + _html_meranie(m)
+
+    prikaz, vtedy = _rozbor_merania(html)
+
+    assert prikaz == "echo ABC"
+    assert vtedy == "ABC", f"do vtedy sa primiešal text navyše: {vtedy!r}"
+
+
+def test_recheck_names_the_project_it_actually_looked_in(tmp_path, monkeypatch):
+    """recheck mal predponu ICCINT napevno, takže o tikete SERVER-24 hlásil ICCINT-24.
+    Report, ktorý pomenuje cudzí tiket, je horší než žiadny."""
+    zdroj = (Path(__file__).parent.parent / "scripts" / "icc_ticket.py").read_text(encoding="utf-8")
+    zac = zdroj.index("def cmd_recheck")
+    telo = zdroj[zac : zdroj.index("def cmd_stav")]
+
+    assert "ICCINT-" not in telo, "recheck má predponu projektu napevno"
+
+
+def test_the_measurement_block_is_escaped_html_not_raw_markdown(tmp_path):
+    """V režime --surovy-html ide obsah do bohatého editora. Keby sa blok merania pripol ako
+    markdown, čitateľ uvidí ``` a mriežky; a hocijaká ostrá zátvorka vo vypísanom príkaze
+    (napr. `recheck <N>`) by sa tvárila ako značka a prehliadač by ju zahodil aj s textom."""
+    popis = tmp_path / "p.html"
+    popis.write_text("<p>Prvý odsek tiketu, dosť dlhý na kontrolu.</p>", encoding="utf-8")
+
+    r = _run(
+        "uprav",
+        "3",
+        "--projekt",
+        "server",
+        "--popis-subor",
+        str(popis),
+        "--surovy-html",
+        "--meranie",
+        "printf 'a<b>c\n'",
+        "--dry-run",
+    )
+
+    assert r.returncode == 0, r.stderr
+    assert "```" not in r.stdout, "markdown ploty sa dostali do bohatého HTML"
+    assert "## " not in r.stdout, "markdown nadpis sa dostal do bohatého HTML"
+    assert "a&lt;b&gt;c" in r.stdout, "ostré zátvorky vo výstupe merania nie sú ošetrené"
+
+
+def test_a_rich_ticket_keeps_its_html_when_edited(tmp_path):
+    """Popisy v Plane nesú tabuľky a tučné písmo. Keby úprava vždy prebalila text cez _html(),
+    chirurgická oprava jedného čísla by zošrotovala celý zvyšok tiketu."""
+    popis = tmp_path / "p.html"
+    popis.write_text("<p>Prvý</p><table><tr><td>bunka</td></tr></table>", encoding="utf-8")
+
+    r = _run(
+        "uprav",
+        "3",
+        "--projekt",
+        "server",
+        "--popis-subor",
+        str(popis),
+        "--surovy-html",
+        "--meranie",
+        "printf 'x\n'",
+        "--dry-run",
+    )
+
+    assert r.returncode == 0, r.stderr
+    assert "<table>" in r.stdout and "&lt;table&gt;" not in r.stdout
+
+
+def test_editing_a_description_also_needs_a_measurement(tmp_path):
+    """Popis tiketu je tvrdenie rovnako ako nový tiket. Keby sa dal prepísať bez merania, brána by
+    mala dvere vzadu: založ prázdny tiket s ľahkým meraním a obsah doplň úpravou."""
+    popis = tmp_path / "p.md"
+    popis.write_text("Nové znenie.", encoding="utf-8")
+
+    r = _run("uprav", "3", "--projekt", "server", "--popis-subor", str(popis), "--dry-run")
+
+    assert r.returncode != 0
+    assert "chýba meranie" in (r.stderr + r.stdout).lower()
+
+
+def test_an_edit_carries_the_real_measurement(tmp_path):
+    popis = tmp_path / "p.md"
+    popis.write_text("Nové znenie.", encoding="utf-8")
+
+    r = _run(
+        "uprav", "3", "--projekt", "server", "--popis-subor", str(popis), "--meranie", "printf 'VG-891G\n'", "--dry-run"
+    )
+
+    assert r.returncode == 0, r.stderr
+    assert "VG-891G" in r.stdout
 
 
 # ── Premeranie pred prácou: tiket starý päť dní je rovnako nespoľahlivý ako mylný ──
