@@ -168,6 +168,19 @@ def test_markup_conversion_leaves_the_words_alone():
     assert holy(h) == holy(out), "prevod zmenil text, nielen jeho podobu"
 
 
+def test_a_whole_paragraph_heading_becomes_a_heading():
+    """Odsek, ktorého celý obsah je `## Nadpis`, je nadpis. Mriežky uprostred vety nie sú —
+    tam môžu byť súčasťou textu (číslo behu, kotva v adrese)."""
+    from icc_ticket import _zvyraznenia_v_html
+
+    out = _zvyraznenia_v_html("<p>## Čo je zle</p><p>Beh #34980 spadol.</p><p>### **Prečo**</p>")
+
+    assert "<h3" in out and out.count("<h3") == 2
+    assert "## " not in out and "### " not in out
+    assert "<strong>Prečo</strong>" in out, "nadpis prišiel o zvýraznenie vnútri"
+    assert "Beh #34980 spadol." in out, "mriežka uprostred vety sa nesmie dotknúť"
+
+
 def test_markup_conversion_keeps_its_hands_off_code_blocks():
     """V bloku kódu sú spätné apostrofy a hviezdičky súčasťou príkazu, nie značkou."""
     from icc_ticket import _zvyraznenia_v_html

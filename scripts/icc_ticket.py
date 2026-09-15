@@ -265,6 +265,12 @@ def _zvyraznenia_v_html(h: str) -> str:
     Tiket môže niesť tabuľky a zoznamy, ktoré nemám ako verne zrekonštruovať — preto sa
     nesiaha na stavbu, len na text medzi značkami. Bloky kódu sa preskakujú: tam sú
     hviezdičky a apostrofy súčasťou príkazu."""
+    h = re.sub(
+        r"<p[^>]*>\s*#{2,4} +(.*?)</p>",
+        lambda mo: f'<h3 class="editor-heading-block">{mo.group(1).strip()}</h3>',
+        h,
+        flags=re.S,
+    )
     kusy = re.split(r"(<[^>]+>)", h)
     v_kode = 0
     out = []
