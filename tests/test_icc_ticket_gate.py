@@ -226,3 +226,59 @@ def test_unrelated_commands_are_untouched():
     """Hook sa nesmie pliesť do bežnej práce."""
     for bezny in ["git status", "pytest -q", "docker ps", "curl -s http://127.0.0.1:9216/health"]:
         assert _hook(bezny).returncode == 0, bezny
+
+
+# ── Evidencia: prepínač musí naozaj prepnúť ──────────────────────────────────
+
+
+def test_the_register_flag_actually_routes(tmp_path):
+    """⚠️ Zlyhalo 15.09.2026 naostro: založil som tiket s ``--projekt mager`` a skončil v ICCINT.
+
+    Príčina: ``ruff format`` predtým rozlomil volanie na viac riadkov, moja textová náhrada preto
+    nenašla, čo hľadala, a TICHO neurobila nič. Funkcia si evidenciu vybrala a potom písala do tej
+    pôvodnej. Nástroj ohlásil úspech.
+
+    Je to ten istý tvar, na ktorý je celý tento súbor: krok prebehol, výsledok nesedí. Stráž preto
+    nekontroluje, či sa dá prepínač zadať, ale či sa NAOZAJ POUŽIJE ADRESA tej evidencie.
+    """
+    import inspect
+
+    sys.path.insert(0, "/opt/projects/nex-studio")
+    from scripts import icc_ticket
+
+    for fn in (icc_ticket.cmd_nove, icc_ticket.cmd_stav):
+        src = inspect.getsource(fn)
+        assert "_zvol(" in src, f"{fn.__name__} si evidenciu ani nevyberá"
+        assert "BASE" not in src.replace("BASE_", ""), (
+            f"{fn.__name__} píše do predvolenej evidencie, nie do zvolenej — prepínač je ozdoba"
+        )
+        assert "STATES[" not in src, (
+            f"{fn.__name__} berie stĺpce z predvolenej evidencie; sú PER PROJEKT a server nesprávny stĺpec ticho zahodí"
+        )
+
+
+def test_the_printout_names_the_register_it_actually_used():
+    """Popis po založení hlásil „ICCINT-18" pri tikete, ktorý skončil v MAGER. Číslo bolo správne,
+    meno evidencie nie — a práve podľa mena si ho človek neskôr hľadá. Nesprávny popis je tichšia
+    verzia tej istej chyby: nástroj ohlási niečo iné, než urobil."""
+    import inspect
+
+    sys.path.insert(0, "/opt/projects/nex-studio")
+    from scripts import icc_ticket
+
+    for fn in (icc_ticket.cmd_nove, icc_ticket.cmd_stav):
+        src = inspect.getsource(fn)
+        assert "ICCINT-" not in src, f"{fn.__name__} má meno evidencie natvrdo v popise"
+
+
+def test_every_register_has_all_the_states():
+    """Stĺpce sú per projekt. Chýbajúci stĺpec by sa prejavil až pri posune — teda vtedy, keď už
+    tiket v evidencii je a Manažér ho nevidí tam, kde čaká."""
+    sys.path.insert(0, "/opt/projects/nex-studio")
+    from scripts import icc_ticket
+
+    potrebne = {"backlog", "todo", "inprogress", "nakontrolu", "done", "cancelled"}
+    for meno, p in icc_ticket.PROJEKTY.items():
+        chyba = potrebne - set(p["states"])
+        assert not chyba, f"evidencia {meno} nemá stĺpce: {sorted(chyba)}"
+        assert len(set(p["states"].values())) == len(p["states"]), f"{meno}: opakujúce sa stĺpce"

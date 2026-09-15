@@ -34,16 +34,48 @@ from pathlib import Path
 from typing import Optional
 
 TOKEN_PATH = Path("/home/andros/.secrets/plane-api-token")
-PROJ = "9054fd73-7b23-46f5-ae6d-38352d0b5e84"
-BASE = f"https://plane.icc.sk/api/v1/workspaces/icc/projects/{PROJ}/issues/"
-STATES = {
-    "backlog": "ab6044ab-341b-49d1-b835-6407745f814d",
-    "todo": "3071f740-b31f-46b1-83b7-082ee395719c",
-    "inprogress": "73e8f6b0-6456-4a71-b495-d9a1b7823146",
-    "nakontrolu": "dcc2015c-604d-4bbe-8488-acddc7ce86fb",
-    "done": "57e29c6b-e356-42d9-b064-c6f634a5f990",
-    "cancelled": "2a28d91f-6f39-4f77-b062-2c2fcc178f93",
+
+#: Evidencie, do ktorých sa píše. ⚠️ Identifikátory stĺpcov sú PER PROJEKT — použiť Todo z jedného
+#: projektu na tiket v druhom server prijme a zmenu TICHO ZAHODÍ (zhorel som na tom 03.09.2026).
+#: Preto sú tu vypísané celé, nie odvodené.
+PROJEKTY: "dict[str, dict[str, object]]" = {
+    "iccint": {
+        "id": "9054fd73-7b23-46f5-ae6d-38352d0b5e84",
+        "states": {
+            "backlog": "ab6044ab-341b-49d1-b835-6407745f814d",
+            "todo": "3071f740-b31f-46b1-83b7-082ee395719c",
+            "inprogress": "73e8f6b0-6456-4a71-b495-d9a1b7823146",
+            "nakontrolu": "dcc2015c-604d-4bbe-8488-acddc7ce86fb",
+            "done": "57e29c6b-e356-42d9-b064-c6f634a5f990",
+            "cancelled": "2a28d91f-6f39-4f77-b062-2c2fcc178f93",
+        },
+    },
+    "mager": {
+        "id": "47afb5db-747c-49b7-8809-02d1f51e7283",
+        "states": {
+            "backlog": "9179119b-abed-4ae4-bb60-908f72fb6813",
+            "todo": "d9474aff-8b5f-4915-80cd-68a29a824873",
+            "inprogress": "a8d45ce4-50a1-4e75-82c3-d32b431dc3b6",
+            "nakontrolu": "4ad0eeea-3c6f-4907-884b-8fbee34c7913",
+            "done": "107cd78c-51b4-4062-b96d-22d293053d49",
+            "cancelled": "562325fc-9254-4bf6-97a5-63f1ceacdc35",
+        },
+    },
 }
+
+#: Predvolená evidencia, keď sa neurčí inak.
+PROJ = PROJEKTY["iccint"]["id"]
+BASE = f"https://plane.icc.sk/api/v1/workspaces/icc/projects/{PROJ}/issues/"
+STATES = PROJEKTY["iccint"]["states"]
+
+
+def _zvol(projekt: str) -> tuple[str, dict[str, str]]:
+    """Adresa evidencie a jej stĺpce. Neznámy projekt je chyba, nie tichý pád do predvoleného."""
+    if projekt not in PROJEKTY:
+        raise BranaOdmietla(f"neznáma evidencia {projekt!r}; poznám: {', '.join(sorted(PROJEKTY))}")
+    p = PROJEKTY[projekt]
+    return f"https://plane.icc.sk/api/v1/workspaces/icc/projects/{p['id']}/issues/", p["states"]
+
 
 #: Nadpis, pod ktorým meranie v tikete žije. `recheck` ho podľa neho nájde, takže sa nesmie meniť.
 NADPIS_MERANIA = "## Ako som to zmeral"
@@ -184,18 +216,19 @@ def _telo(popis: str, m: Meranie) -> str:
     )
 
 
-def _najdi(seq: int) -> dict:
-    url = BASE + "?per_page=100"
+def _najdi(seq: int, base: str = BASE) -> dict:
+    url = base + "?per_page=100"
     while url:
         d = _req(url)
         for i in d["results"]:
             if i.get("sequence_id") == seq:
                 return i
-        url = (BASE + f"?cursor={d['next_cursor']}&per_page=100") if d.get("next_page_results") else None
-    raise SystemExit(f"ICCINT-{seq} neexistuje")
+        url = (base + f"?cursor={d['next_cursor']}&per_page=100") if d.get("next_page_results") else None
+    raise SystemExit(f"tiket {seq} v tejto evidencii neexistuje")
 
 
 def cmd_nove(a) -> int:
+    base, states = _zvol(a.projekt)
     popis = Path(a.popis_subor).read_text(encoding="utf-8")
     m = vykonaj_meranie(a.meranie)
     telo = _telo(popis, m)
@@ -213,22 +246,26 @@ def cmd_nove(a) -> int:
         return 0
 
     r = _req(
-        BASE,
+        base,
         {
             "name": a.nazov,
             "description_html": _html(telo),
-            "state": STATES[a.stav],
+            "state": states[a.stav],
             "priority": a.priorita,
         },
         "POST",
     )
-    stav_sedi = r.get("state") == STATES[a.stav]
-    print(f"ZALOŽENÉ ICCINT-{r.get('sequence_id')} — stav z odpovede servera: {'SEDÍ' if stav_sedi else '!!! NESEDÍ'}")
+    stav_sedi = r.get("state") == states[a.stav]
+    print(
+        f"ZALOŽENÉ {a.projekt.upper()}-{r.get('sequence_id')} — stav z odpovede servera: "
+        f"{'SEDÍ' if stav_sedi else '!!! NESEDÍ'}"
+    )
     return 0 if stav_sedi else 1
 
 
 def cmd_recheck(a) -> int:
-    i = _najdi(a.cislo)
+    base, _ = _zvol(a.projekt)
+    i = _najdi(a.cislo, base)
     import html as _h
 
     text = _h.unescape(re.sub(r"<[^>]+>", "\n", i.get("description_html") or ""))
@@ -251,13 +288,14 @@ def cmd_recheck(a) -> int:
 
 
 def cmd_stav(a) -> int:
-    i = _najdi(a.cislo)
-    r = _req(BASE + i["id"] + "/", {"state": STATES[a.stav]}, "PATCH")
-    ok = r.get("state") == STATES[a.stav]
-    print(f"ICCINT-{a.cislo} → {a.stav}: {'SEDÍ' if ok else '!!! NESEDÍ'}")
+    base, states = _zvol(a.projekt)
+    i = _najdi(a.cislo, base)
+    r = _req(base + i["id"] + "/", {"state": states[a.stav]}, "PATCH")
+    ok = r.get("state") == states[a.stav]
+    print(f"{a.projekt.upper()}-{a.cislo} → {a.stav}: {'SEDÍ' if ok else '!!! NESEDÍ'}")
     if a.komentar_subor:
         _req(
-            BASE + i["id"] + "/comments/",
+            base + i["id"] + "/comments/",
             {"comment_html": _html(Path(a.komentar_subor).read_text(encoding="utf-8"))},
             "POST",
         )
@@ -276,16 +314,19 @@ def main() -> int:
     n.add_argument("--priorita", default="medium", choices=["urgent", "high", "medium", "low", "none"])
     n.add_argument("--stav", default="todo", choices=list(STATES))
     n.add_argument("--dry-run", action="store_true")
+    n.add_argument("--projekt", default="iccint", choices=sorted(PROJEKTY))
     n.set_defaults(fn=cmd_nove)
 
     r = sub.add_parser("recheck", help="pustiť uložené meranie znovu PRED prácou")
     r.add_argument("cislo", type=int)
+    r.add_argument("--projekt", default="iccint", choices=sorted(PROJEKTY))
     r.set_defaults(fn=cmd_recheck)
 
     s = sub.add_parser("stav", help="posunúť stav + komentár")
     s.add_argument("cislo", type=int)
     s.add_argument("stav", choices=list(STATES))
     s.add_argument("--komentar-subor")
+    s.add_argument("--projekt", default="iccint", choices=sorted(PROJEKTY))
     s.set_defaults(fn=cmd_stav)
 
     a = p.parse_args()

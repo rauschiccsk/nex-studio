@@ -145,6 +145,27 @@ def test_a_ticket_mentioned_only_in_the_body_is_not_moved():
     assert "13" not in r.stdout and "122" not in r.stdout, f"posunul tiket z tela commitu: {r.stdout}"
 
 
+def test_a_commit_in_another_register_moves_that_register(tmp_path):
+    """Hook poznal len `(ICCINT-N)`. Commit `fix(...): … (MAGER-18)` tak neposunul nič — a tiket
+    zostal v In Progress, hoci práca bola hotová a CI zelené.
+
+    Horšia polovica: ICCINT-18 ZÁROVEŇ EXISTUJE (iný tiket, v stave Hotovo). Keby sa vzor rozšíril
+    nedbalo — napríklad na `-(\\d+)` bez mena evidencie — hook by posunul cudzí tiket. Preto sa meno
+    evidencie berie z predmetu, nie odhadom.
+    """
+    r = _spusti(
+        TIKETY,
+        {
+            "tool_name": "Bash",
+            "tool_input": {"command": "git commit -m x"},
+            "tool_response": {"exit_code": 0},
+        },
+        {"DEDO_COMMIT_SUBJECT": "fix(klasifikátor): prípona .xml je signál (MAGER-18)"},
+    )
+    assert "MAGER" in r.stdout and "18" in r.stdout, r.stdout
+    assert "ICCINT" not in r.stdout, f"posunul by aj cudziu evidenciu: {r.stdout}"
+
+
 def test_a_failed_command_moves_nothing():
     """Zlyhaný commit nie je hotová práca."""
     r = _spusti(

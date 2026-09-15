@@ -31,7 +31,9 @@ NASTROJ = "/opt/projects/nex-studio/scripts/icc_ticket.py"
 
 _RECHECK = re.compile(r"icc_ticket\.py\s+recheck\s+(\d+)")
 _COMMIT = re.compile(r"\bgit\s+(-C\s+\S+\s+)?commit\b")
-_TIKET_V_PREDMETE = re.compile(r"\(ICCINT-(\d+)\)")
+#: Tiket v predmete commitu, aj s menom evidencie. Meno sa NEHÁDA: ICCINT-18 aj MAGER-18 existujú
+#: a sú to iné tikety. Vzor bez mena evidencie by posunul cudzí.
+_TIKET_V_PREDMETE = re.compile(r"\((ICCINT|MAGER)-(\d+)\)", re.I)
 
 #: Z týchto stavov sa posúvať NESMIE. Hotový tiket, ktorý sa vráti do práce, alebo zrušený, ktorý
 #: obživne, je horší než tiket, čo sa neposunul — druhé si všimnem, prvé nie.
@@ -50,9 +52,9 @@ def _stav_tiketu(cislo: int) -> str | None:
         return None
 
 
-def _posun(cislo: int, stav: str, preco: str) -> None:
+def _posun(cislo: int, stav: str, preco: str, projekt: str = "iccint") -> None:
     if DRY:
-        print(f"POSUNUL BY SOM ICCINT-{cislo} → {stav}  ({preco})")
+        print(f"POSUNUL BY SOM {projekt.upper()}-{cislo} → {stav}  ({preco})")
         return
     teraz = _stav_tiketu(cislo)
     if teraz in _NEDOTYKATELNE:
@@ -61,7 +63,7 @@ def _posun(cislo: int, stav: str, preco: str) -> None:
         return
     try:
         subprocess.run(
-            [sys.executable, NASTROJ, "stav", str(cislo), stav],
+            [sys.executable, NASTROJ, "stav", str(cislo), stav, "--projekt", projekt],
             capture_output=True,
             timeout=60,
             check=False,
@@ -114,8 +116,8 @@ def main() -> int:
 
     if _COMMIT.search(prikaz):
         predmet, _telo = _predmet_a_telo(prikaz)
-        for cislo in _TIKET_V_PREDMETE.findall(predmet):
-            _posun(int(cislo), "nakontrolu", f"commit: {predmet[:60]}")
+        for evidencia, cislo in _TIKET_V_PREDMETE.findall(predmet):
+            _posun(int(cislo), "nakontrolu", f"commit: {predmet[:60]}", evidencia.lower())
     return 0
 
 
