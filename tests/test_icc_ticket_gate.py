@@ -120,6 +120,103 @@ def test_prose_is_not_a_measurement(tmp_path):
     )
 
 
+def test_the_read_back_compares_like_with_like():
+    """Kontrola po zápise čítala zo servera prerobený text, ale porovnávala ho so zdrojovým
+    markdownom — hviezdičky sa nezhodovali a hlásila nezhodu po úspešnom zápise. Stráž, ktorá
+    kričí pri správnom výsledku, sa čoskoro prestane brať vážne."""
+    from icc_ticket import _porovnatelne
+
+    zdroj = "Druhý disk — **WDC_WD20EFRX, 1,82 TB**. Ďalej `ntfs` oddiel."
+    # Tak to vyzerá po odstránení značiek zo servera: </strong> po sebe nechá medzeru pred bodkou.
+    videne = "Druhý disk — WDC_WD20EFRX, 1,82 TB . Ďalej ntfs oddiel."
+
+    assert _porovnatelne(zdroj) == _porovnatelne(videne)
+
+    # ...a zároveň nesmie zliať všetko do seba: iný obsah musí ostať iný.
+    assert _porovnatelne(zdroj) != _porovnatelne("Druhý disk — WDC_WD20EFRX, 1,28 TB.")
+    assert _porovnatelne("") != _porovnatelne(zdroj)
+
+
+def test_a_fenced_block_becomes_a_code_block():
+    """Návody nesú bloky príkazov na odpísanie. V plotoch by sa zobrazili aj s plotmi a stratili
+    by zalomenie riadkov — práve tam, kde na presnom prepísaní najviac záleží."""
+    from icc_ticket import _html
+
+    out = _html("Spusti:\n\n```\nsudo mount -o ro /dev/sdb2 /mnt\nls -la /mnt\n```\n\nHotovo.")
+
+    assert "<pre><code>" in out and "```" not in out
+    assert "sudo mount -o ro /dev/sdb2 /mnt\nls -la /mnt" in out
+    assert "<p>Hotovo.</p>" in out
+
+
+def test_preserving_the_measurement_needs_no_new_one(tmp_path):
+    """Prerobiť zobrazenie starého tiketu sa nesmie platiť prepísaním jeho merania — to
+    zachytáva svet v čase, keď tiket vznikol. Nové meranie by ten záznam ticho nahradilo
+    dneškom a tiket by navždy tvrdil, že sedí."""
+    popis = tmp_path / "p.md"
+    popis.write_text("Prerobené znenie tiketu, dosť dlhé na kontrolu.", encoding="utf-8")
+
+    r = _run("uprav", "3", "--projekt", "server", "--popis-subor", str(popis), "--zachovaj-meranie", "--dry-run")
+
+    assert r.returncode == 0, r.stderr + r.stdout
+    assert "chýba meranie" not in (r.stdout + r.stderr).lower()
+
+
+def test_replacing_a_comment_is_an_explicit_choice(tmp_path):
+    """Prepísať cudzí komentár by bolo prepisovanie histórie. Výmena musí byť vypýtaná zvlášť,
+    nikdy ako tichý vedľajší účinok bežného komentovania."""
+    r = _run("stav", "--help")
+
+    assert "--prepis-posledny" in r.stdout
+
+
+def test_a_new_ticket_carries_its_measurement_as_a_real_code_block(tmp_path):
+    """Blok merania sa skladal markdown plotmi, ktoré _html neprerába — čitateľ by videl ```.
+    A recheck ho hľadá v <pre><code>, takže obe cesty musia zapisovať rovnaký tvar."""
+    popis = tmp_path / "p.md"
+    popis.write_text("Telo tiketu, dosť dlhé na kontrolu čítania späť.", encoding="utf-8")
+
+    r = _run("nove", "--nazov", "T", "--popis-subor", str(popis), "--meranie", "echo ABC", "--dry-run")
+
+    assert r.returncode == 0, r.stderr
+
+
+def test_the_two_write_paths_agree_on_the_measurement_shape():
+    from icc_ticket import Meranie, _html, _html_meranie, _rozbor_merania
+
+    m = Meranie(prikaz="echo ABC", vystup="ABC")
+    cez_nove = _html("Telo tiketu.") + _html_meranie(m)
+
+    assert "```" not in cez_nove
+    assert _rozbor_merania(cez_nove) == ("echo ABC", "ABC")
+
+
+def test_markdown_in_the_body_reaches_the_reader_as_formatting():
+    """Plane zobrazuje description_html tak, ako príde. Keď sa doň vloží **tučné** ako text,
+    čitateľ uvidí hviezdičky. Desať tiketov tak vyzeralo, lebo som overoval, čo som poslal,
+    nie to, čo vidí ten, kto to číta."""
+    from icc_ticket import _html
+
+    out = _html("**Dôležité** a `kód` v jednom riadku.\n\n## Nadpis\n\nBežný text.")
+
+    assert "<strong>Dôležité</strong>" in out
+    assert "<code>kód</code>" in out
+    assert "**" not in out and "`" not in out
+    assert "## " not in out and "<h3" in out
+
+
+def test_html_escapes_before_it_formats():
+    """Text tiketu môže obsahovať ostré zátvorky (`recheck <N>`, `<pre>`). Musia sa ošetriť,
+    inak ich prehliadač zhltne aj s obsahom — a značky, ktoré pridáva _html, musia prežiť."""
+    from icc_ticket import _html
+
+    out = _html("Spusti `recheck <N>` a **pozri** <b>výsledok</b>.")
+
+    assert "recheck &lt;N&gt;" in out
+    assert "&lt;b&gt;výsledok&lt;/b&gt;" in out
+    assert "<strong>pozri</strong>" in out
+
+
 def test_recheck_finds_the_measurement_among_other_code_blocks():
     """Návody nesú vlastné bloky príkazov pre človeka. Rozbor musí nájsť blok merania medzi nimi —
     nie prvý, na ktorý narazí. SERVER-3 má overovacie príkazy pre Tibora nad meraním."""

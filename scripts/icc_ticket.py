@@ -215,7 +215,49 @@ def _req(url: str, data=None, method="GET"):
 
 
 def _html(text: str) -> str:
-    return "<p>" + text.replace("\n\n", "</p><p>").replace("\n", "<br/>") + "</p>"
+    """Text tiketu do podoby, akú Plane naozaj zobrazí. Predtým sa posielal surový markdown a
+    čitateľ videl hviezdičky a spätné apostrofy — kontroloval som, čo posielam, nie čo vidí on."""
+    import html as _h
+
+    out = []
+    escaped = _h.escape(text)
+    # Bloky v plotoch vybrať skôr, než sa text láme na odseky — nesú vlastné zalomenie.
+    bloky: list[str] = []
+
+    def _odloz(mo):
+        bloky.append(mo.group(1).strip("\n"))
+        return f"\n\n\x00{len(bloky) - 1}\x00\n\n"
+
+    escaped = re.sub(r"```[a-z]*\n(.*?)```", _odloz, escaped, flags=re.S)
+
+    for odsek in escaped.split("\n\n"):
+        odsek = odsek.strip("\n")
+        if not odsek:
+            continue
+        blok = re.fullmatch(r"\x00(\d+)\x00", odsek)
+        if blok:
+            out.append(f"<pre><code>{bloky[int(blok.group(1))]}</code></pre>")
+            continue
+        nadpis = re.match(r"#{2,4} +(.*)", odsek)
+        if nadpis:
+            out.append(f'<h3 class="editor-heading-block">{_zvyraznenia(nadpis.group(1))}</h3>')
+            continue
+        out.append("<p>" + _zvyraznenia(odsek).replace("\n", "<br/>") + "</p>")
+    return "".join(out) or "<p></p>"
+
+
+def _zvyraznenia(s: str) -> str:
+    """**tučné**, *kurzíva* a `kód` — jediná podmnožina, ktorú v tiketoch naozaj používam.
+    Beží až po escape, takže ostré zátvorky v texte sú vtedy už neškodné."""
+    s = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", s, flags=re.S)
+    s = re.sub(r"(?<![*\w])\*(?!\s)(.+?)(?<!\s)\*(?![*\w])", r"<em>\1</em>", s, flags=re.S)
+    return re.sub(r"`([^`\n]+)`", r"<code>\1</code>", s)
+
+
+def _porovnatelne(s: str) -> str:
+    """Text na porovnanie zdroja s tým, čo server naozaj vrátil. Zo zdroja treba odstrániť
+    značky markdownu — inak sa porovnáva zápis so zobrazením a kontrola hlási nezhodu vždy."""
+    return re.sub(r"[\s*`#]+", "", s)
 
 
 def _html_meranie(m: Meranie) -> str:
@@ -274,7 +316,7 @@ def cmd_nove(a) -> int:
         base,
         {
             "name": a.nazov,
-            "description_html": _html(telo),
+            "description_html": _html(popis) + _html_meranie(m),
             "state": states[a.stav],
             "priority": a.priorita,
         },
@@ -330,9 +372,18 @@ def cmd_uprav(a) -> int:
     prechádza tou istou bránou — inak by úprava bola dvierka vzadu."""
     base, _ = _zvol(a.projekt)
     popis = Path(a.popis_subor).read_text(encoding="utf-8")
-    m = vykonaj_meranie(a.meranie)
+    if a.zachovaj_meranie:
+        if a.meranie:
+            raise BranaOdmietla("--zachovaj-meranie a --meranie naraz nedávajú zmysel; vyber jedno.")
+        prikaz, vtedy = _rozbor_merania(_najdi(a.cislo, base).get("description_html") or "")
+        if prikaz is None:
+            raise BranaOdmietla(f"{a.projekt.upper()}-{a.cislo} nenesie meranie — niet čo zachovať.")
+        m = Meranie(prikaz=prikaz, vystup=vtedy)
+        print(f"  zachovávam pôvodné meranie: $ {prikaz[:90]}")
+    else:
+        m = vykonaj_meranie(a.meranie)
     telo = _telo(popis, m)
-    html_telo = (popis.rstrip() + _html_meranie(m)) if a.surovy_html else _html(telo)
+    html_telo = (popis.rstrip() + _html_meranie(m)) if a.surovy_html else _html(popis) + _html_meranie(m)
 
     if a.dry_run:
         print(f"── NASUCHO: úprava {a.projekt.upper()}-{a.cislo}\n")
@@ -351,7 +402,7 @@ def cmd_uprav(a) -> int:
     spat = _h.unescape(re.sub(r"<[^>]+>", " ", _najdi(a.cislo, base).get("description_html") or ""))
     holy = re.sub(r"<[^>]+>", "\n", popis) if a.surovy_html else popis
     kontrolna = next((r.strip() for r in holy.splitlines() if len(r.strip()) > 25), holy.strip()[:60])
-    sedi = " ".join(kontrolna.split()) in " ".join(spat.split())
+    sedi = _porovnatelne(kontrolna) in _porovnatelne(spat)
     print(
         f"UPRAVENÉ {a.projekt.upper()}-{a.cislo} — popis prečítaný späť zo servera: {'SEDÍ' if sedi else '!!! NESEDÍ'}"
     )
@@ -365,12 +416,23 @@ def cmd_stav(a) -> int:
     ok = r.get("state") == states[a.stav]
     print(f"{a.projekt.upper()}-{a.cislo} → {a.stav}: {'SEDÍ' if ok else '!!! NESEDÍ'}")
     if a.komentar_subor:
-        _req(
-            base + i["id"] + "/comments/",
-            {"comment_html": _html(Path(a.komentar_subor).read_text(encoding="utf-8"))},
-            "POST",
+        telo_html = _html(Path(a.komentar_subor).read_text(encoding="utf-8"))
+        url = base + i["id"] + "/comments/"
+        stary = None
+        if a.prepis_posledny:
+            existujuce = _req(url).get("results") or []
+            stary = existujuce[-1]["id"] if existujuce else None
+            if stary is None:
+                print("  na tikete niet čo prepísať — zapisujem nový komentár")
+        if stary:
+            _req(url + stary + "/", {"comment_html": telo_html}, "PATCH")
+        else:
+            _req(url, {"comment_html": telo_html}, "POST")
+        spat = (_req(url).get("results") or [])[-1]["comment_html"]
+        print(
+            f"  komentár {'prepísaný' if stary else 'zapísaný'} — prečítaný späť: "
+            f"{'SEDÍ' if '**' not in spat else '!!! surový markdown'}"
         )
-        print("  komentár zapísaný")
     return 0 if ok else 1
 
 
@@ -398,6 +460,11 @@ def main() -> int:
     u.add_argument("--popis-subor", required=True)
     u.add_argument("--meranie", default="", help="PRÍKAZ, ktorý nástroj spustí a vloží jeho výstup")
     u.add_argument(
+        "--zachovaj-meranie",
+        action="store_true",
+        help="ponechať meranie, ktoré tiket už nesie (oprava zobrazenia starého tiketu)",
+    )
+    u.add_argument(
         "--surovy-html",
         action="store_true",
         help="súbor UŽ JE HTML — pošli ho tak, ako je (chirurgická oprava bohatého tiketu)",
@@ -410,6 +477,11 @@ def main() -> int:
     s.add_argument("cislo", type=int)
     s.add_argument("stav", choices=list(STATES))
     s.add_argument("--komentar-subor")
+    s.add_argument(
+        "--prepis-posledny",
+        action="store_true",
+        help="namiesto nového komentára prepísať posledný (oprava vlastného textu)",
+    )
     s.add_argument("--projekt", default="iccint", choices=sorted(PROJEKTY))
     s.set_defaults(fn=cmd_stav)
 
