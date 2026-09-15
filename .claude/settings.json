@@ -25,6 +25,18 @@
           }
         ]
       }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /opt/projects/nex-studio/scripts/hook_ticket_gate.py",
+            "timeout": 15
+          }
+        ]
+      }
     ]
   }
 }

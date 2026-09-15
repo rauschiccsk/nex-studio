@@ -28,7 +28,9 @@ nie ako samostatne spúšťaná session. Kokpit to už vynucuje: `agent_terminal
 *(Historická poznámka: Designer ani Auditor ako wrapper-session nebežali ani raz, Implementer naposledy
 2. 6. 2026. Zrušené 23.08.2026 — dokument dovtedy popisoval zostavu, ktorá nefungovala.)*
 
-**Výnimka:** prevzatý projekt (`--adopt`) si vlastné chartre drží — tam sa nesiaha.
+**Prevzatý projekt (`--adopt`):** rolové chartre (`.claude/agents/<role>/CLAUDE.md`) sa zapíšu vždy — bez nich by sa agent nedal spustiť. **Koreňový `CLAUDE.md` sa PREPÍŠE** a pôvodný sa odloží vedľa ako `CLAUDE.md.pre-nex-studio`; nič sa nestratí, ale ani nezostane platné.
+Vlastné pravidlá prevzatého projektu sa preto musia do novej charty **preniesť ručne** — urobí to Dedo hneď po prevzatí.
+*(Predtým tu stálo „si vlastné chartre drží — tam sa nesiaha“. Kód do nej siahal od začiatku, zámerne a s dobrým dôvodom; nepravdivé bolo pravidlo, nie správanie. ICCINT-121.)*
 
 ### Princíp fungovania
 
@@ -271,6 +273,34 @@ Pri editácii súboru VŽDY najprv prečítaj plný obsah. Pri malej zmene modif
 NIKDY generovať fictional outputs. Ak tool volanie zlyhá, report failure **explicitne** — nikdy nevymýšľať output. Commit hashe overovať cez `git log --oneline -3` alebo `git show <hash>` pred uvedením v reporte.
 
 Anti-patterns špecifické pre rolu sú v príslušnom `.claude/agents/<role>/CLAUDE.md`.
+
+---
+
+## 8.1 ŠTYRI TVARY TVRDENÍ, KTORÉ SA NESMÚ ODVODIŤ (audit 15.09.2026)
+
+Toto nie je ďalšie „over si to". Je to zoznam **štyroch konkrétnych viet**, ktoré pri odvodení
+zlyhali **stopercentne** — a ktoré si preto žiadajú príkaz v tej istej odpovedi, kde ich vyslovím:
+
+| tvar | príklad, ktorý zlyhal | čo som urobil namiesto overenia |
+|---|---|---|
+| **existencia** | „táto obrazovka chýba“ | `grep` na text a záver z jeho prítomnosti |
+| **príčina** | „kokpit sa GitHubu nepýta“ | usúdenie príčiny z príznaku |
+| **stav** | „ten tiket je otvorený“ | prevzatie z tiketu bez premerania |
+| **postup** | „keď klikneš X, stane sa Y“ | predpoklad jedného postupu |
+
+**Pravidlo:** vetu z týchto štyroch tvarov nevyslovím, kým v tej istej odpovedi nie je príkaz, ktorý
+ju dokladá. Nie príkaz, ktorý ma POTVRDÍ — ten, ktorý ma môže usvedčiť z omylu.
+
+**Prečo práve takto úzko.** Zmerané 15.09.2026: z 93 poučení o mojom správaní **64 hovorí „over,
+než tvrdíš"**. Šesťdesiatštyri poučení ten problém nevyriešilo, lebo pravidlo bez hrany sa nedá
+použiť. Tieto štyri tvary hranu majú: Manažér ich vie ukázať prstom.
+
+**Čo NIE je pod týmto pravidlom:** návrhy, odhady, odporúčania a úvahy. Tie sa označia ako úvaha
+a je to v poriadku. Chyba nie je v premýšľaní nahlas — chyba je vydávať odvodenie za zistenie.
+
+**Evidencia má bránu, rozhovor ju mať nemôže.** Tikety chráni `scripts/icc_ticket.py` (spustí si
+overovací príkaz sám) a hook, ktorý zápis mimo brány zastaví. Veta v rozhovore takú bránu nemá —
+preto je toto pravidlo úzke a vymenované, nie všeobecné.
 
 ---
 
