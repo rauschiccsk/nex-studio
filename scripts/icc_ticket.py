@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -205,6 +206,11 @@ def _tok() -> str:
 
 
 def _req(url: str, data=None, method="GET"):
+    # Hradba pre skúšky. Mutačná skúška raz vypla stráž v cmd_uprav a zápis do živého tiketu
+    # naozaj prešiel — obnova stála minúty, počas ktorých mal kolega pred sebou prázdny návod.
+    # Ochrana preto nesmie stáť v tom istom kóde, ktorý sa pri mutovaní vypína.
+    if method != "GET" and os.environ.get("ICC_TICKET_LEN_CITAJ"):
+        raise BranaOdmietla(f"beh je len na čítanie — {method} na evidenciu neprejde ({url[-48:]})")
     r = urllib.request.Request(
         url,
         data=json.dumps(data).encode() if data else None,
@@ -252,6 +258,34 @@ def _zvyraznenia(s: str) -> str:
     s = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", s, flags=re.S)
     s = re.sub(r"(?<![*\w])\*(?!\s)(.+?)(?<!\s)\*(?![*\w])", r"<em>\1</em>", s, flags=re.S)
     return re.sub(r"`([^`\n]+)`", r"<code>\1</code>", s)
+
+
+def _zvyraznenia_v_html(h: str) -> str:
+    """Prerobiť značky markdownu na HTML priamo v hotovom dokumente, bez jeho prestavby.
+    Tiket môže niesť tabuľky a zoznamy, ktoré nemám ako verne zrekonštruovať — preto sa
+    nesiaha na stavbu, len na text medzi značkami. Bloky kódu sa preskakujú: tam sú
+    hviezdičky a apostrofy súčasťou príkazu."""
+    kusy = re.split(r"(<[^>]+>)", h)
+    v_kode = 0
+    out = []
+    for kus in kusy:
+        if kus.startswith("<"):
+            meno = re.match(r"</?(pre|code)\b", kus)
+            if meno:
+                v_kode += -1 if kus.startswith("</") else 1
+                v_kode = max(v_kode, 0)
+            out.append(kus)
+        elif v_kode:
+            out.append(kus)
+        else:
+            out.append(_zvyraznenia(kus))
+    return "".join(out)
+
+
+def html_unescape(s: str) -> str:
+    import html as _h
+
+    return _h.unescape(s)
 
 
 def _porovnatelne(s: str) -> str:
@@ -372,6 +406,24 @@ def cmd_uprav(a) -> int:
     prechádza tou istou bránou — inak by úprava bola dvierka vzadu."""
     base, _ = _zvol(a.projekt)
     popis = Path(a.popis_subor).read_text(encoding="utf-8")
+    if a.len_zobrazenie:
+        if not a.surovy_html:
+            raise BranaOdmietla("--len-zobrazenie sa robí priamo v HTML tiketu; pridaj --surovy-html.")
+        if a.meranie or a.zachovaj_meranie:
+            raise BranaOdmietla("--len-zobrazenie nesiaha na meranie; nekombinuj ho s ním.")
+        povodne = _najdi(a.cislo, base).get("description_html") or ""
+        holy = lambda x: _porovnatelne(re.sub(r"<[^>]+>", " ", x))  # noqa: E731
+        if holy(povodne) != holy(popis):
+            raise BranaOdmietla("text sa zmenil — to už nie je oprava zobrazenia. Choď cez --meranie.")
+        if a.dry_run:
+            print(f"── NASUCHO: oprava zobrazenia {a.projekt.upper()}-{a.cislo} (text nedotknutý)")
+            return 0
+        _req(base + _najdi(a.cislo, base)["id"] + "/", {"description_html": popis}, "PATCH")
+        spat = _najdi(a.cislo, base).get("description_html") or ""
+        sedi = holy(spat) == holy(povodne) and "**" not in html_unescape(spat)
+        print(f"ZOBRAZENIE {a.projekt.upper()}-{a.cislo} — prečítané späť: {'SEDÍ' if sedi else '!!! NESEDÍ'}")
+        return 0 if sedi else 1
+
     if a.zachovaj_meranie:
         if a.meranie:
             raise BranaOdmietla("--zachovaj-meranie a --meranie naraz nedávajú zmysel; vyber jedno.")
@@ -459,6 +511,11 @@ def main() -> int:
     u.add_argument("cislo", type=int)
     u.add_argument("--popis-subor", required=True)
     u.add_argument("--meranie", default="", help="PRÍKAZ, ktorý nástroj spustí a vloží jeho výstup")
+    u.add_argument(
+        "--len-zobrazenie",
+        action="store_true",
+        help="oprava zobrazenia bez merania — nástroj si overí, že text ostal ten istý",
+    )
     u.add_argument(
         "--zachovaj-meranie",
         action="store_true",

@@ -16,6 +16,7 @@ alebo prilepiť z inej otázky. Takto v tikete stojí to, čo naozaj vyšlo — 
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -27,7 +28,16 @@ sys.path.insert(0, str(TOOL.parent))
 
 
 def _run(*args: str, **kw) -> subprocess.CompletedProcess:
-    return subprocess.run([sys.executable, str(TOOL), *args], capture_output=True, text=True, timeout=60, **kw)
+    # Hradba pre celý beh skúšok: nástroj smie evidenciu čítať, nikdy do nej zapísať.
+    prostredie = {**os.environ, "ICC_TICKET_LEN_CITAJ": "1", **kw.pop("env", {})}
+    return subprocess.run(
+        [sys.executable, str(TOOL), *args],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=prostredie,
+        **kw,
+    )
 
 
 # ── Brána: bez merania sa tiket nezaloží ──────────────────────────────────────
@@ -118,6 +128,67 @@ def test_prose_is_not_a_measurement(tmp_path):
     assert "nie je príkaz" in (r.stderr + r.stdout).lower(), (
         f"odmietnuté ako zlyhaný príkaz, nie ako veta: {r.stderr[:200]}"
     )
+
+
+# ── Skúšky nesmú siahnuť na živú evidenciu ───────────────────────────────────
+
+
+def test_the_test_run_cannot_write_to_a_live_ticket(tmp_path):
+    """Mutačná skúška raz prepísala živý SERVER-3: vypla stráž a zápis prešiel naozaj.
+    Hradba nesmie stáť na tom, že si v každej skúške spomeniem na --dry-run — musí byť
+    v prenose. Keď je ICC_TICKET_LEN_CITAJ nastavené, nič iné než GET neprejde."""
+    popis = tmp_path / "p.html"
+    popis.write_text("<p>Čokoľvek, čo by sa inak zapísalo do tiketu.</p>", encoding="utf-8")
+
+    r = _run("uprav", "3", "--projekt", "server", "--popis-subor", str(popis), "--surovy-html", "--meranie", "echo ABC")
+
+    assert r.returncode != 0
+    assert "len na čítanie" in (r.stdout + r.stderr).lower()
+
+
+# ── Oprava zobrazenia: jediná zmena, ktorá smie ísť bez merania ──────────────
+
+
+def test_markup_conversion_leaves_the_words_alone():
+    """Prevod značiek v hotovom HTML nesmie siahnuť na text ani na stavbu dokumentu —
+    inak by z opravy zobrazenia bola tichá prepisovačka obsahu."""
+    import re as _re
+
+    from icc_ticket import _porovnatelne, _zvyraznenia_v_html
+
+    h = "<table><tr><td><p>**Dôležité** a `kód`</p></td></tr></table><p>*šikmo*</p>"
+    out = _zvyraznenia_v_html(h)
+
+    assert "<strong>Dôležité</strong>" in out and "<code>kód</code>" in out
+    assert out.count("<table>") == 1 and out.count("<td>") == 1
+
+    def holy(s):
+        return _porovnatelne(_re.sub(r"<[^>]+>", " ", s))
+
+    assert holy(h) == holy(out), "prevod zmenil text, nielen jeho podobu"
+
+
+def test_markup_conversion_keeps_its_hands_off_code_blocks():
+    """V bloku kódu sú spätné apostrofy a hviezdičky súčasťou príkazu, nie značkou."""
+    from icc_ticket import _zvyraznenia_v_html
+
+    h = "<pre><code>rm *.tmp && echo `date`</code></pre><p>**po bloku**</p>"
+    out = _zvyraznenia_v_html(h)
+
+    assert "rm *.tmp && echo `date`" in out, "prevod siahol do bloku kódu"
+    assert "<strong>po bloku</strong>" in out
+
+
+def test_display_only_edit_refuses_when_the_text_actually_changes(tmp_path):
+    """Výnimka z merania stojí na tom, že sa netvrdí nič nové. Nástroj si to musí overiť sám —
+    inak je z nej dvierka, ktorými prejde hocijaká zmena obsahu."""
+    novy = tmp_path / "n.html"
+    novy.write_text("<p>Úplne iné znenie tiketu, dosť dlhé na kontrolu.</p>", encoding="utf-8")
+
+    r = _run("uprav", "3", "--projekt", "server", "--popis-subor", str(novy), "--surovy-html", "--len-zobrazenie")
+
+    assert r.returncode != 0
+    assert "text sa zmenil" in (r.stdout + r.stderr).lower()
 
 
 def test_the_read_back_compares_like_with_like():
