@@ -7,8 +7,17 @@ In Progress, po ukončení do Na kontrolu… napomeniem, istý čas to robíš a
 Dva signály, oba sa dejú TAK ČI TAK — takže naviazať na ne stav nestojí nič navyše a povinnosť,
 ktorá už existuje, sa nedá zabudnúť druhýkrát:
 
-  `icc_ticket.py recheck N`     → ZAČIATOK  → In Progress
-  commit s `(ICCINT-N)` v PREDMETE → KONIEC → Na kontrolu
+  `icc_ticket.py citaj|recheck|uprav N` → ZAČIATOK → In Progress
+  commit s `(ICCINT-N)` v PREDMETE     → KONIEC   → Na kontrolu
+
+⚠️ **Evidencia sa NEHÁDA, číta sa z príkazu.** Do 16.09.2026 tu bolo `projekt="iccint"` napevno:
+`recheck 17 --projekt server` posunul ICCINT-17. Aj stav si hook čítal z ICCINT, takže sa podľa
+cudzieho tiketu aj ROZHODOVAL. Meno sa teraz berie z toho istého príkazu — a zvlášť pre každé
+volanie v reťazi, aby sa `--projekt` z prvého neprilepil na druhé.
+
+⚠️ **Začiatok nie je len `recheck`.** Pôvodne hook počúval jedine naň — a za celý deň 16.09.2026
+nenastal ani raz, lebo nástroj nevedel tiket prečítať a ja som ho čítal obchádzkou cez `curl`.
+Signál musí sedieť na tom, čo robím, nie na tom, čo som mal robiť.
 
 ⚠️ **Len predmet, nikdy telo.** Zmerané na posledných piatich commitoch: v tele sa tikety spomínajú
 bežne (`ICCINT-13`, `ICCINT-122`). Posunúť ich by znamenalo hlásiť hotovú prácu, ktorá sa nestala —
@@ -29,7 +38,14 @@ import sys
 DRY = os.environ.get("DEDO_HOOK_DRY_RUN") == "1"
 NASTROJ = "/opt/projects/nex-studio/scripts/icc_ticket.py"
 
-_RECHECK = re.compile(r"icc_ticket\.py\s+recheck\s+(\d+)")
+#: Jedno volanie nástroja = text od `icc_ticket.py` po ďalší výskyt (alebo koniec riadku).
+#: Reťazím príkazy bežne; bez tohto delenia by `--projekt` z prvého platil aj pre druhé.
+_VOLANIE = re.compile(r"icc_ticket\.py\s+(.*?)(?=icc_ticket\.py|\Z)", re.S)
+
+#: Podpríkazy, ktoré znamenajú ZAČIATOK. `stav` tu zámerne NIE JE — ten si stav mení sám a je to
+#: koniec, nie začiatok; posúvať ho by znamenalo vracať hotové tikety späť do práce.
+_ZACIATOK = ("citaj", "recheck", "uprav")
+
 _COMMIT = re.compile(r"\bgit\s+(-C\s+\S+\s+)?commit\b")
 #: Tiket v predmete commitu, aj s menom evidencie. Meno sa NEHÁDA: ICCINT-18 aj MAGER-18 existujú
 #: a sú to iné tikety. Vzor bez mena evidencie by posunul cudzí.
@@ -40,23 +56,52 @@ _TIKET_V_PREDMETE = re.compile(r"\((ICCINT|MAGER)-(\d+)\)", re.I)
 _NEDOTYKATELNE = ("done", "cancelled")
 
 
-def _stav_tiketu(cislo: int) -> str | None:
+def _zaciatky(prikaz: str) -> list[tuple[int, str]]:
+    """Ktoré tikety tento príkaz OTVÁRA — a v ktorej evidencii. Rozoberá sa každé volanie nástroja
+    zvlášť, takže `--projekt` z jedného sa neprelieva do ďalšieho."""
+    najdene: list[tuple[int, str]] = []
+    for volanie in _VOLANIE.findall(prikaz):
+        slova = volanie.split()
+        podprikaz = next((w for w in slova if w in _ZACIATOK), None)
+        if not podprikaz:
+            continue
+        projekt, cislo = "iccint", None
+        for i, w in enumerate(slova):
+            if w.startswith("--projekt="):
+                projekt = w.split("=", 1)[1]
+            elif w == "--projekt" and i + 1 < len(slova):
+                projekt = slova[i + 1]
+            # Číslo tiketu je holá číslica — nikdy hodnota prepínača (`--riadok 5`), inak by sa
+            # posunul tiket, ktorý v príkaze vôbec nie je.
+            elif (
+                w.isdigit() and cislo is None and not (i and slova[i - 1].startswith("--") and "=" not in slova[i - 1])
+            ):
+                cislo = int(w)
+        if cislo is not None:
+            najdene.append((cislo, projekt))
+    return najdene
+
+
+def _stav_tiketu(cislo: int, projekt: str) -> str | None:
+    """Stav sa musí čítať z TEJ evidencie, ktorej sa posun týka. Do 16.09.2026 sa čítal vždy z
+    ICCINT — hook sa teda o cudzom tikete rozhodoval podľa úplne iného tiketu s rovnakým číslom."""
     try:
         sys.path.insert(0, "/opt/projects/nex-studio")
-        from scripts.icc_ticket import STATES, _najdi  # noqa: PLC0415
+        from scripts.icc_ticket import _najdi, _zvol  # noqa: PLC0415
 
-        i = _najdi(cislo)
-        obratene = {v: k for k, v in STATES.items()}
+        base, states = _zvol(projekt)
+        i = _najdi(cislo, base)
+        obratene = {v: k for k, v in states.items()}
         return obratene.get(i.get("state"))
     except Exception:  # noqa: BLE001 — hook nikdy nepadá
         return None
 
 
-def _posun(cislo: int, stav: str, preco: str, projekt: str = "iccint") -> None:
+def _posun(cislo: int, stav: str, preco: str, projekt: str) -> None:
     if DRY:
         print(f"POSUNUL BY SOM {projekt.upper()}-{cislo} → {stav}  ({preco})")
         return
-    teraz = _stav_tiketu(cislo)
+    teraz = _stav_tiketu(cislo, projekt)
     if teraz in _NEDOTYKATELNE:
         return
     if teraz == stav:
@@ -109,9 +154,10 @@ def main() -> int:
     if odpoved.get("exit_code") not in (None, 0):
         return 0  # zlyhaný príkaz nie je hotová práca
 
-    m = _RECHECK.search(prikaz)
-    if m:
-        _posun(int(m.group(1)), "inprogress", "premeranie pred prácou = začiatok")
+    zaciatky = _zaciatky(prikaz)
+    if zaciatky:
+        for cislo, projekt in zaciatky:
+            _posun(cislo, "inprogress", "otvorený tiket = začiatok práce", projekt)
         return 0
 
     if _COMMIT.search(prikaz):

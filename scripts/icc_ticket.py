@@ -31,6 +31,7 @@ import subprocess
 import sys
 import urllib.request
 from dataclasses import dataclass
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Optional
 
@@ -431,6 +432,75 @@ def cmd_recheck(a) -> int:
     return 0
 
 
+class _NaText(HTMLParser):
+    """Plane drží popis ako HTML. Bez prevodu na text by som tiket aj tak čítal vlastným filtrom —
+    teda mimo nástroja, a tým mimo všetkého, čo nástroj zaručuje."""
+
+    BLOKY = ("p", "div", "h1", "h2", "h3", "h4", "li", "tr", "blockquote", "pre")
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.kusy: list[str] = []
+        self.v_kode = False
+        self.v_bunke = False
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ("td", "th"):
+            self.v_bunke = True
+            self.kusy.append("\t")
+        elif tag == "br":
+            self.kusy.append("\n")
+        elif tag in self.BLOKY and not (self.v_bunke and tag in ("p", "div")):
+            # Obsah bunky Plane balí do `<p>`. Keby odsek zalomil aj tu, riadok tabuľky sa rozpadne
+            # na samostatné riadky a nedá sa prečítať, ktoré číslo patrí kam.
+            self.kusy.append("\n\n")
+        if tag == "pre":
+            self.v_kode = True
+
+    def handle_endtag(self, tag):
+        if tag == "pre":
+            self.v_kode = False
+        elif tag in ("td", "th"):
+            self.v_bunke = False
+
+    def handle_data(self, data):
+        # V bloku kódu sa medzery ani zalomenia zahodiť nesmú — je v ňom uložené meranie tiketu.
+        self.kusy.append(data if self.v_kode else re.sub(r"\s+", " ", data))
+
+
+def _na_text(html: str) -> str:
+    p = _NaText()
+    p.feed(html or "")
+    t = "".join(p.kusy)
+    t = re.sub(r"[ \t]+\n", "\n", t)
+    t = re.sub(r"\n\t", "\n", t)  # tabulátor pred prvou bunkou riadku
+    return re.sub(r"\n{3,}", "\n\n", t).strip()
+
+
+def cmd_citaj(a) -> int:
+    """Prečítať tiket. Žiadny zápis — a práve preto sa dá bez obáv použiť na hocičo.
+
+    Prečo to tu vôbec je: hook, ktorý posúva tiket do „V práci", počúva na to, že tiket otvorím.
+    Kým nástroj čítať nevedel, otváral som ho `curl`-om a ten signál nenastal ani raz."""
+    base, states = _zvol(a.projekt)
+    i = _najdi(a.cislo, base)
+    nazov_stavu = {v: k for k, v in states.items()}.get(i.get("state"), "?")
+    print(f"{a.projekt.upper()}-{a.cislo}: {i['name']}   [{nazov_stavu}]")
+    print("─" * 78)
+    print(_na_text(i.get("description_html") or "") or "(bez popisu)")
+    if a.komentare:
+        k = sorted(
+            _req(base + i["id"] + "/comments/").get("results") or [],
+            key=lambda c: c.get("created_at") or "",
+            reverse=True,
+        )[: a.komentare]
+        for c in k:
+            print("\n" + "─" * 78)
+            print(f"komentár {(c.get('created_at') or '')[:16]}")
+            print(_na_text(c.get("comment_html") or ""))
+    return 0
+
+
 def cmd_uprav(a) -> int:
     """Prepísať popis existujúceho tiketu. Popis je tvrdenie rovnako ako pri zakladaní, takže
     prechádza tou istou bránou — inak by úprava bola dvierka vzadu."""
@@ -536,7 +606,10 @@ def cmd_stav(a) -> int:
     return 0 if ok else 1
 
 
-def main() -> int:
+def postav_parser() -> argparse.ArgumentParser:
+    """Oddelené od `main`, aby sa dalo overiť, že KAŽDÝ podpríkaz je napojený na funkciu. Kým to
+    bolo vnútri `main`, chyba v napojení sa dala zistiť jedine živým spustením — a `citaj` tak
+    16.09.2026 prešiel päťdesiatimi skúškami a padol na prvom použití."""
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -554,6 +627,12 @@ def main() -> int:
     r.add_argument("cislo", type=int)
     r.add_argument("--projekt", default="iccint", choices=sorted(PROJEKTY))
     r.set_defaults(fn=cmd_recheck)
+
+    c = sub.add_parser("citaj", help="vypísať tiket ako text (bez zápisu)")
+    c.add_argument("cislo", type=int)
+    c.add_argument("--projekt", default="iccint", choices=sorted(PROJEKTY))
+    c.add_argument("--komentare", type=int, default=3, help="koľko posledných komentárov (0 = žiadne)")
+    c.set_defaults(fn=cmd_citaj)
 
     u = sub.add_parser("uprav", help="prepísať popis existujúceho tiketu (vyžaduje meranie)")
     u.add_argument("cislo", type=int)
@@ -591,7 +670,11 @@ def main() -> int:
     s.add_argument("--projekt", default="iccint", choices=sorted(PROJEKTY))
     s.set_defaults(fn=cmd_stav)
 
-    a = p.parse_args()
+    return p
+
+
+def main() -> int:
+    a = postav_parser().parse_args()
     return a.fn(a)
 
 

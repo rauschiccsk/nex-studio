@@ -191,3 +191,148 @@ def test_the_hook_never_breaks_the_tool_call():
     a obchádzaná poistka je horšia než žiadna."""
     r = _spusti(TIKETY, {"tool_name": "Bash"})  # chýba tool_input
     assert r.returncode == 0
+
+
+# ── Tikety: evidencia sa NEHÁDA, a začiatok nie je len `recheck` ──────────────
+
+
+def test_a_recheck_in_another_register_starts_that_register():
+    """Chyba nájdená 16.09.2026: `recheck 17 --projekt server` posunul ICCINT-17. Meno evidencie sa
+    do posunu vôbec neprenášalo — hook ho mal napevno na `iccint`. A keďže aj stav si čítal z
+    ICCINT, rozhodoval sa podľa cudzieho tiketu: ak ICCINT-17 nebol hotový, posunul ho."""
+    r = _spusti(
+        TIKETY,
+        {
+            "tool_name": "Bash",
+            "tool_input": {"command": "python3 scripts/icc_ticket.py recheck 17 --projekt server"},
+            "tool_response": {"exit_code": 0},
+        },
+    )
+    assert "SERVER-17" in r.stdout, r.stdout
+    assert "ICCINT" not in r.stdout, r.stdout
+
+
+def test_the_register_flag_is_read_before_the_number_too():
+    """`--projekt server recheck 17` je pre argparse to isté. Pre hook to musí byť tiež to isté."""
+    r = _spusti(
+        TIKETY,
+        {
+            "tool_name": "Bash",
+            "tool_input": {"command": "python3 scripts/icc_ticket.py recheck --projekt mager 23"},
+            "tool_response": {"exit_code": 0},
+        },
+    )
+    assert "MAGER-23" in r.stdout, r.stdout
+
+
+def test_two_chained_commands_do_not_borrow_each_others_register():
+    """Reťazím príkazy bežne. Meno evidencie z prvého sa nesmie prilepiť na druhý — inak by stačilo
+    raz napísať `--projekt server` a každý ďalší tiket v tom istom riadku by odletel do SERVERa."""
+    r = _spusti(
+        TIKETY,
+        {
+            "tool_name": "Bash",
+            "tool_input": {
+                "command": (
+                    "python3 scripts/icc_ticket.py recheck 17 --projekt server && "
+                    "python3 scripts/icc_ticket.py recheck 129"
+                )
+            },
+            "tool_response": {"exit_code": 0},
+        },
+    )
+    assert "SERVER-17" in r.stdout, r.stdout
+    assert "ICCINT-129" in r.stdout, r.stdout
+
+
+def test_reading_a_ticket_marks_it_as_started():
+    """Druhá chyba z 16.09.2026: hook počúval JEDINE na `recheck`, ale tikety som celý deň čítal
+    obchádzkou (`curl`), lebo nástroj čítať nevedel. Signál teda nenastal ani raz. Skutočný začiatok
+    práce je, že si tiket otvorím."""
+    r = _spusti(
+        TIKETY,
+        {
+            "tool_name": "Bash",
+            "tool_input": {"command": "python3 scripts/icc_ticket.py citaj 17 --projekt server"},
+            "tool_response": {"exit_code": 0},
+        },
+    )
+    assert "SERVER-17" in r.stdout and "inprogress" in r.stdout, r.stdout
+
+
+def test_rewriting_a_ticket_marks_it_as_started():
+    """Prepísať tiket bez toho, aby som na ňom pracoval, sa nedá."""
+    r = _spusti(
+        TIKETY,
+        {
+            "tool_name": "Bash",
+            "tool_input": {"command": "python3 scripts/icc_ticket.py uprav 25 --projekt server"},
+            "tool_response": {"exit_code": 0},
+        },
+    )
+    assert "SERVER-25" in r.stdout and "inprogress" in r.stdout, r.stdout
+
+
+def test_closing_a_ticket_is_not_a_beginning():
+    """`stav N done` je koniec. Keby ho hook čítal ako začiatok, posunul by hotový tiket späť do
+    práce — a `stav` si stav mení sám, takže by si dva posuny liezli do cesty."""
+    r = _spusti(
+        TIKETY,
+        {
+            "tool_name": "Bash",
+            "tool_input": {"command": "python3 scripts/icc_ticket.py stav 17 done --projekt server"},
+            "tool_response": {"exit_code": 0},
+        },
+    )
+    assert "inprogress" not in r.stdout, r.stdout
+
+
+def _hook_modul():
+    """Hook je skript, nie balík — na priame volanie jeho funkcií ho treba načítať z cesty."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("hook_autostate", TIKETY)
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+def test_the_state_is_read_from_the_register_the_move_targets(monkeypatch):
+    """Druhá polovica chyby zo 16.09.2026, a horšia: hook si stav čítal VŽDY z ICCINT. Pri suchom
+    behu sa k tomuto miestu vôbec nedôjde, takže ho žiadna z ostatných skúšok nechráni — a práve
+    tu sa rozhodovalo, či sa cudzí tiket posunie."""
+    import scripts.icc_ticket as nastroj
+
+    videne: dict[str, str] = {}
+
+    def podstrceny_najdi(seq, base=nastroj.BASE):
+        videne["base"] = base
+        return {"state": nastroj.PROJEKTY["server"]["states"]["inprogress"]}
+
+    monkeypatch.setattr(nastroj, "_najdi", podstrceny_najdi)
+    h = _hook_modul()
+
+    stav = h._stav_tiketu(17, "server")
+    assert nastroj.PROJEKTY["server"]["id"] in videne["base"], videne
+    assert stav == "inprogress", stav
+
+    # A opačne: tá istá funkcia sa musí pýtať ICCINT, keď ide o ICCINT. Inak by „správne" bolo
+    # len to, že sa pýta server vždy — čo je tá istá chyba obrátene.
+    h._stav_tiketu(17, "iccint")
+    assert nastroj.PROJEKTY["iccint"]["id"] in videne["base"], videne
+
+
+def test_a_number_that_belongs_to_a_flag_is_not_a_ticket():
+    """Poistka dopredu, nie oprava nájdenej chyby: dnes žiadny prepínač nástroja nemá číselnú
+    hodnotu, takže sa to stať nemôže. Až pribudne, holá číslica za prepínačom by sa ticho stala
+    číslom tiketu — a posunul by sa tiket, ktorý v príkaze vôbec nie je."""
+    r = _spusti(
+        TIKETY,
+        {
+            "tool_name": "Bash",
+            "tool_input": {"command": "python3 scripts/icc_ticket.py uprav --projekt server --nazov 2025 25"},
+            "tool_response": {"exit_code": 0},
+        },
+    )
+    assert "SERVER-25" in r.stdout, r.stdout
+    assert "2025" not in r.stdout, r.stdout

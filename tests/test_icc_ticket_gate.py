@@ -645,3 +645,81 @@ def test_every_register_has_all_the_states():
         chyba = potrebne - set(p["states"])
         assert not chyba, f"evidencia {meno} nemá stĺpce: {sorted(chyba)}"
         assert len(set(p["states"].values())) == len(p["states"]), f"{meno}: opakujúce sa stĺpce"
+
+
+# ── `citaj`: nástroj musí vedieť tiket prečítať, inak ho čítam obchádzkou ─────
+
+
+def test_the_tool_can_read_a_ticket():
+    """16.09.2026: hook na posun stavu počúval na `recheck`, ale za celý deň nenastal ani raz —
+    tikety som čítal `curl`-om, lebo nástroj čítať nevedel. Zakaždým, keď nástroj opustím, stratím
+    všetko, čo nástroj zaručuje. Chýbajúci `citaj` nebol pohodlie, bola to diera."""
+    assert "citaj" in _run("--help").stdout
+
+
+def test_reading_shows_the_ticket_in_plain_text():
+    """Popis je v Plane HTML. Vypísať ho surový znamená, že ho aj tak prečítam cez `curl` s vlastným
+    filtrom — takže by `citaj` neexistoval."""
+    from scripts.icc_ticket import _na_text
+
+    html = "<p>Prvý <b>tučný</b> odsek.</p><ul><li>bod</li></ul><pre><code>$ príkaz\nvýstup</code></pre>"
+    t = _na_text(html)
+    assert "Prvý tučný odsek." in t, t
+    assert "bod" in t, t
+    assert "$ príkaz" in t and "výstup" in t, t
+    assert "<" not in t, t
+
+
+def test_plain_text_keeps_the_paragraph_breaks():
+    """Bez zalomení splynú odseky do jedného bloku a tiket sa nedá čítať — čo je presne ten dôvod,
+    prečo by som sa vrátil k obchádzke."""
+    from scripts.icc_ticket import _na_text
+
+    t = _na_text("<p>Prvý.</p><p>Druhý.</p>")
+    assert "Prvý.\n\nDruhý." in t, repr(t)
+
+
+def test_reading_a_ticket_never_writes_anything():
+    """`citaj` je čítanie. Keby čokoľvek zapisoval, nedal by sa použiť na obzretie cudzieho tiketu
+    — a stena proti zápisu (ICC_TICKET_LEN_CITAJ) by ho zhodila."""
+    import inspect
+
+    from scripts.icc_ticket import cmd_citaj
+
+    zdroj = inspect.getsource(cmd_citaj)
+    for zapis in ("PATCH", "POST", "_req(url, "):
+        assert zapis not in zdroj, f"`citaj` zapisuje: {zapis}"
+
+
+def test_every_subcommand_is_actually_wired_to_a_function():
+    """16.09.2026: `citaj` pribudol so `set_defaults(func=…)`, ale nástroj volá `a.fn(a)`. Padol na
+    prvom živom spustení — a ani jedna z päťdesiatich skúšok to nechytila, lebo overovali, že sa
+    príkaz objaví v nápovede. Objaviť sa v nápovede a dať sa spustiť sú dve rôzne veci."""
+    import argparse
+
+    from scripts.icc_ticket import postav_parser
+
+    p = postav_parser()
+    akcie = [a for a in p._actions if isinstance(a, argparse._SubParsersAction)]
+    assert akcie, "nástroj nemá podpríkazy?"
+    for meno, pod in akcie[0].choices.items():
+        assert "fn" in pod._defaults, f"podpríkaz `{meno}` nie je napojený na funkciu"
+
+
+def test_a_table_stays_a_table_in_plain_text():
+    """Živý beh 16.09.2026 na SERVER-25: tabuľka sa rozsypala na samostatné riadky („andros-inbox",
+    „0", „icc-inbox", „0"…) a nedalo sa prečítať, ktoré číslo patrí ku ktorému riadku. Plane dáva
+    obsah bunky do `<p>`, a odsek zalamuje. Tiket, ktorého tabuľky sa nedajú čítať, ma vráti ku
+    `curl`-u — čiže presne k diere, kvôli ktorej `citaj` vznikol."""
+    from scripts.icc_ticket import _na_text
+
+    html = (
+        "<table><tr><th><p>appka</p></th><th><p>faktúr</p></th></tr>"
+        "<tr><td><p>andros-inbox</p></td><td><p>0</p></td></tr>"
+        "<tr><td><p>mager-inbox</p></td><td><p>120</p></td></tr></table>"
+    )
+    t = _na_text(html)
+    assert "andros-inbox\t0" in t, repr(t)
+    assert "mager-inbox\t120" in t, repr(t)
+    # Prvá bunka riadku už zalomenie za sebou má; tabulátor pred ňou odsadí celú tabuľku doprava.
+    assert "\n\t" not in t, repr(t)
