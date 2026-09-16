@@ -80,7 +80,11 @@ PROJEKTY: "dict[str, dict[str, object]]" = {
 
 #: Predvolená evidencia, keď sa neurčí inak.
 PROJ = PROJEKTY["iccint"]["id"]
-BASE = f"https://plane.icc.sk/api/v1/workspaces/icc/projects/{PROJ}/issues/"
+#: Adresa evidencie. Nie natvrdo: 16.09.2026 sa sťahovala z ANDROSu na nový server a bola
+#: zapísaná v kóde na dvoch miestach. Prepísať len jedno by znamenalo, že časť brány píše
+#: do starej evidencie a časť do novej — a chýbajúci tiket by sa našiel až oveľa neskôr.
+PLANE_URL = os.environ.get("ICC_PLANE_URL", "http://100.109.5.21:9180").rstrip("/")
+BASE = f"{PLANE_URL}/api/v1/workspaces/icc/projects/{PROJ}/issues/"
 STATES = PROJEKTY["iccint"]["states"]
 
 
@@ -89,7 +93,7 @@ def _zvol(projekt: str) -> tuple[str, dict[str, str]]:
     if projekt not in PROJEKTY:
         raise BranaOdmietla(f"neznáma evidencia {projekt!r}; poznám: {', '.join(sorted(PROJEKTY))}")
     p = PROJEKTY[projekt]
-    return f"https://plane.icc.sk/api/v1/workspaces/icc/projects/{p['id']}/issues/", p["states"]
+    return f"{PLANE_URL}/api/v1/workspaces/icc/projects/{p['id']}/issues/", p["states"]
 
 
 #: Nadpis, pod ktorým meranie v tikete žije. `recheck` ho podľa neho nájde, takže sa nesmie meniť.

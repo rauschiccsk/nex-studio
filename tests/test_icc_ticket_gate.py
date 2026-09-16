@@ -793,3 +793,45 @@ def test_no_host_path_is_pinned_to_one_user():
             if "/home/andros" in r and not r.lstrip().startswith("#"):
                 zle.append(f"{f.name}:{i}: {r.strip()[:70]}")
     assert not zle, "cesty viazané na používateľa `andros`:\n  " + "\n  ".join(zle)
+
+
+def test_the_plane_address_is_configurable():
+    """16.09.2026: evidencia sa presťahovala na nový server a adresa bola v bráne natvrdo na dvoch
+    miestach. Je to ten istý tvar chyby ako cesta k tajomstvám — vec, ktorá sa raz za čas mení,
+    zapísaná do kódu."""
+    import os
+
+    from scripts.icc_ticket import _zvol
+
+    assert "plane.icc.sk" not in _zvol.__code__.co_consts.__str__(), "adresa je stále v kóde"
+    os.environ["ICC_PLANE_URL"] = "http://skusobna:1234"
+    try:
+        import importlib
+
+        import scripts.icc_ticket as t
+
+        importlib.reload(t)
+        base, _ = t._zvol("server")
+        assert base.startswith("http://skusobna:1234/"), base
+    finally:
+        del os.environ["ICC_PLANE_URL"]
+        importlib.reload(t)
+
+
+def test_both_places_read_the_same_address():
+    """Adresa bola na DVOCH miestach. Keby sa zmenilo len jedno, časť brány by písala do starej
+    evidencie a časť do novej — a rozdiel by sa ukázal až tým, že tiket niekde chýba."""
+    import os
+
+    os.environ["ICC_PLANE_URL"] = "http://skusobna:1234"
+    try:
+        import importlib
+
+        import scripts.icc_ticket as t
+
+        importlib.reload(t)
+        assert t.BASE.startswith("http://skusobna:1234/"), t.BASE
+        assert t._zvol("iccint")[0].startswith("http://skusobna:1234/"), t._zvol("iccint")[0]
+    finally:
+        del os.environ["ICC_PLANE_URL"]
+        importlib.reload(t)
