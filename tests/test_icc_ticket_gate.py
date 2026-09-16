@@ -221,6 +221,35 @@ def test_the_read_back_compares_like_with_like():
     assert _porovnatelne("") != _porovnatelne(zdroj)
 
 
+def test_text_with_pipes_is_not_mistaken_for_a_table():
+    """Zvislá čiara sa v texte vyskytuje aj inak — vo výstupe príkazu, v ceste, v alternatíve.
+    Bez oddeľovača hlavičky to tabuľka nie je a spraviť z nej tabuľku by rozsypalo obsah.
+    Odhalila to mutácia: pôvodná stráž tento prípad nepokrývala."""
+    from icc_ticket import _html, _je_tabulka
+
+    assert not _je_tabulka("| toto je len riadok |\n| a toto druhý |")
+    assert not _je_tabulka("beh | grep neco")
+
+    out = _html("| toto je len riadok |\n| a toto druhý |")
+
+    assert "<table>" not in out
+    assert "toto je len riadok" in out
+
+
+def test_a_markdown_table_becomes_a_table():
+    """Tikety nesú tabuľky — čo sa meria, čo sa čaká, dve cesty vedľa seba. Bez prevodu sa čitateľovi
+    zobrazia ako riadky s čiarami a rozsypaným obsahom; SERVER-25 tak vyzeral hneď po založení."""
+    from icc_ticket import _html
+
+    out = _html("Pred.\n\n| čo | koľko |\n|---|---|\n| disk | **176 GB** |\n| pamäť | 48 GB |\n\nPo.")
+
+    assert out.count("<table>") == 1 and out.count("<tr>") == 3
+    assert "<th>čo</th>" in out and "<td>pamäť</td>" in out
+    assert "<strong>176 GB</strong>" in out, "zvýraznenie v bunke sa stratilo"
+    assert "|---|" not in out and "| disk |" not in out
+    assert "<p>Pred.</p>" in out and "<p>Po.</p>" in out
+
+
 def test_a_fenced_block_becomes_a_code_block():
     """Návody nesú bloky príkazov na odpísanie. V plotoch by sa zobrazili aj s plotmi a stratili
     by zalomenie riadkov — práve tam, kde na presnom prepísaní najviac záleží."""

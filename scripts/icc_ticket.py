@@ -244,12 +244,36 @@ def _html(text: str) -> str:
         if blok:
             out.append(f"<pre><code>{bloky[int(blok.group(1))]}</code></pre>")
             continue
+        if _je_tabulka(odsek):
+            out.append(_tabulka_na_html(odsek))
+            continue
         nadpis = re.match(r"#{2,4} +(.*)", odsek)
         if nadpis:
             out.append(f'<h3 class="editor-heading-block">{_zvyraznenia(nadpis.group(1))}</h3>')
             continue
         out.append("<p>" + _zvyraznenia(odsek).replace("\n", "<br/>") + "</p>")
     return "".join(out) or "<p></p>"
+
+
+def _je_tabulka(odsek: str) -> bool:
+    """Blok, ktorého KAŽDÝ riadok začína aj končí zvislou čiarou, a druhý je oddeľovač hlavičky."""
+    riadky = [r.strip() for r in odsek.splitlines() if r.strip()]
+    if len(riadky) < 2 or not all(r.startswith("|") and r.endswith("|") for r in riadky):
+        return False
+    return bool(re.fullmatch(r"\|[\s:|-]+\|", riadky[1]))
+
+
+def _bunky(riadok: str) -> list[str]:
+    return [b.strip() for b in riadok.strip().strip("|").split("|")]
+
+
+def _tabulka_na_html(odsek: str) -> str:
+    """Markdownová tabuľka do HTML. Bez toho ju čitateľ vidí ako riadky s čiarami a rozsypaným
+    obsahom — tak vyzeral SERVER-25 hneď po založení."""
+    riadky = [r.strip() for r in odsek.splitlines() if r.strip()]
+    hlavicka = "".join(f"<th>{_zvyraznenia(b)}</th>" for b in _bunky(riadky[0]))
+    telo = "".join("<tr>" + "".join(f"<td>{_zvyraznenia(b)}</td>" for b in _bunky(r)) + "</tr>" for r in riadky[2:])
+    return f"<table><tbody><tr>{hlavicka}</tr>{telo}</tbody></table>"
 
 
 def _zvyraznenia(s: str) -> str:
