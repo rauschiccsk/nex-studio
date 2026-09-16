@@ -248,7 +248,14 @@ def _html(text: str) -> str:
         if _je_tabulka(odsek):
             out.append(_tabulka_na_html(odsek))
             continue
-        nadpis = re.match(r"#{2,4} +(.*)", odsek)
+        # Vodorovná čiara. Bloky kódu sú v tejto chvíli už odložené bokom, takže riadok pomlčiek
+        # vo výstupe príkazu sa sem nedostane a čiarou sa nestane.
+        if re.fullmatch(r"-{3,}|\*{3,}|_{3,}", odsek):
+            out.append("<hr/>")
+            continue
+        # Od JEDNEJ mriežky: `#` je tvar, ktorý sa píše pre hlavnú časť dokumentu, a do 16.09.2026
+        # sa zobrazoval doslovne aj s mriežkou (SERVER-26).
+        nadpis = re.match(r"#{1,4} +(.*)", odsek)
         if nadpis:
             out.append(f'<h3 class="editor-heading-block">{_zvyraznenia(nadpis.group(1))}</h3>')
             continue

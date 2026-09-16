@@ -723,3 +723,45 @@ def test_a_table_stays_a_table_in_plain_text():
     assert "mager-inbox\t120" in t, repr(t)
     # Prvá bunka riadku už zalomenie za sebou má; tabulátor pred ňou odsadí celú tabuľku doprava.
     assert "\n\t" not in t, repr(t)
+
+
+def test_a_top_level_heading_becomes_a_heading():
+    """16.09.2026, SERVER-26: `# Postup` sa Tiborovi v prehliadači zobrazil doslovne aj s mriežkou.
+    Prevod poznal `##`, ale `#` nie — a to je práve tvar, ktorý sa píše pre hlavnú časť dokumentu."""
+    from scripts.icc_ticket import _html
+
+    h = _html("# Postup")
+    assert "<h" in h and ">Postup<" in h, h
+    assert "#" not in h, h
+
+
+def test_a_horizontal_rule_becomes_a_rule():
+    """Tá istá previerka: `---` medzi časťami zostalo doslovne ako tri pomlčky v odseku."""
+    from scripts.icc_ticket import _html
+
+    h = _html("prvá časť\n\n---\n\ndruhá časť")
+    assert "<hr" in h, h
+    assert "<p>---</p>" not in h, h
+
+
+def test_a_dashed_line_inside_a_code_block_stays_text():
+    """Stráž proti prestreleniu: výstupy príkazov bežne obsahujú riadok pomlčiek (`virsh net-list`
+    ho vypisuje). Vnútri bloku kódu sa nesmie premeniť na čiaru."""
+    from scripts.icc_ticket import _html
+
+    h = _html("```\n Name   State\n---------------\n vm-mager  active\n```")
+    assert "<hr" not in h, h
+    assert "---------------" in h, h
+
+
+def test_a_rule_never_swallows_the_text_around_it():
+    """Doplnené po mutácii: stráž „obsahuje tri pomlčky" by z celého odseku urobila čiaru a text
+    by ticho zmizol. Čiarou je odsek, ktorý sa z pomlčiek skladá CELÝ — nič iné."""
+    from scripts.icc_ticket import _html
+
+    h = _html("Stav servera:\n---\nprázdny")
+    assert "Stav servera" in h and "prázdny" in h, h
+
+    h2 = _html("Prepínač --- takto sa nepíše, ale v texte sa objaviť môže.")
+    assert "nepíše" in h2, h2
+    assert "<hr" not in h2, h2
