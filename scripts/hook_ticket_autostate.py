@@ -38,9 +38,10 @@ import sys
 DRY = os.environ.get("DEDO_HOOK_DRY_RUN") == "1"
 NASTROJ = "/opt/projects/nex-studio/scripts/icc_ticket.py"
 
-#: Jedno volanie nástroja = text od `icc_ticket.py` po ďalší výskyt (alebo koniec riadku).
-#: Reťazím príkazy bežne; bez tohto delenia by `--projekt` z prvého platil aj pre druhé.
-_VOLANIE = re.compile(r"icc_ticket\.py\s+(.*?)(?=icc_ticket\.py|\Z)", re.S)
+#: Skutočné SPUSTENIE nástroja — teda `python3 …/icc_ticket.py`, nie len jeho meno v texte.
+#: Chytené 16.09.2026 pri commite tejto opravy: v správe bola veta „`recheck 17 --projekt server`
+#: by posunul ICCINT-17" a hook ju prečítal ako príkaz. Text O príkaze nie je príkaz.
+_SPUSTENIE = re.compile(r"(?:^|[\s;&|(])python3?\s+\S*icc_ticket\.py\s+")
 
 #: Podpríkazy, ktoré znamenajú ZAČIATOK. `stav` tu zámerne NIE JE — ten si stav mení sám a je to
 #: koniec, nie začiatok; posúvať ho by znamenalo vracať hotové tikety späť do práce.
@@ -60,8 +61,12 @@ def _zaciatky(prikaz: str) -> list[tuple[int, str]]:
     """Ktoré tikety tento príkaz OTVÁRA — a v ktorej evidencii. Rozoberá sa každé volanie nástroja
     zvlášť, takže `--projekt` z jedného sa neprelieva do ďalšieho."""
     najdene: list[tuple[int, str]] = []
-    for volanie in _VOLANIE.findall(prikaz):
-        slova = volanie.split()
+    spustenia = list(_SPUSTENIE.finditer(prikaz))
+    for poradie, zaciatok in enumerate(spustenia):
+        # Argumenty jedného volania siahajú po začiatok ďalšieho. Reťazím príkazy bežne; bez tohto
+        # delenia by `--projekt` z prvého platil aj pre druhé.
+        koniec = spustenia[poradie + 1].start() if poradie + 1 < len(spustenia) else len(prikaz)
+        slova = prikaz[zaciatok.end() : koniec].split()
         podprikaz = next((w for w in slova if w in _ZACIATOK), None)
         if not podprikaz:
             continue
@@ -154,16 +159,20 @@ def main() -> int:
     if odpoved.get("exit_code") not in (None, 0):
         return 0  # zlyhaný príkaz nie je hotová práca
 
+    # Commit sa vyhodnocuje PRVÝ. Jeho správa je próza a bežne v nej príkazy citujem — keby sa
+    # čítala ako príkaz, hlásil by som prácu na tikete, ktorý je v nej len spomenutý.
+    if _COMMIT.search(prikaz):
+        predmet, _telo = _predmet_a_telo(prikaz)
+        for evidencia, cislo in _TIKET_V_PREDMETE.findall(predmet):
+            _posun(int(cislo), "nakontrolu", f"commit: {predmet[:60]}", evidencia.lower())
+        return 0
+
     zaciatky = _zaciatky(prikaz)
     if zaciatky:
         for cislo, projekt in zaciatky:
             _posun(cislo, "inprogress", "otvorený tiket = začiatok práce", projekt)
         return 0
 
-    if _COMMIT.search(prikaz):
-        predmet, _telo = _predmet_a_telo(prikaz)
-        for evidencia, cislo in _TIKET_V_PREDMETE.findall(predmet):
-            _posun(int(cislo), "nakontrolu", f"commit: {predmet[:60]}", evidencia.lower())
     return 0
 
 

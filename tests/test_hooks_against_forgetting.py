@@ -336,3 +336,77 @@ def test_a_number_that_belongs_to_a_flag_is_not_a_ticket():
     )
     assert "SERVER-25" in r.stdout, r.stdout
     assert "2025" not in r.stdout, r.stdout
+
+
+def test_a_command_quoted_inside_a_commit_message_is_not_a_command():
+    """Chytené 16.09.2026 pri commite TEJ ISTEJ opravy: v správe bola veta „`recheck 17 --projekt
+    server` by posunul ICCINT-17" — a hook ju prečítal ako príkaz a chcel SERVER-17 vrátiť do
+    práce. Ochránilo ho len to, že bol práve hotový. Je to tá istá chyba, pred ktorou hlavička
+    tohto súboru varuje pri commitoch: text O príkaze nie je príkaz."""
+    sprava = (
+        "git commit -q -F - <<EOF\n"
+        "fix(hook): niečo (ICCINT-140)\n\n"
+        "Napevno `iccint`, takže `python3 scripts/icc_ticket.py recheck 17 --projekt server`\n"
+        "by posunul ICCINT-17.\nEOF"
+    )
+    r = _spusti(
+        TIKETY,
+        {
+            "tool_name": "Bash",
+            "tool_input": {"command": sprava},
+            "tool_response": {"exit_code": 0},
+        },
+        {"DEDO_COMMIT_SUBJECT": "fix(hook): niečo (ICCINT-140)"},
+    )
+    assert "SERVER-17" not in r.stdout, r.stdout
+    assert "ICCINT-140 → nakontrolu" in r.stdout, r.stdout
+
+
+def test_a_tool_name_mentioned_in_prose_is_not_a_call():
+    """Aj mimo commitu. O nástroji píšem v tiketoch, poznámkach aj v komentároch, ktoré posielam
+    súborom — meno nástroja v texte nesmie nič posunúť."""
+    r = _spusti(
+        TIKETY,
+        {
+            "tool_name": "Bash",
+            "tool_input": {"command": "echo 'pred prácou spusti icc_ticket.py recheck 17 --projekt server'"},
+            "tool_response": {"exit_code": 0},
+        },
+    )
+    assert r.stdout.strip() == "", r.stdout
+
+
+def test_a_real_call_still_works_when_it_follows_another_command():
+    """Stráž nesmie prestreliť: reťaz `cd … && python3 scripts/icc_ticket.py citaj …` je bežný tvar
+    a musí naďalej fungovať."""
+    r = _spusti(
+        TIKETY,
+        {
+            "tool_name": "Bash",
+            "tool_input": {"command": "python3 scripts/icc_ticket.py citaj 25 --projekt server"},
+            "tool_response": {"exit_code": 0},
+        },
+    )
+    assert "SERVER-25" in r.stdout and "inprogress" in r.stdout, r.stdout
+
+
+def test_a_register_named_later_in_the_chain_does_not_reach_backwards():
+    """Doplnené po mutácii 16.09.2026: skúška vyššie má `--projekt` v PRVOM volaní, takže na delení
+    nezáleží a mutácia „nedeliť" cez ňu prešla. Rozhoduje až opačné poradie — meno evidencie sa
+    nesmie šíriť dozadu na volanie, ktoré ju nemá."""
+    r = _spusti(
+        TIKETY,
+        {
+            "tool_name": "Bash",
+            "tool_input": {
+                "command": (
+                    "python3 scripts/icc_ticket.py recheck 129 && "
+                    "python3 scripts/icc_ticket.py recheck 17 --projekt server"
+                )
+            },
+            "tool_response": {"exit_code": 0},
+        },
+    )
+    assert "ICCINT-129" in r.stdout, r.stdout
+    assert "SERVER-129" not in r.stdout, r.stdout
+    assert "SERVER-17" in r.stdout, r.stdout
