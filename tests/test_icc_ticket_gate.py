@@ -410,6 +410,31 @@ def test_the_measurement_block_is_escaped_html_not_raw_markdown(tmp_path):
     assert "a&lt;b&gt;c" in r.stdout, "ostré zátvorky vo výstupe merania nie sú ošetrené"
 
 
+def test_a_rewrite_can_also_fix_the_title(tmp_path):
+    """Keď sa prepíše obsah, názov musí ísť s ním. SERVER-25 sa zmenil z „presunúť stroj" na
+    „postaviť nový" a názov ďalej hlásal presun — titulok, ktorý si protirečí s telom, je horší
+    než žiadny, lebo podľa neho sa tiket hľadá a triedi."""
+    popis = tmp_path / "p.md"
+    popis.write_text("Nové znenie tiketu, dosť dlhé na kontrolu.", encoding="utf-8")
+
+    r = _run(
+        "uprav",
+        "3",
+        "--projekt",
+        "server",
+        "--popis-subor",
+        str(popis),
+        "--nazov",
+        "Nový názov",
+        "--meranie",
+        "echo ABC",
+        "--dry-run",
+    )
+
+    assert r.returncode == 0, r.stderr
+    assert "Nový názov" in r.stdout
+
+
 def test_a_rich_ticket_keeps_its_html_when_edited(tmp_path):
     """Popisy v Plane nesú tabuľky a tučné písmo. Keby úprava vždy prebalila text cez _html(),
     chirurgická oprava jedného čísla by zošrotovala celý zvyšok tiketu."""

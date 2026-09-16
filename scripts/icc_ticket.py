@@ -469,6 +469,8 @@ def cmd_uprav(a) -> int:
 
     if a.dry_run:
         print(f"── NASUCHO: úprava {a.projekt.upper()}-{a.cislo}\n")
+        if a.nazov:
+            print(f"   nový názov: {a.nazov}\n")
         if a.surovy_html:
             print(html_telo)
             return 0
@@ -476,7 +478,10 @@ def cmd_uprav(a) -> int:
         return 0
 
     i = _najdi(a.cislo, base)
-    _req(base + i["id"] + "/", {"description_html": html_telo}, "PATCH")
+    telo_patch = {"description_html": html_telo}
+    if a.nazov:
+        telo_patch["name"] = a.nazov
+    _req(base + i["id"] + "/", telo_patch, "PATCH")
 
     # Čítanie späť zo servera — nie z premennej, ktorú som práve poslal.
     import html as _h
@@ -553,6 +558,7 @@ def main() -> int:
     u = sub.add_parser("uprav", help="prepísať popis existujúceho tiketu (vyžaduje meranie)")
     u.add_argument("cislo", type=int)
     u.add_argument("--popis-subor", required=True)
+    u.add_argument("--nazov", help="prepísať aj názov — keď sa zmenil obsah, názov musí ísť s ním")
     u.add_argument("--meranie", default="", help="PRÍKAZ, ktorý nástroj spustí a vloží jeho výstup")
     u.add_argument(
         "--len-zobrazenie",
