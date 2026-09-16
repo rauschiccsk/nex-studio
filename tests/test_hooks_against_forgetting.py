@@ -410,3 +410,33 @@ def test_a_register_named_later_in_the_chain_does_not_reach_backwards():
     assert "ICCINT-129" in r.stdout, r.stdout
     assert "SERVER-129" not in r.stdout, r.stdout
     assert "SERVER-17" in r.stdout, r.stdout
+
+
+def test_a_ticket_already_past_work_is_not_dragged_back():
+    """16.09.2026: SERVER-10 som dal na kontrolu, prečítal si ho — a hook ho vrátil do práce.
+    Hotový a zrušený tiket boli chránené, ten na kontrole nie. Práca sa posúva DOPREDU: začiatkom
+    je otvorenie tiketu, ktorý ešte nezačal, nie otvorenie tiketu, ktorý už je za tým."""
+    r = _spusti(
+        TIKETY,
+        {
+            "tool_name": "Bash",
+            "tool_input": {"command": "python3 scripts/icc_ticket.py citaj 10 --projekt server"},
+            "tool_response": {"exit_code": 0},
+        },
+        {"DEDO_HOOK_STAV": "nakontrolu"},
+    )
+    assert "inprogress" not in r.stdout, r.stdout
+
+
+def test_a_ticket_not_started_yet_still_moves():
+    """Stráž proti prestreleniu: tiket v „Na urobenie" sa posúvať musí, inak hook nerobí nič."""
+    r = _spusti(
+        TIKETY,
+        {
+            "tool_name": "Bash",
+            "tool_input": {"command": "python3 scripts/icc_ticket.py citaj 10 --projekt server"},
+            "tool_response": {"exit_code": 0},
+        },
+        {"DEDO_HOOK_STAV": "todo"},
+    )
+    assert "inprogress" in r.stdout, r.stdout

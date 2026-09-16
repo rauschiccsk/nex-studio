@@ -56,6 +56,11 @@ _TIKET_V_PREDMETE = re.compile(r"\((ICCINT|MAGER)-(\d+)\)", re.I)
 #: obživne, je horší než tiket, čo sa neposunul — druhé si všimnem, prvé nie.
 _NEDOTYKATELNE = ("done", "cancelled")
 
+#: Do „V práci" sa smie posunúť LEN tiket, ktorý ešte nezačal. 16.09.2026: SERVER-10 bol na kontrole,
+#: prečítal som si ho a hook ho vrátil do práce. Práca sa posúva dopredu; otvoriť tiket, ktorý je už
+#: za tým, nie je začiatok.
+_PRED_PRACOU = ("backlog", "todo")
+
 
 def _zaciatky(prikaz: str) -> list[tuple[int, str]]:
     """Ktoré tikety tento príkaz OTVÁRA — a v ktorej evidencii. Rozoberá sa každé volanie nástroja
@@ -90,6 +95,13 @@ def _zaciatky(prikaz: str) -> list[tuple[int, str]]:
 def _stav_tiketu(cislo: int, projekt: str) -> str | None:
     """Stav sa musí čítať z TEJ evidencie, ktorej sa posun týka. Do 16.09.2026 sa čítal vždy z
     ICCINT — hook sa teda o cudzom tikete rozhodoval podľa úplne iného tiketu s rovnakým číslom."""
+    podstrceny = os.environ.get("DEDO_HOOK_STAV")
+    if podstrceny is not None:
+        return podstrceny or None
+    if DRY:
+        # Suchý beh sa evidencie nepýta — nemá na to prístup a nemal by ju zaťažovať. Stav teda
+        # nepozná; stráže, ktoré na ňom stoja, si ho podstrčia cez DEDO_HOOK_STAV.
+        return None
     try:
         sys.path.insert(0, "/opt/projects/nex-studio")
         from scripts.icc_ticket import _najdi, _zvol  # noqa: PLC0415
@@ -103,13 +115,17 @@ def _stav_tiketu(cislo: int, projekt: str) -> str | None:
 
 
 def _posun(cislo: int, stav: str, preco: str, projekt: str) -> None:
-    if DRY:
-        print(f"POSUNUL BY SOM {projekt.upper()}-{cislo} → {stav}  ({preco})")
-        return
+    # Stav sa zisťuje aj pri suchom behu — inak by suchý beh ukazoval posuny, ktoré by sa
+    # v skutočnosti nestali, a stráže proti nim by nič nemerali.
     teraz = _stav_tiketu(cislo, projekt)
     if teraz in _NEDOTYKATELNE:
         return
     if teraz == stav:
+        return
+    if stav == "inprogress" and teraz is not None and teraz not in _PRED_PRACOU:
+        return
+    if DRY:
+        print(f"POSUNUL BY SOM {projekt.upper()}-{cislo} → {stav}  ({preco})")
         return
     try:
         subprocess.run(
