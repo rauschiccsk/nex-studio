@@ -246,6 +246,21 @@ def test_preserving_the_measurement_needs_no_new_one(tmp_path):
     assert "chýba meranie" not in (r.stdout + r.stderr).lower()
 
 
+def test_the_newest_comment_is_found_by_time_not_by_list_order():
+    """Plane vracia komentáre od NAJNOVŠIEHO. Brala som `results[-1]`, teda najstarší — kontrola po
+    zápise tak čítala cudzí komentár (na MAGER-18 falošný poplach, inde falošné SEDÍ) a `--prepis-
+    posledny` by prepísal najstarší záznam namiesto posledného. Na SERVER-3 to prešlo len preto, že
+    tam bol jediný. Poradie v zozname nie je zmluva; čas je."""
+    from icc_ticket import _najnovsi_komentar
+
+    novy = {"id": "b", "created_at": "2026-09-16T07:02:47Z", "comment_html": "<p>nový</p>"}
+    stary = {"id": "a", "created_at": "2026-09-15T14:35:13Z", "comment_html": "<p>starý</p>"}
+
+    assert _najnovsi_komentar([novy, stary])["id"] == "b", "vzalo sa podľa poradia v zozname"
+    assert _najnovsi_komentar([stary, novy])["id"] == "b", "opačné poradie dalo iný výsledok"
+    assert _najnovsi_komentar([]) is None
+
+
 def test_replacing_a_comment_is_an_explicit_choice(tmp_path):
     """Prepísať cudzí komentár by bolo prepisovanie histórie. Výmena musí byť vypýtaná zvlášť,
     nikdy ako tichý vedľajší účinok bežného komentovania."""

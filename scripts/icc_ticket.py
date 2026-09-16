@@ -467,6 +467,19 @@ def cmd_uprav(a) -> int:
     return 0 if sedi else 1
 
 
+def _najnovsi_komentar(komentare: list[dict]) -> Optional[dict]:
+    """Posledný komentár podľa ČASU, nie podľa poradia v zozname.
+
+    Plane ich vracia od najnovšieho; brala som ``results[-1]``, teda najstarší. Kontrola po zápise
+    tak čítala cudzí komentár — na MAGER-18 falošný poplach, inde falošné „SEDÍ" — a
+    ``--prepis-posledny`` by prepísal najstarší záznam namiesto posledného. Poradie v zozname nie je
+    zmluva; čas je.
+    """
+    if not komentare:
+        return None
+    return max(komentare, key=lambda c: str(c.get("created_at") or ""))
+
+
 def cmd_stav(a) -> int:
     base, states = _zvol(a.projekt)
     i = _najdi(a.cislo, base)
@@ -478,15 +491,15 @@ def cmd_stav(a) -> int:
         url = base + i["id"] + "/comments/"
         stary = None
         if a.prepis_posledny:
-            existujuce = _req(url).get("results") or []
-            stary = existujuce[-1]["id"] if existujuce else None
+            posledny = _najnovsi_komentar(_req(url).get("results") or [])
+            stary = posledny["id"] if posledny else None
             if stary is None:
                 print("  na tikete niet čo prepísať — zapisujem nový komentár")
         if stary:
             _req(url + stary + "/", {"comment_html": telo_html}, "PATCH")
         else:
             _req(url, {"comment_html": telo_html}, "POST")
-        spat = (_req(url).get("results") or [])[-1]["comment_html"]
+        spat = (_najnovsi_komentar(_req(url).get("results") or []) or {}).get("comment_html", "")
         print(
             f"  komentár {'prepísaný' if stary else 'zapísaný'} — prečítaný späť: "
             f"{'SEDÍ' if '**' not in spat else '!!! surový markdown'}"
