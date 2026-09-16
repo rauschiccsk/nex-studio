@@ -28,7 +28,7 @@ from pathlib import Path
 
 PRAH_SEKUND = int(os.environ.get("DEDO_TELEGRAM_PRAH_S", "300"))
 WIP_LOG = Path(os.environ.get("DEDO_WIP_LOG", "/opt/projects/nex-studio/.claude/wip-actions.log"))
-NOTIFY = os.environ.get("DEDO_NOTIFY_BIN", "/home/andros/.local/bin/dedo-notify")
+NOTIFY = os.environ.get("DEDO_NOTIFY_BIN", str(Path.home() / ".local/bin/dedo-notify"))
 DRY = os.environ.get("DEDO_HOOK_DRY_RUN") == "1"
 
 _PROMPT = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\s+PROMPT")

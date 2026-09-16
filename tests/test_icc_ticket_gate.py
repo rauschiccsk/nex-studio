@@ -765,3 +765,31 @@ def test_a_rule_never_swallows_the_text_around_it():
     h2 = _html("Prepínač --- takto sa nepíše, ale v texte sa objaviť môže.")
     assert "nepíše" in h2, h2
     assert "<hr" not in h2, h2
+
+
+# ── cesty na hostiteľovi sa nesmú viazať na jedno meno používateľa ───────────
+
+
+def test_the_token_path_follows_the_home_directory():
+    """16.09.2026, pri sťahovaní agenta na nový server: brána mala cestu k tajomstvám natvrdo
+    `/home/andros/.secrets/`. Na novom serveri je používateľ `icc`, takže sa nespustila vôbec —
+    a prišlo sa na to až živým behom, nie skúškou."""
+    import os
+
+    r = _run("citaj", "1", env={**os.environ, "HOME": "/tmp/iny-domov"})
+    vystup = r.stdout + r.stderr
+    assert "/tmp/iny-domov/.secrets" in vystup, vystup[-400:]
+    assert "/home/andros" not in vystup, vystup[-400:]
+
+
+def test_no_host_path_is_pinned_to_one_user():
+    """Stráž pre celý priečinok skriptov. V `backend/` a `Dockerfile` je `/home/andros` správne —
+    to je používateľ VNÚTRI kontajnera. Na hostiteľských skriptoch je to chyba."""
+    from pathlib import Path
+
+    zle = []
+    for f in sorted(Path("/opt/projects/nex-studio/scripts").glob("*.py")):
+        for i, r in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+            if "/home/andros" in r and not r.lstrip().startswith("#"):
+                zle.append(f"{f.name}:{i}: {r.strip()[:70]}")
+    assert not zle, "cesty viazané na používateľa `andros`:\n  " + "\n  ".join(zle)

@@ -35,7 +35,9 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Optional
 
-TOKEN_PATH = Path("/home/andros/.secrets/plane-api-token")
+#: Domovský priečinok, nie meno používateľa. Do 16.09.2026 tu bolo `/home/andros/…` natvrdo
+#: a na novom serveri (používateľ `icc`) sa brána nespustila vôbec.
+TOKEN_PATH = Path.home() / ".secrets" / "plane-api-token"
 
 #: Evidencie, do ktorých sa píše. ⚠️ Identifikátory stĺpcov sú PER PROJEKT — použiť Todo z jedného
 #: projektu na tiket v druhom server prijme a zmenu TICHO ZAHODÍ (zhorel som na tom 03.09.2026).
