@@ -112,7 +112,7 @@ def status(slug: str) -> int:
     port = _uat_lib.get_allocated_port(slug)
     snap_info = _get_snapshots_info(slug)
 
-    _uat_lib.console.print(f"\n=== UAT [{color}]{state}[/{color}] for slug={slug} (v{version}) ===")
+    _uat_lib.console.print(f"\n=== UAT [{color}]{state}[/{color}] for slug={slug} (v{version.lstrip(chr(118))}) ===")
     _uat_lib.console.print(
         _uat_lib.status_table(
             {

@@ -58,7 +58,7 @@ def resolve_project(*, slug: str, project: str | None) -> str:
 def _print_summary(result: uat_provisioner.ProvisionResult, *, version: str, dry_run: bool) -> None:
     slug = result.uat_slug
     mode = "[yellow]DRY-RUN[/yellow]" if dry_run else "[green]DEPLOYED[/green]"
-    _uat_lib.console.print(f"\n=== UAT {mode} for slug={slug} (v{version}) ===")
+    _uat_lib.console.print(f"\n=== UAT {mode} for slug={slug} (v{version.lstrip(chr(118))}) ===")
     rows = {
         "URL": f"https://uat-{slug}.isnex.eu",
         "Routing": "Traefik (nex-proxy-net) — no manual nginx step",

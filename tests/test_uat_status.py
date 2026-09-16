@@ -6,6 +6,7 @@ Tests derived from spec per Implementer charter §13.
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -121,7 +122,28 @@ def test_status_reads_version_from_env(monkeypatch, tmp_path, capsys):
     with patch.object(mod, "_get_container_statuses", return_value=[]):
         mod.status("dev")
     captured = capsys.readouterr()
-    assert "v0.9.42" in captured.out
+    # `rich` zvýrazňuje čísla, takže do reťazca vkladá farebné kódy a "v0.9.42" sa vo výstupe
+    # nikdy nevyskytne v celku. Kontrola musí byť na očistenom texte, inak padá nech kód robí čokoľvek.
+    assert "v0.9.42" in re.sub(r"\x1b\[[0-9;]*m", "", captured.out)
+
+
+def test_version_shows_one_v_whichever_form_env_uses(monkeypatch, tmp_path, capsys):
+    """Skutočné inštalácie majú OBE podoby: UAT MÁGERSTAVU `1.5.3`, ostrá `v0.2.0`. Kód pridával
+    `v` natvrdo, takže tej druhej vypisoval `vv0.2.0`. Hlavička musí vyzerať rovnako v oboch."""
+    for zapisane, cakane in (("0.9.42", "(v0.9.42)"), ("v0.9.42", "(v0.9.42)")):
+        mod = _import_module(monkeypatch)
+        fake_uat = tmp_path / zapisane / "dev"
+        fake_uat.mkdir(parents=True)
+        (fake_uat / "docker-compose.yml").write_text("# stub")
+        (fake_uat / "snapshots").mkdir()
+        (fake_uat / ".env").write_text(f"PROJECT_VERSION={zapisane}\nUAT_SLUG=dev\n")
+        monkeypatch.setattr(mod, "UAT_ROOT", tmp_path / zapisane)
+        monkeypatch.setattr(mod._uat_lib, "PORT_STATE_FILE", tmp_path / f".ports-{zapisane}.json")
+        with patch.object(mod, "_get_container_statuses", return_value=[]):
+            mod.status("dev")
+        vystup = capsys.readouterr().out
+        cisty = re.sub(r"\x1b\[[0-9;]*m", "", vystup)
+        assert cakane in cisty, f"pri zapísanom {zapisane!r}: {cisty[:90]!r}"
 
 
 def test_read_env_value_parses_simple_kv(monkeypatch, tmp_path):
